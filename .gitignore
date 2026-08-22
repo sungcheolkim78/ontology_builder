@@ -6,6 +6,9 @@ __pycache__/
 # Node / frontend
 node_modules/
 
+# Parsed document output
+backend/data/
+
 # C extensions
 *.so
 

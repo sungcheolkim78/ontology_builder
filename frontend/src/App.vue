@@ -1,93 +1,57 @@
 <script setup>
 import { ref } from 'vue'
+import ChatPanel from './components/ChatPanel.vue'
+import DocumentPreview from './components/DocumentPreview.vue'
+import OntologyGraph from './components/OntologyGraph.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 
-const messages = ref([])
-const input = ref('')
-const isLoading = ref(false)
-const error = ref('')
+const parsedFile = ref(null)
+const graphFilters = ref(new Set(['Person', 'Organization', 'Concept']))
 
-async function sendMessage() {
-  const content = input.value.trim()
-  if (!content || isLoading.value) return
+function onFileParsed(file) {
+  parsedFile.value = file
+}
 
-  messages.value.push({ role: 'user', content })
-  input.value = ''
-  error.value = ''
-  isLoading.value = true
-
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: messages.value }),
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
-    messages.value.push({ role: data.role, content: data.content })
-  } catch (err) {
-    error.value = '메시지 전송 실패: ' + err.message
-  } finally {
-    isLoading.value = false
-  }
+function onFiltersChanged(filters) {
+  graphFilters.value = filters
 }
 </script>
 
 <template>
-  <main class="chat">
-    <h1>Ontology Builder Chat</h1>
-
-    <div class="messages">
-      <div
-        v-for="(msg, i) in messages"
-        :key="i"
-        class="message"
-        :class="msg.role"
-      >
-        <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
-        <p>{{ msg.content }}</p>
-      </div>
-      <p v-if="isLoading">응답 중...</p>
-      <p v-if="error" class="error">{{ error }}</p>
+  <div class="dashboard">
+    <SettingsPanel @file-parsed="onFileParsed" @filters-changed="onFiltersChanged" />
+    <main class="chat-column">
+      <ChatPanel />
+    </main>
+    <div class="right-column">
+      <DocumentPreview :file="parsedFile" />
+      <OntologyGraph :enabled-types="graphFilters" />
     </div>
-
-    <form class="input-row" @submit.prevent="sendMessage">
-      <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
-      <button type="submit" :disabled="isLoading">전송</button>
-    </form>
-  </main>
+  </div>
 </template>
 
 <style scoped>
-.chat {
-  max-width: 600px;
-  margin: 0 auto;
+.dashboard {
+  display: flex;
+  height: 100vh;
   font-family: sans-serif;
 }
-.messages {
-  min-height: 300px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-.message {
-  margin-bottom: 0.75rem;
-}
-.message.user {
-  text-align: right;
-}
-.message p {
-  margin: 0.25rem 0 0;
-}
-.error {
-  color: red;
-}
-.input-row {
-  display: flex;
-  gap: 0.5rem;
-}
-.input-row input {
+.chat-column {
   flex: 1;
-  padding: 0.5rem;
+  min-width: 0;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+.right-column {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #ccc;
+}
+.right-column > * {
+  flex: 1;
+  min-height: 0;
 }
 </style>

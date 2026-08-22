@@ -10,11 +10,18 @@ ROLE_TO_MESSAGE = {
 }
 
 
+DEFAULT_MODEL = "openai/gpt-4o-mini"
+
+
+def get_model_name():
+    return os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
+
+
 def get_chat_model():
     return ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
-        model=os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+        model=get_model_name(),
     )
 
 
