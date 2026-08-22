@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import anydoc
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -7,6 +8,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
+from app.ontology import extract_graph, generate_schema, load_graph, load_schema, save_graph, save_schema
 from app.parser import DATA_DIR, parse_to_markdown_file
 
 app = FastAPI()
@@ -65,7 +67,13 @@ def list_files():
     if not DATA_DIR.is_dir():
         return {"files": []}
     paths = sorted(DATA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-    return {"files": [{"filename": p.name} for p in paths if p.is_file()]}
+    return {
+        "files": [
+            {"filename": p.name}
+            for p in paths
+            if p.is_file() and not p.name.startswith(".")
+        ]
+    }
 
 
 @app.get("/api/files/{filename}", response_class=PlainTextResponse)
@@ -74,3 +82,49 @@ def get_file(filename: str):
     if not safe_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return safe_path.read_text()
+
+
+def _document_path(filename: str) -> Path:
+    return DATA_DIR / os.path.basename(filename)
+
+
+def _stem(filename: str) -> str:
+    return Path(os.path.basename(filename)).stem
+
+
+@app.post("/api/ontology/{filename}/schema")
+def create_schema(filename: str):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        schema = generate_schema(doc_path.read_text())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_schema(_stem(filename), schema)
+    return schema
+
+
+@app.post("/api/ontology/{filename}/extract")
+def create_extraction(filename: str):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    stem = _stem(filename)
+    schema = load_schema(stem)
+    if schema is None:
+        raise HTTPException(status_code=400, detail="generate a schema first")
+    try:
+        graph = extract_graph(doc_path.read_text(), schema)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_graph(stem, graph)
+    return graph
+
+
+@app.get("/api/ontology/{filename}")
+def get_ontology(filename: str):
+    graph = load_graph(_stem(filename))
+    if graph is None:
+        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    return graph

@@ -35,6 +35,18 @@ def test_list_files_returns_saved_filenames_newest_first():
     }
 
 
+def test_list_files_excludes_hidden_files():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / ".gitkeep").write_text("")
+    (DATA_DIR / "report_raw.md").write_text("content")
+    client = TestClient(app)
+
+    response = client.get("/api/files")
+
+    assert response.status_code == 200
+    assert response.json() == {"files": [{"filename": "report_raw.md"}]}
+
+
 def test_list_files_returns_empty_list_when_no_data_dir():
     client = TestClient(app)
 

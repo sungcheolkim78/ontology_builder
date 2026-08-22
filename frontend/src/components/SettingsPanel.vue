@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   selectedFilename: { type: String, default: null },
+  availableTypes: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['file-selected', 'filters-changed'])
 
@@ -10,8 +11,15 @@ const model = ref('로딩 중...')
 const isUploading = ref(false)
 const uploadError = ref('')
 const files = ref([])
-const nodeTypes = ['Person', 'Organization', 'Concept']
-const enabledTypes = ref(new Set(nodeTypes))
+const enabledTypes = ref(new Set(props.availableTypes))
+
+watch(
+  () => props.availableTypes,
+  (types) => {
+    enabledTypes.value = new Set(types)
+    emit('filters-changed', enabledTypes.value)
+  }
+)
 
 onMounted(async () => {
   try {
@@ -107,7 +115,10 @@ function toggleType(type) {
 
     <section>
       <h3>그래프 노드 필터</h3>
-      <label v-for="type in nodeTypes" :key="type" class="filter-item">
+      <p v-if="availableTypes.length === 0" class="placeholder">
+        아직 추출된 그래프가 없습니다
+      </p>
+      <label v-for="type in availableTypes" :key="type" class="filter-item">
         <input
           type="checkbox"
           :checked="enabledTypes.has(type)"

@@ -9,7 +9,8 @@ const MIN_RIGHT_WIDTH = 260
 const MAX_RIGHT_WIDTH = 800
 
 const parsedFile = ref(null)
-const graphFilters = ref(new Set(['Person', 'Organization', 'Concept']))
+const graphFilters = ref(new Set())
+const availableTypes = ref([])
 const rightColumnWidth = ref(360)
 
 let dragStartX = 0
@@ -21,6 +22,10 @@ function onFileSelected(file) {
 
 function onFiltersChanged(filters) {
   graphFilters.value = filters
+}
+
+function onTypesAvailable(types) {
+  availableTypes.value = types
 }
 
 function startResize(event) {
@@ -46,6 +51,7 @@ function stopResize() {
   <div class="dashboard">
     <SettingsPanel
       :selected-filename="parsedFile?.filename"
+      :available-types="availableTypes"
       @file-selected="onFileSelected"
       @filters-changed="onFiltersChanged"
     />
@@ -55,7 +61,11 @@ function stopResize() {
     <div class="resizer" @mousedown="startResize"></div>
     <div class="right-column" :style="{ width: rightColumnWidth + 'px' }">
       <DocumentPreview :file="parsedFile" />
-      <OntologyGraph :enabled-types="graphFilters" />
+      <OntologyGraph
+        :file="parsedFile"
+        :enabled-types="graphFilters"
+        @types-available="onTypesAvailable"
+      />
     </div>
   </div>
 </template>
