@@ -5,25 +5,55 @@ import DocumentPreview from './components/DocumentPreview.vue'
 import OntologyGraph from './components/OntologyGraph.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 
+const MIN_RIGHT_WIDTH = 260
+const MAX_RIGHT_WIDTH = 800
+
 const parsedFile = ref(null)
 const graphFilters = ref(new Set(['Person', 'Organization', 'Concept']))
+const rightColumnWidth = ref(360)
 
-function onFileParsed(file) {
+let dragStartX = 0
+let dragStartWidth = 0
+
+function onFileSelected(file) {
   parsedFile.value = file
 }
 
 function onFiltersChanged(filters) {
   graphFilters.value = filters
 }
+
+function startResize(event) {
+  dragStartX = event.clientX
+  dragStartWidth = rightColumnWidth.value
+  window.addEventListener('mousemove', onResize)
+  window.addEventListener('mouseup', stopResize)
+}
+
+function onResize(event) {
+  const delta = dragStartX - event.clientX
+  const next = dragStartWidth + delta
+  rightColumnWidth.value = Math.min(MAX_RIGHT_WIDTH, Math.max(MIN_RIGHT_WIDTH, next))
+}
+
+function stopResize() {
+  window.removeEventListener('mousemove', onResize)
+  window.removeEventListener('mouseup', stopResize)
+}
 </script>
 
 <template>
   <div class="dashboard">
-    <SettingsPanel @file-parsed="onFileParsed" @filters-changed="onFiltersChanged" />
+    <SettingsPanel
+      :selected-filename="parsedFile?.filename"
+      @file-selected="onFileSelected"
+      @filters-changed="onFiltersChanged"
+    />
     <main class="chat-column">
       <ChatPanel />
     </main>
-    <div class="right-column">
+    <div class="resizer" @mousedown="startResize"></div>
+    <div class="right-column" :style="{ width: rightColumnWidth + 'px' }">
       <DocumentPreview :file="parsedFile" />
       <OntologyGraph :enabled-types="graphFilters" />
     </div>
@@ -43,8 +73,17 @@ function onFiltersChanged(filters) {
   display: flex;
   flex-direction: column;
 }
+.resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+}
+.resizer:hover,
+.resizer:active {
+  background: #b8d0ff;
+}
 .right-column {
-  width: 360px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;

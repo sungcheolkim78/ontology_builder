@@ -40,9 +40,22 @@ watch(
 <style scoped>
 .preview {
   height: 100%;
-  overflow-y: auto;
+  overflow-y: scroll;
   padding: 1rem;
   border-bottom: 1px solid #ccc;
+  scrollbar-width: thin;
+  scrollbar-color: #b0b0b0 #f0f0f0;
+}
+.preview::-webkit-scrollbar {
+  width: 10px;
+}
+.preview::-webkit-scrollbar-track {
+  background: #f0f0f0;
+}
+.preview::-webkit-scrollbar-thumb {
+  background-color: #b0b0b0;
+  border-radius: 6px;
+  border: 2px solid #f0f0f0;
 }
 .placeholder {
   color: #888;

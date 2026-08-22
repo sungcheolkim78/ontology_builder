@@ -60,6 +60,14 @@ async def parse(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/files")
+def list_files():
+    if not DATA_DIR.is_dir():
+        return {"files": []}
+    paths = sorted(DATA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    return {"files": [{"filename": p.name} for p in paths if p.is_file()]}
+
+
 @app.get("/api/files/{filename}", response_class=PlainTextResponse)
 def get_file(filename: str):
     safe_path = DATA_DIR / os.path.basename(filename)

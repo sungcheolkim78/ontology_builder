@@ -1,11 +1,15 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 
-const emit = defineEmits(['file-parsed', 'filters-changed'])
+const props = defineProps({
+  selectedFilename: { type: String, default: null },
+})
+const emit = defineEmits(['file-selected', 'filters-changed'])
 
 const model = ref('로딩 중...')
 const isUploading = ref(false)
 const uploadError = ref('')
+const files = ref([])
 const nodeTypes = ['Person', 'Organization', 'Concept']
 const enabledTypes = ref(new Set(nodeTypes))
 
@@ -17,7 +21,19 @@ onMounted(async () => {
   } catch (err) {
     model.value = '알 수 없음'
   }
+
+  try {
+    const res = await fetch('/api/files')
+    const data = await res.json()
+    files.value = data.files
+  } catch (err) {
+    // file list is best-effort; leave empty on failure
+  }
 })
+
+function selectFile(filename) {
+  emit('file-selected', { filename, path: `data/${filename}` })
+}
 
 async function handleFileChange(event) {
   const file = event.target.files[0]
@@ -32,7 +48,11 @@ async function handleFileChange(event) {
     const res = await fetch('/api/parse', { method: 'POST', body: formData })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    emit('file-parsed', data)
+    files.value = [
+      { filename: data.filename },
+      ...files.value.filter((f) => f.filename !== data.filename),
+    ]
+    emit('file-selected', data)
   } catch (err) {
     uploadError.value = '업로드 실패: ' + err.message
   } finally {
@@ -67,6 +87,22 @@ function toggleType(type) {
       <input type="file" @change="handleFileChange" :disabled="isUploading" />
       <p v-if="isUploading">업로드 중...</p>
       <p v-if="uploadError" class="error">{{ uploadError }}</p>
+    </section>
+
+    <section>
+      <h3>업로드된 문서</h3>
+      <p v-if="files.length === 0" class="placeholder">문서가 없습니다</p>
+      <ul v-else class="file-list">
+        <li
+          v-for="f in files"
+          :key="f.filename"
+          class="file-item"
+          :class="{ selected: f.filename === selectedFilename }"
+          @click="selectFile(f.filename)"
+        >
+          {{ f.filename }}
+        </li>
+      </ul>
     </section>
 
     <section>
@@ -113,5 +149,28 @@ function toggleType(type) {
 }
 .error {
   color: red;
+}
+.placeholder {
+  color: #888;
+  font-size: 0.9rem;
+}
+.file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.file-item {
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.file-item:hover {
+  background: #f0f0f0;
+}
+.file-item.selected {
+  background: #dbe9ff;
+  font-weight: bold;
 }
 </style>
