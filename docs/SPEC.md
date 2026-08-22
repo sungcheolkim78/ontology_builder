@@ -40,8 +40,11 @@ FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
 | POST | `/api/parse` | Upload a document, convert to markdown |
 | GET | `/api/files` | List parsed documents, newest first |
 | GET | `/api/files/{filename}` | Read back a saved markdown file |
+| GET | `/api/ontology/schemas` | List every document stem that has a saved schema |
 | POST | `/api/ontology/{filename}/schema` | LLM proposes a node/edge type schema for the document |
-| POST | `/api/ontology/{filename}/extract` | LLM extracts nodes/edges per the saved schema |
+| POST | `/api/ontology/{filename}/schema/use` | Copy another document's schema onto this one |
+| GET | `/api/ontology/{filename}/schema` | Read back the saved schema |
+| POST | `/api/ontology/{filename}/extract` | LLM extracts nodes/edges per the saved (or default) schema |
 | GET | `/api/ontology/{filename}` | Read back the saved nodes/edges |
 
 **`POST /api/chat`** — body `{"messages": [{"role": "user"|"assistant"|"system", "content": "..."}]}`.
@@ -79,9 +82,26 @@ extension), and returns it. Schema shape:
 404 if the document doesn't exist; 400 if the LLM's response isn't
 parseable/well-shaped JSON.
 
+**`GET /api/ontology/schemas`** — scans `backend/data/graph/*/schema.json`,
+returns `{"schemas": [{"stem": "..."}]}` for the "스키마 라이브러리" list
+in `SettingsPanel`.
+
+**`POST /api/ontology/{filename}/schema/use`** — body
+`{"source_stem": "..."}`. Loads `graph/{source_stem}/schema.json` (404
+if that source has no schema) and saves it as
+`graph/{stem}/schema.json`, i.e. designates it the active schema for
+`filename`. Returns the copied schema.
+
+**`GET /api/ontology/{filename}/schema`** — reads back
+`graph/{stem}/schema.json`; 404 if none has been generated/assigned
+yet. Used by the frontend to show schema status and to drive the
+"schema preview" graph mode before extraction has run.
+
 **`POST /api/ontology/{filename}/extract`** — loads
-`graph/{stem}/schema.json` (400 if it doesn't exist yet — generate the
-schema first), prompts the LLM to extract nodes/edges from the
+`graph/{stem}/schema.json`; if none exists, falls back to
+`DEFAULT_SCHEMA` (a generic `Entity`/`RELATED_TO` schema) and persists
+it as this document's schema rather than erroring, so "extract" always
+produces *something*. Prompts the LLM to extract nodes/edges from the
 document conforming to that schema, saves `graph/{stem}/nodes.json`
 and `edges.json`, returns `{"nodes": [...], "edges": [...]}`. Node
 shape `{"id", "label", "type"}`, edge shape
@@ -132,25 +152,44 @@ components under `src/components/`.
   item emits `file-selected` (`{filename, path}`), highlighting it.
   Renders one filter checkbox per entry in the `availableTypes` prop
   (the real node types of whatever graph is currently loaded — nothing
-  hardcoded); toggling emits `filters-changed`.
+  hardcoded); toggling emits `filters-changed`. Also reads
+  `GET /api/ontology/schemas` for a "스키마 라이브러리" list (every schema
+  generated so far, across all documents); clicking one calls
+  `POST /api/ontology/{selectedFilename}/schema/use` to copy it onto
+  the currently selected document, then emits `schema-used`. Refetches
+  the schema list whenever its `schemaVersion` prop changes.
 - **`ChatPanel.vue`** — self-contained message list + input, calls
   `/api/chat` with the full local history on each send.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
   Limitations history for why.
-- **`OntologyGraph.vue`** — takes `file` and `enabledTypes` props. On
-  file change, `GET /api/ontology/{filename}`: 404 shows "스키마 생성"/
-  "그래프 추출" buttons (two explicit steps — schema first, then
-  extraction — so the schema can be inspected/reused); 200 renders the
-  real nodes/edges as SVG (circular layout, colored by type). Emits
-  `types-available` with the sorted unique node types whenever graph
-  data (re)loads, so the filter checkboxes in `SettingsPanel` can be
-  built from real data instead of a fixed list.
+- **`OntologyGraph.vue`** — takes `file`, `enabledTypes`, and
+  `schemaVersion` props. On file change, checks
+  `GET /api/ontology/{filename}/schema` and `GET /api/ontology/{filename}`
+  to decide what to draw, in priority order: an extracted graph (real
+  `nodes`/`edges`) if one exists; otherwise a **schema preview** (the
+  schema's `node_types`/`edge_types` drawn as if they were the
+  nodes/edges themselves) if a schema exists; otherwise a placeholder
+  telling the user to generate or pick a schema. "스키마 생성" and
+  "그래프 추출" buttons are always available once a file is selected.
+  Emits `types-available` with the sorted unique node types of
+  whatever is currently drawn (schema or real graph), so
+  `SettingsPanel`'s filter checkboxes always match what's on screen,
+  and `schema-updated` after a successful generate/extract so `App.vue`
+  can bump `schemaVersion` (which also tells `SettingsPanel` to refresh
+  its schema library list). Pan/zoom: mouse wheel scales
+  (0.3×–3×), drag pans, both applied as a CSS `transform` directly on
+  the `<svg>` (not an inner `<g>` — see the Vite staleness
+  troubleshooting note below for why that matters); a "리셋" button
+  restores the default view.
 
 State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `graphFilters` (enabled node types, a `Set`), `availableTypes` (from
-`OntologyGraph`'s `types-available`, passed down to `SettingsPanel`).
+`OntologyGraph`'s `types-available`, passed down to `SettingsPanel`),
+`schemaVersion` (bumped by either `OntologyGraph`'s `schema-updated` or
+`SettingsPanel`'s `schema-used`, and passed to both as a refresh
+signal).
 A draggable `.resizer` between the chat column and the right column
 (document preview + ontology graph) adjusts `rightColumnWidth` via
 plain mousedown/mousemove/mouseup, clamped to 260–800px. Chat messages
@@ -194,6 +233,29 @@ or frontend changes don't show up after a save):
    `restart` sometimes isn't enough to reattach the mount correctly).
 3. Verify with `podman exec <container> ls <mount path>` against the
    host directory before trusting the app's behavior.
+
+### Troubleshooting: frontend changes not showing up (Vite serving stale code)
+
+A second, distinct symptom of the same underlying virtiofs flakiness:
+`frontend/src/*.vue` is correctly updated on both host and inside the
+container (`cat`/`grep` show the new content), but the *running Vite
+dev server* keeps serving an old compiled version of the file — its
+file watcher never saw the change, so it never invalidated its
+transform cache or pushed an HMR update. This is sneaky because it can
+look exactly like a logic bug in your own code (elements silently
+missing from the DOM, old behavior persisting) with nothing wrong in
+any file you can inspect. Confirm it by fetching the module straight
+from the dev server and diffing against the source:
+
+```
+curl -s http://localhost:5173/src/components/Foo.vue | grep 'some-recent-change'
+```
+
+If that comes back empty while `grep` on the file itself finds it,
+Vite is stale. Fix: `podman-compose down && podman-compose up --build -d`
+for the frontend service (a page reload or even disabling the browser
+cache does **not** help — the staleness is server-side, in Vite's own
+transform cache, not the browser).
 
 ## Known limitations / not yet built
 
