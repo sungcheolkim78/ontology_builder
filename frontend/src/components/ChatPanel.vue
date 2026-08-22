@@ -1,6 +1,11 @@
 <script setup>
 import { ref } from 'vue'
 
+const props = defineProps({
+  file: { type: Object, default: null },
+  hops: { type: Number, default: 1 },
+})
+
 const messages = ref([])
 const input = ref('')
 const isLoading = ref(false)
@@ -19,7 +24,11 @@ async function sendMessage() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: messages.value }),
+      body: JSON.stringify({
+        messages: messages.value,
+        filename: props.file?.filename ?? null,
+        hops: props.hops,
+      }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()

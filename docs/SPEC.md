@@ -26,8 +26,9 @@ each with source volume-mounted for hot-reload during development.
 ## Backend (`backend/`)
 
 FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
-`app/parser.py` (document → markdown conversion), and `app/ontology.py`
-(schema generation + node/edge extraction).
+`app/parser.py` (document → markdown conversion), `app/ontology.py`
+(schema generation + node/edge extraction), and `app/graphrag.py`
+(keyword extraction + graph-based retrieval for chat).
 
 ### Endpoints
 
@@ -47,10 +48,29 @@ FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
 | POST | `/api/ontology/{filename}/extract` | LLM extracts nodes/edges per the saved (or default) schema |
 | GET | `/api/ontology/{filename}` | Read back the saved nodes/edges |
 
-**`POST /api/chat`** — body `{"messages": [{"role": "user"|"assistant"|"system", "content": "..."}]}`.
-Converts to langchain messages, calls `ChatOpenAI` pointed at
-`https://openrouter.ai/api/v1` (model from `OPENROUTER_MODEL` env var,
-default `openai/gpt-4o-mini`), returns
+**`POST /api/chat`** — body
+`{"messages": [{"role": "user"|"assistant"|"system", "content": "..."}], "filename": "...", "hops": 1}`.
+`filename`/`hops` are optional; when `filename` names a document with an
+extracted graph (`GET /api/ontology/{filename}` would succeed), the
+last user message is run through GraphRAG before the chat call:
+1. `graphrag.extract_keywords()` asks the LLM for entities/terms in the
+   question (JSON array).
+2. `graphrag.retrieve_graph_context()` matches those keywords against
+   node labels (case-insensitive substring), builds a `networkx.DiGraph`
+   from the saved nodes/edges, and expands each matched node via
+   `nx.ego_graph(..., radius=hops, undirected=True)`. The union of all
+   expanded neighborhoods, plus every edge among them, is formatted as
+   an `Entities:` / `Relations:` text block.
+3. If any context was found, it's injected as a `system` message
+   prepended to the conversation (in Korean: "다음은 문서에서 추출된
+   관련 정보입니다:\n{context}") before the normal chat call.
+
+If `filename` is omitted, the graph hasn't been extracted yet, no
+keywords match, or keyword extraction fails to parse, this silently
+falls back to plain chat — no error surfaces to the user. Converts the
+(possibly context-prefixed) messages to langchain messages, calls
+`ChatOpenAI` pointed at `https://openrouter.ai/api/v1` (model from
+`OPENROUTER_MODEL` env var, default `openai/gpt-4o-mini`), returns
 `{"role": "assistant", "content": "..."}`. Non-streaming. Conversation
 history is not persisted server-side — the frontend resends the full
 message list on every request.
@@ -122,15 +142,20 @@ only (must have the right list/dict shape).
 ### Dependencies
 
 `requirements.txt`: `fastapi`, `uvicorn`, `langchain-openai`,
-`firecrawl-anydoc`, `python-multipart`.
+`firecrawl-anydoc`, `python-multipart`, `networkx`.
 `requirements-dev.txt` adds `pytest`, `httpx` for testing.
 
 ### Tests
 
 `backend/tests/` (pytest, run via `python -m pytest`): `test_chat.py`,
-`test_config.py`, `test_files.py`, `test_ontology.py`, `test_parse.py`.
-Chat/parse/ontology tests mock the external calls (`get_chat_model`,
-`anydoc.to_markdown_bytes`); file tests use the real filesystem.
+`test_config.py`, `test_files.py`, `test_graphrag.py`, `test_ontology.py`,
+`test_parse.py`. Chat/parse/ontology/graphrag tests mock the external
+calls (`get_chat_model`, `anydoc.to_markdown_bytes`); file tests use
+the real filesystem. `test_chat.py`'s GraphRAG tests use a
+`SequencedChatModel` fake that returns a different canned response per
+`invoke()` call (in order) and records the messages it was called
+with, since one `/api/chat` request with `filename` set makes two LLM
+calls (keyword extraction, then the actual answer).
 
 ## Frontend (`frontend/`)
 
@@ -157,9 +182,14 @@ components under `src/components/`.
   generated so far, across all documents); clicking one calls
   `POST /api/ontology/{selectedFilename}/schema/use` to copy it onto
   the currently selected document, then emits `schema-used`. Refetches
-  the schema list whenever its `schemaVersion` prop changes.
+  the schema list whenever its `schemaVersion` prop changes. Also
+  renders a "GraphRAG 설정" number input (1–5, default 1) for the
+  retrieval hop count, emitting `hops-changed` on change.
 - **`ChatPanel.vue`** — self-contained message list + input, calls
-  `/api/chat` with the full local history on each send.
+  `/api/chat` with the full local history on each send, plus the
+  `file`/`hops` props (`filename` and `hops` in the request body) so
+  the backend can run GraphRAG against the currently selected
+  document's graph.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
@@ -198,7 +228,8 @@ State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `OntologyGraph`'s `types-available`, passed down to `SettingsPanel`),
 `schemaVersion` (bumped by either `OntologyGraph`'s `schema-updated` or
 `SettingsPanel`'s `schema-used`, and passed to both as a refresh
-signal).
+signal), `graphRagHops` (from `SettingsPanel`'s `hops-changed`, passed
+to `ChatPanel`).
 A draggable `.resizer` between the chat column and the right column
 (document preview + ontology graph) adjusts `rightColumnWidth` via
 plain mousedown/mousemove/mouseup, clamped to 260–800px. Chat messages
@@ -283,3 +314,8 @@ transform cache, not the browser).
   a 400 — the user re-clicks the button.
 - **No document length/token limits.** The full document text is sent
   to the LLM for both schema generation and extraction.
+- **GraphRAG node matching is a naive substring match**, not embeddings
+  or fuzzy matching — keywords the LLM extracts have to substantially
+  overlap with a node's `label` text to hit. Every GraphRAG-augmented
+  chat turn costs an extra LLM call (keyword extraction) beyond the
+  answer itself.

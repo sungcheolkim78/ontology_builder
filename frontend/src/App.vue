@@ -12,6 +12,7 @@ const parsedFile = ref(null)
 const graphFilters = ref(new Set())
 const availableTypes = ref([])
 const schemaVersion = ref(0)
+const graphRagHops = ref(1)
 const rightColumnWidth = ref(360)
 
 let dragStartX = 0
@@ -31,6 +32,10 @@ function onTypesAvailable(types) {
 
 function onSchemaChanged() {
   schemaVersion.value++
+}
+
+function onHopsChanged(hops) {
+  graphRagHops.value = hops
 }
 
 function startResize(event) {
@@ -61,9 +66,10 @@ function stopResize() {
       @file-selected="onFileSelected"
       @filters-changed="onFiltersChanged"
       @schema-used="onSchemaChanged"
+      @hops-changed="onHopsChanged"
     />
     <main class="chat-column">
-      <ChatPanel />
+      <ChatPanel :file="parsedFile" :hops="graphRagHops" />
     </main>
     <div class="resizer" @mousedown="startResize"></div>
     <div class="right-column" :style="{ width: rightColumnWidth + 'px' }">

@@ -6,7 +6,7 @@ const props = defineProps({
   availableTypes: { type: Array, default: () => [] },
   schemaVersion: { type: Number, default: 0 },
 })
-const emit = defineEmits(['file-selected', 'filters-changed', 'schema-used'])
+const emit = defineEmits(['file-selected', 'filters-changed', 'schema-used', 'hops-changed'])
 
 const model = ref('로딩 중...')
 const isUploading = ref(false)
@@ -16,6 +16,13 @@ const schemas = ref([])
 const isUsingSchema = ref(false)
 const schemaUseError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
+const graphRagHops = ref(1)
+
+function onHopsInput(event) {
+  const value = Math.max(1, Math.min(5, Number(event.target.value) || 1))
+  graphRagHops.value = value
+  emit('hops-changed', value)
+}
 
 watch(
   () => props.availableTypes,
@@ -175,6 +182,21 @@ function toggleType(type) {
     </section>
 
     <section>
+      <h3>GraphRAG 설정</h3>
+      <label class="hops-label">
+        검색 hop 수
+        <input
+          type="number"
+          min="1"
+          max="5"
+          :value="graphRagHops"
+          @change="onHopsInput"
+          class="hops-input"
+        />
+      </label>
+    </section>
+
+    <section>
       <h3>그래프 노드 필터</h3>
       <p v-if="availableTypes.length === 0" class="placeholder">
         아직 추출된 그래프가 없습니다
@@ -248,5 +270,15 @@ function toggleType(type) {
 .file-item.disabled {
   pointer-events: none;
   opacity: 0.5;
+}
+.hops-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.hops-input {
+  width: 4rem;
+  padding: 0.25rem;
 }
 </style>

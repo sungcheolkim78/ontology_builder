@@ -3,3 +3,4 @@ uvicorn[standard]==0.30.6
 langchain-openai==1.6.0
 firecrawl-anydoc==0.2.3
 python-multipart==0.0.32
+networkx==3.6.1
