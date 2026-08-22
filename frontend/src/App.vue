@@ -11,6 +11,7 @@ const MAX_RIGHT_WIDTH = 800
 const parsedFile = ref(null)
 const graphFilters = ref(new Set())
 const availableTypes = ref([])
+const schemaVersion = ref(0)
 const rightColumnWidth = ref(360)
 
 let dragStartX = 0
@@ -26,6 +27,10 @@ function onFiltersChanged(filters) {
 
 function onTypesAvailable(types) {
   availableTypes.value = types
+}
+
+function onSchemaChanged() {
+  schemaVersion.value++
 }
 
 function startResize(event) {
@@ -52,8 +57,10 @@ function stopResize() {
     <SettingsPanel
       :selected-filename="parsedFile?.filename"
       :available-types="availableTypes"
+      :schema-version="schemaVersion"
       @file-selected="onFileSelected"
       @filters-changed="onFiltersChanged"
+      @schema-used="onSchemaChanged"
     />
     <main class="chat-column">
       <ChatPanel />
@@ -64,7 +71,9 @@ function stopResize() {
       <OntologyGraph
         :file="parsedFile"
         :enabled-types="graphFilters"
+        :schema-version="schemaVersion"
         @types-available="onTypesAvailable"
+        @schema-updated="onSchemaChanged"
       />
     </div>
   </div>

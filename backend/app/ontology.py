@@ -6,6 +6,20 @@ from app.chat import get_chat_model
 
 GRAPH_DIR = Path(__file__).parent.parent / "data" / "graph"
 
+DEFAULT_SCHEMA = {
+    "node_types": [
+        {"name": "Entity", "description": "A generic named entity mentioned in the document."}
+    ],
+    "edge_types": [
+        {
+            "name": "RELATED_TO",
+            "description": "A generic relationship between two entities.",
+            "source": "Entity",
+            "target": "Entity",
+        }
+    ],
+}
+
 SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
 extracting entities and relationships from it.
 
@@ -92,6 +106,16 @@ def save_graph(stem: str, graph: dict) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / "nodes.json").write_text(json.dumps(graph["nodes"]))
     (d / "edges.json").write_text(json.dumps(graph["edges"]))
+
+
+def list_schema_stems() -> list[str]:
+    if not GRAPH_DIR.is_dir():
+        return []
+    return [
+        d.name
+        for d in GRAPH_DIR.iterdir()
+        if d.is_dir() and (d / "schema.json").is_file()
+    ]
 
 
 def load_graph(stem: str) -> dict | None:

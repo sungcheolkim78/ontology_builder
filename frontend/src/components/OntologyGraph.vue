@@ -4,15 +4,18 @@ import { computed, ref, watch } from 'vue'
 const props = defineProps({
   file: { type: Object, default: null },
   enabledTypes: { type: Set, default: () => new Set() },
+  schemaVersion: { type: Number, default: 0 },
 })
-const emit = defineEmits(['types-available'])
+const emit = defineEmits(['types-available', 'schema-updated'])
 
 const nodes = ref([])
 const edges = ref([])
 const status = ref('empty') // empty | loading | no-graph | ready | error
 const error = ref('')
+const message = ref('')
 const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
+const schemaTypeCount = ref(null) // null = unknown/no schema yet
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const RADIUS = 100
@@ -43,15 +46,36 @@ const visibleEdges = computed(() => {
   return edges.value.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
 })
 
+async function loadSchemaStatus(file) {
+  if (!file) {
+    schemaTypeCount.value = null
+    return
+  }
+  try {
+    const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}/schema`)
+    if (res.status === 404) {
+      schemaTypeCount.value = 0
+      return
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const schema = await res.json()
+    schemaTypeCount.value = schema.node_types.length
+  } catch (err) {
+    schemaTypeCount.value = null
+  }
+}
+
 async function loadGraph(file) {
   nodes.value = []
   edges.value = []
   error.value = ''
+  message.value = ''
   if (!file) {
     status.value = 'empty'
     return
   }
   status.value = 'loading'
+  await loadSchemaStatus(file)
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}`)
     if (res.status === 404) {
@@ -71,11 +95,13 @@ async function loadGraph(file) {
 }
 
 watch(() => props.file, loadGraph, { immediate: true })
+watch(() => props.schemaVersion, () => loadSchemaStatus(props.file))
 
 async function generateSchema() {
   if (!props.file) return
   isGeneratingSchema.value = true
   error.value = ''
+  message.value = ''
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
@@ -84,6 +110,10 @@ async function generateSchema() {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
+    const schema = await res.json()
+    schemaTypeCount.value = schema.node_types.length
+    message.value = `스키마 생성 완료 (노드 타입 ${schema.node_types.length}개)`
+    emit('schema-updated')
   } catch (err) {
     error.value = '스키마 생성 실패: ' + err.message
   } finally {
@@ -95,6 +125,7 @@ async function extract() {
   if (!props.file) return
   isExtracting.value = true
   error.value = ''
+  message.value = ''
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
       method: 'POST',
@@ -104,6 +135,8 @@ async function extract() {
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
     await loadGraph(props.file)
+    message.value = '그래프 추출 완료'
+    emit('schema-updated')
   } catch (err) {
     error.value = '그래프 추출 실패: ' + err.message
   } finally {
@@ -127,6 +160,12 @@ async function extract() {
           {{ isExtracting ? '추출 중...' : '그래프 추출' }}
         </button>
       </div>
+      <p class="schema-status">
+        <template v-if="schemaTypeCount === null">스키마 상태 확인 중...</template>
+        <template v-else-if="schemaTypeCount === 0">활성 스키마 없음 (추출 시 기본 스키마 사용)</template>
+        <template v-else>활성 스키마: 노드 타입 {{ schemaTypeCount }}개</template>
+      </p>
+      <p v-if="message" class="success">{{ message }}</p>
       <p v-if="error" class="error">{{ error }}</p>
       <p v-if="status === 'no-graph' && !error" class="placeholder">
         아직 추출된 온톨로지가 없습니다
@@ -178,6 +217,13 @@ async function extract() {
 }
 .placeholder {
   color: #888;
+}
+.schema-status {
+  color: #555;
+  font-size: 0.85rem;
+}
+.success {
+  color: #1a7f37;
 }
 .error {
   color: red;

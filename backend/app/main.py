@@ -8,7 +8,16 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
-from app.ontology import extract_graph, generate_schema, load_graph, load_schema, save_graph, save_schema
+from app.ontology import (
+    DEFAULT_SCHEMA,
+    extract_graph,
+    generate_schema,
+    list_schema_stems,
+    load_graph,
+    load_schema,
+    save_graph,
+    save_schema,
+)
 from app.parser import DATA_DIR, parse_to_markdown_file
 
 app = FastAPI()
@@ -92,6 +101,11 @@ def _stem(filename: str) -> str:
     return Path(os.path.basename(filename)).stem
 
 
+@app.get("/api/ontology/schemas")
+def list_schemas():
+    return {"schemas": [{"stem": stem} for stem in list_schema_stems()]}
+
+
 @app.post("/api/ontology/{filename}/schema")
 def create_schema(filename: str):
     doc_path = _document_path(filename)
@@ -105,6 +119,27 @@ def create_schema(filename: str):
     return schema
 
 
+class UseSchemaRequest(BaseModel):
+    source_stem: str
+
+
+@app.post("/api/ontology/{filename}/schema/use")
+def use_schema(filename: str, request: UseSchemaRequest):
+    schema = load_schema(request.source_stem)
+    if schema is None:
+        raise HTTPException(status_code=404, detail="source schema not found")
+    save_schema(_stem(filename), schema)
+    return schema
+
+
+@app.get("/api/ontology/{filename}/schema")
+def get_schema(filename: str):
+    schema = load_schema(_stem(filename))
+    if schema is None:
+        raise HTTPException(status_code=404, detail="schema not found")
+    return schema
+
+
 @app.post("/api/ontology/{filename}/extract")
 def create_extraction(filename: str):
     doc_path = _document_path(filename)
@@ -113,7 +148,8 @@ def create_extraction(filename: str):
     stem = _stem(filename)
     schema = load_schema(stem)
     if schema is None:
-        raise HTTPException(status_code=400, detail="generate a schema first")
+        schema = DEFAULT_SCHEMA
+        save_schema(stem, schema)
     try:
         graph = extract_graph(doc_path.read_text(), schema)
     except ValueError as e:

@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.ontology import GRAPH_DIR
+from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR
 from app.parser import DATA_DIR
 
 
@@ -72,13 +72,20 @@ def test_generate_schema_returns_404_when_document_missing(monkeypatch):
     assert response.status_code == 404
 
 
-def test_extract_returns_400_when_schema_missing(monkeypatch):
+def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):
     write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+    )
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/extract")
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json() == graph
+    saved_schema = json.loads((GRAPH_DIR / "doc_raw" / "schema.json").read_text())
+    assert saved_schema == DEFAULT_SCHEMA
 
 
 def test_extract_saves_and_returns_graph(monkeypatch):
@@ -139,5 +146,86 @@ def test_get_ontology_returns_404_when_not_extracted():
     client = TestClient(app)
 
     response = client.get("/api/ontology/doc_raw.md")
+
+    assert response.status_code == 404
+
+
+def test_list_schemas_returns_empty_when_none():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/schemas")
+
+    assert response.status_code == 200
+    assert response.json() == {"schemas": []}
+
+
+def test_list_schemas_returns_stems_with_a_saved_schema():
+    schema = {"node_types": [], "edge_types": []}
+    for stem in ("doc_raw", "other_raw"):
+        d = GRAPH_DIR / stem
+        d.mkdir(parents=True)
+        (d / "schema.json").write_text(json.dumps(schema))
+    # a graph dir with no schema.json shouldn't be listed
+    (GRAPH_DIR / "no_schema_raw").mkdir(parents=True)
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/schemas")
+
+    assert response.status_code == 200
+    assert sorted(s["stem"] for s in response.json()["schemas"]) == [
+        "doc_raw",
+        "other_raw",
+    ]
+
+
+def test_get_schema_returns_saved_schema():
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    d = GRAPH_DIR / "doc_raw"
+    d.mkdir(parents=True)
+    (d / "schema.json").write_text(json.dumps(schema))
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/schema")
+
+    assert response.status_code == 200
+    assert response.json() == schema
+
+
+def test_get_schema_returns_404_when_missing():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/schema")
+
+    assert response.status_code == 404
+
+
+def test_use_schema_copies_source_schema_to_target():
+    write_document("target_raw.md")
+    source_schema = {
+        "node_types": [{"name": "Organization", "description": "an org"}],
+        "edge_types": [],
+    }
+    source_dir = GRAPH_DIR / "source_raw"
+    source_dir.mkdir(parents=True)
+    (source_dir / "schema.json").write_text(json.dumps(source_schema))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/target_raw.md/schema/use", json={"source_stem": "source_raw"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == source_schema
+    saved = json.loads((GRAPH_DIR / "target_raw" / "schema.json").read_text())
+    assert saved == source_schema
+
+
+def test_use_schema_returns_404_when_source_missing():
+    write_document("target_raw.md")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/target_raw.md/schema/use", json={"source_stem": "missing_raw"}
+    )
 
     assert response.status_code == 404
