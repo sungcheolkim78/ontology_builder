@@ -6,6 +6,21 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.ontology import GRAPH_DIR
 
+NODES = [
+    {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+    {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+]
+EDGES = [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
+SCHEMA = {
+    "node_types": [
+        {"name": "Person", "description": "a person"},
+        {"name": "Concept", "description": "a concept"},
+    ],
+    "edge_types": [
+        {"name": "WORKED_ON", "description": "worked on", "source": "Person", "target": "Concept"}
+    ],
+}
+
 
 class FakeChatModel:
     def invoke(self, messages):
@@ -27,6 +42,15 @@ class SequencedChatModel:
         return type("FakeResponse", (), {"content": content})()
 
 
+def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
+    graph_dir = GRAPH_DIR / stem
+    graph_dir.mkdir(parents=True)
+    (graph_dir / "schema.json").write_text(json.dumps(schema))
+    (graph_dir / "nodes.json").write_text(json.dumps(nodes))
+    (graph_dir / "edges.json").write_text(json.dumps(edges))
+    return graph_dir
+
+
 def test_chat_returns_assistant_reply(monkeypatch):
     monkeypatch.setattr("app.main.get_chat_model", lambda: FakeChatModel())
     client = TestClient(app)
@@ -40,19 +64,14 @@ def test_chat_returns_assistant_reply(monkeypatch):
     assert response.json() == {"role": "assistant", "content": "echo: hello"}
 
 
-def test_chat_with_filename_injects_graph_context(monkeypatch):
-    graph_dir = GRAPH_DIR / "doc_raw"
-    graph_dir.mkdir(parents=True)
-    nodes = [
-        {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
-        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
-    ]
-    edges = [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
-    (graph_dir / "nodes.json").write_text(json.dumps(nodes))
-    (graph_dir / "edges.json").write_text(json.dumps(edges))
-
+def test_chat_with_filename_injects_graph_context_and_type_preview(monkeypatch):
+    write_graph_dir()
     model = SequencedChatModel(
-        [json.dumps(["Ada Lovelace"]), "Ada Lovelace worked on the Analytical Engine."]
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
+            json.dumps(["Ada Lovelace"]),
+            "Ada Lovelace worked on the Analytical Engine.",
+        ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
@@ -69,14 +88,69 @@ def test_chat_with_filename_injects_graph_context(monkeypatch):
         )
 
         assert response.status_code == 200
-        assert response.json() == {
-            "role": "assistant",
-            "content": "Ada Lovelace worked on the Analytical Engine.",
-        }
-        assert len(model.calls) == 2
-        final_messages = model.calls[1]
+        body = response.json()
+        assert body["role"] == "assistant"
+        assert "Person" in body["content"]
+        assert "WORKED_ON" in body["content"]
+        assert "Ada Lovelace worked on the Analytical Engine." in body["content"]
+        assert len(model.calls) == 3
+        final_messages = model.calls[2]
         assert final_messages[0].content.startswith("다음은")
         assert "Analytical Engine" in final_messages[0].content
+    finally:
+        shutil.rmtree(GRAPH_DIR)
+
+
+def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
+    write_graph_dir()
+    model = SequencedChatModel([json.dumps({"node_types": [], "edge_types": []})])
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "완전히 무관한 질문"}],
+                "filename": "doc_raw.md",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "찾을 수 없습니다" in body["content"]
+        assert len(model.calls) == 1  # only type analysis, no final answer call
+    finally:
+        shutil.rmtree(GRAPH_DIR)
+
+
+def test_chat_reports_not_found_when_no_node_instance_matches(monkeypatch):
+    write_graph_dir()
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": []}),
+            json.dumps(["a stranger not in the graph"]),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "낯선 사람에 대한 질문"}],
+                "filename": "doc_raw.md",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "Person" in body["content"]
+        assert "찾을 수 없습니다" in body["content"]
+        assert len(model.calls) == 2  # type analysis + keyword extraction, no final answer call
     finally:
         shutil.rmtree(GRAPH_DIR)
 

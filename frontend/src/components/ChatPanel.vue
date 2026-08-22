@@ -89,6 +89,7 @@ async function sendMessage() {
 }
 .message p {
   margin: 0.25rem 0 0;
+  white-space: pre-wrap;
 }
 .error {
   color: red;

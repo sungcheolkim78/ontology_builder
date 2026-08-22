@@ -50,30 +50,48 @@ FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
 
 **`POST /api/chat`** — body
 `{"messages": [{"role": "user"|"assistant"|"system", "content": "..."}], "filename": "...", "hops": 1}`.
-`filename`/`hops` are optional; when `filename` names a document with an
-extracted graph (`GET /api/ontology/{filename}` would succeed), the
-last user message is run through GraphRAG before the chat call:
-1. `graphrag.extract_keywords()` asks the LLM for entities/terms in the
-   question (JSON array).
-2. `graphrag.retrieve_graph_context()` matches those keywords against
-   node labels (case-insensitive substring), builds a `networkx.DiGraph`
-   from the saved nodes/edges, and expands each matched node via
-   `nx.ego_graph(..., radius=hops, undirected=True)`. The union of all
-   expanded neighborhoods, plus every edge among them, is formatted as
-   an `Entities:` / `Relations:` text block.
-3. If any context was found, it's injected as a `system` message
-   prepended to the conversation (in Korean: "다음은 문서에서 추출된
-   관련 정보입니다:\n{context}") before the normal chat call.
+`filename`/`hops` are optional. Plain chat (no `filename`, or the
+document has no schema/graph yet) works exactly as it always has:
+messages go straight to `ChatOpenAI`. When `filename` names a document
+that has *both* a schema and an extracted graph, `graphrag.search_graph()`
+runs a schema-aware, two-stage search before the chat call:
 
-If `filename` is omitted, the graph hasn't been extracted yet, no
-keywords match, or keyword extraction fails to parse, this silently
-falls back to plain chat — no error surfaces to the user. Converts the
-(possibly context-prefixed) messages to langchain messages, calls
-`ChatOpenAI` pointed at `https://openrouter.ai/api/v1` (model from
-`OPENROUTER_MODEL` env var, default `openai/gpt-4o-mini`), returns
-`{"role": "assistant", "content": "..."}`. Non-streaming. Conversation
-history is not persisted server-side — the frontend resends the full
-message list on every request.
+1. **Type analysis** — `determine_relevant_types()` sends the whole
+   schema plus the question to the LLM, asking which `node_types`/
+   `edge_types` (by exact name, from the schema) are relevant. Any
+   name the LLM returns that isn't actually in the schema is dropped
+   (defends against hallucinated types). If *both* lists come back
+   empty, the search stops here — no keyword extraction, no second LLM
+   call.
+2. **Instance search** — `extract_keywords()` (unchanged from before:
+   a separate LLM call) pulls entities/terms out of the question, and
+   `find_relevant_nodes()` matches them against node labels
+   (case-insensitive substring), but now pre-filtered to only nodes
+   whose `type` is in the determined `node_types` — a node type the
+   analysis step didn't flag can't match, even if its label happens to
+   overlap a keyword. `find_matching_edges()` separately picks up
+   edges whose `type` is in the determined `edge_types` *and* that
+   connect to an already-matched node (edges have no text of their own
+   to keyword-match against). Matched edges contribute their other
+   endpoint back into the matched-node set.
+3. **Expansion** — same as before: the matched node set is expanded
+   `hops` steps via `nx.ego_graph(..., undirected=True)`, and the
+   resulting subgraph is formatted as an `Entities:`/`Relations:` text
+   block, injected as a `system` message ahead of the conversation.
+
+`format_type_preview()` renders the determined types as a fixed-format
+line — `[관련 타입 분석] 노드: {...} / 엣지: {...}` (또는 "없음") — that's
+**always prepended to the assistant's reply** when this path runs, so
+the type-analysis step is visible, not just an internal implementation
+detail. If nothing was found at any stage (no relevant types, or
+relevant types but no matching node/edge instances), the reply is the
+preview line plus "관련된 내용을 찾을 수 없습니다." and the chat model is
+never called for a final answer — this is a deliberate behavior change
+from a bare GraphRAG setup: once a document with a graph is selected,
+a miss is reported as a miss rather than silently answering from the
+model's general knowledge. A technical failure (LLM returns unparseable
+JSON at either stage) is different from a miss and falls back to plain
+chat, same as when there's no graph at all.
 
 **`POST /api/parse`** — multipart upload, field `file`. Extracts the
 extension from the filename (sanitized via `os.path.basename` to
@@ -343,8 +361,11 @@ transform cache, not the browser).
   a 400 — the user re-clicks the button.
 - **No document length/token limits.** The full document text is sent
   to the LLM for both schema generation and extraction.
-- **GraphRAG node matching is a naive substring match**, not embeddings
-  or fuzzy matching — keywords the LLM extracts have to substantially
-  overlap with a node's `label` text to hit. Every GraphRAG-augmented
-  chat turn costs an extra LLM call (keyword extraction) beyond the
-  answer itself.
+- **GraphRAG instance matching is a naive substring match**, not
+  embeddings or fuzzy matching — keywords the LLM extracts have to
+  substantially overlap with a node's `label` text to hit. A
+  GraphRAG-augmented chat turn costs up to three LLM calls (type
+  analysis, keyword extraction, then the answer) versus one for plain
+  chat — the type-analysis step alone is enough to short-circuit to
+  "not found" without the other two if nothing in the schema looked
+  relevant.

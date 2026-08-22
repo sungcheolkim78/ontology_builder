@@ -8,7 +8,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
-from app.graphrag import extract_keywords, retrieve_graph_context
+from app.graphrag import format_type_preview, search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
     extract_graph,
@@ -62,17 +62,30 @@ def chat(request: ChatRequest):
     messages = [m.model_dump() for m in request.messages]
 
     if request.filename and messages:
-        graph_data = load_graph(_stem(request.filename))
-        if graph_data:
+        stem = _stem(request.filename)
+        schema = load_schema(stem)
+        graph_data = load_graph(stem)
+        if schema and graph_data:
             try:
-                keywords = extract_keywords(messages[-1]["content"])
-                context = retrieve_graph_context(graph_data, keywords, request.hops)
+                result = search_graph(messages[-1]["content"], schema, graph_data, request.hops)
             except ValueError:
-                context = None
-            if context:
-                messages = [
-                    {"role": "system", "content": f"다음은 문서에서 추출된 관련 정보입니다:\n{context}"}
-                ] + messages
+                result = None
+
+            if result is not None:
+                preview = format_type_preview(result["node_types"], result["edge_types"])
+                if result["context"]:
+                    augmented = [
+                        {
+                            "role": "system",
+                            "content": f"다음은 문서에서 추출된 관련 정보입니다:\n{result['context']}",
+                        }
+                    ] + messages
+                    model = get_chat_model()
+                    response = model.invoke(to_langchain_messages(augmented))
+                    content = f"{preview}\n\n{response.content}"
+                else:
+                    content = f"{preview}\n\n관련된 내용을 찾을 수 없습니다."
+                return {"role": "assistant", "content": content}
 
     model = get_chat_model()
     lc_messages = to_langchain_messages(messages)
