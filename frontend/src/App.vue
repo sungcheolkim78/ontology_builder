@@ -1,22 +1,93 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 
-const message = ref('불러오는 중...')
+const messages = ref([])
+const input = ref('')
+const isLoading = ref(false)
+const error = ref('')
 
-onMounted(async () => {
+async function sendMessage() {
+  const content = input.value.trim()
+  if (!content || isLoading.value) return
+
+  messages.value.push({ role: 'user', content })
+  input.value = ''
+  error.value = ''
+  isLoading.value = true
+
   try {
-    const res = await fetch('/api/hello')
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: messages.value }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    message.value = data.message
+    messages.value.push({ role: data.role, content: data.content })
   } catch (err) {
-    message.value = 'backend 호출 실패: ' + err.message
+    error.value = '메시지 전송 실패: ' + err.message
+  } finally {
+    isLoading.value = false
   }
-})
+}
 </script>
 
 <template>
-  <main>
-    <h1>Ontology Builder</h1>
-    <p>{{ message }}</p>
+  <main class="chat">
+    <h1>Ontology Builder Chat</h1>
+
+    <div class="messages">
+      <div
+        v-for="(msg, i) in messages"
+        :key="i"
+        class="message"
+        :class="msg.role"
+      >
+        <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+        <p>{{ msg.content }}</p>
+      </div>
+      <p v-if="isLoading">응답 중...</p>
+      <p v-if="error" class="error">{{ error }}</p>
+    </div>
+
+    <form class="input-row" @submit.prevent="sendMessage">
+      <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
+      <button type="submit" :disabled="isLoading">전송</button>
+    </form>
   </main>
 </template>
+
+<style scoped>
+.chat {
+  max-width: 600px;
+  margin: 0 auto;
+  font-family: sans-serif;
+}
+.messages {
+  min-height: 300px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.message {
+  margin-bottom: 0.75rem;
+}
+.message.user {
+  text-align: right;
+}
+.message p {
+  margin: 0.25rem 0 0;
+}
+.error {
+  color: red;
+}
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.input-row input {
+  flex: 1;
+  padding: 0.5rem;
+}
+</style>
