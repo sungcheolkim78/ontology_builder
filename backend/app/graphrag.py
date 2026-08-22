@@ -89,6 +89,16 @@ def find_matching_edges(edges: list, allowed_types: list, matched_node_ids: set)
     return matched
 
 
+def all_nodes_of_types(nodes: list, allowed_types: list) -> list:
+    allowed = set(allowed_types)
+    return [n["id"] for n in nodes if n["type"] in allowed]
+
+
+def all_edges_of_types(edges: list, allowed_types: list) -> list:
+    allowed = set(allowed_types)
+    return [e for e in edges if e["type"] in allowed]
+
+
 def _build_graph(graph_data: dict) -> nx.DiGraph:
     g = nx.DiGraph()
     for node in graph_data["nodes"]:
@@ -157,6 +167,19 @@ def search_graph(question: str, schema: dict, graph_data: dict, hops: int = 1) -
         for edge in matched_edges:
             matched_node_ids.add(edge["source"])
             matched_node_ids.add(edge["target"])
+
+    if not matched_node_ids:
+        # Keyword matching found no specific instance -- either the question
+        # names nothing concrete (a category question like "what are the
+        # responsibilities?") or the question/document languages don't
+        # literally overlap. The type analysis step already established
+        # these types are relevant, so fall back to every instance of them
+        # rather than reporting "not found" when the graph actually has data.
+        matched_node_ids = set(all_nodes_of_types(graph_data["nodes"], node_types))
+        if edge_types:
+            for edge in all_edges_of_types(graph_data["edges"], edge_types):
+                matched_node_ids.add(edge["source"])
+                matched_node_ids.add(edge["target"])
 
     context = _build_context_text(graph_data, matched_node_ids, hops)
     return {"node_types": node_types, "edge_types": edge_types, "context": context}

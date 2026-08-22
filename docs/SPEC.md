@@ -74,21 +74,39 @@ runs a schema-aware, two-stage search before the chat call:
    connect to an already-matched node (edges have no text of their own
    to keyword-match against). Matched edges contribute their other
    endpoint back into the matched-node set.
-3. **Expansion** — same as before: the matched node set is expanded
-   `hops` steps via `nx.ego_graph(..., undirected=True)`, and the
-   resulting subgraph is formatted as an `Entities:`/`Relations:` text
-   block, injected as a `system` message ahead of the conversation.
+3. **Fallback to "all instances of the type"** — if instance search
+   comes up completely empty (no node matched, no edge matched) *but*
+   at least one type was determined relevant, `all_nodes_of_types()` /
+   `all_edges_of_types()` pull in every node/edge of the determined
+   types, unfiltered by keyword. This exists because keyword-substring
+   matching only ever finds a *specific named instance* — it has
+   nothing to match against category questions like "what are the
+   responsibilities?" (no keyword will ever appear inside long
+   descriptive Responsibility labels), or when the question and
+   document are in different languages (a Korean keyword won't
+   substring-match an English label even when the concept is
+   identical). Real bug report that motivated this: "어떤 학위가
+   필요한 잡인가요?" and "what responsibilies?" both correctly
+   identified their relevant types in stage 1 but got zero keyword
+   matches in stage 2, so every such question reported "not found"
+   despite the graph clearly having the answer. Only when a determined
+   type has *zero actual instances* in the graph does the search still
+   end empty after this fallback — a genuine miss.
+4. **Expansion** — the resulting node set (whichever stage produced
+   it) is expanded `hops` steps via `nx.ego_graph(..., undirected=True)`,
+   and the resulting subgraph is formatted as an `Entities:`/`Relations:`
+   text block, injected as a `system` message ahead of the conversation.
 
 `format_type_preview()` renders the determined types as a fixed-format
 line — `[관련 타입 분석] 노드: {...} / 엣지: {...}` (또는 "없음") — that's
 **always prepended to the assistant's reply** when this path runs, so
 the type-analysis step is visible, not just an internal implementation
-detail. If nothing was found at any stage (no relevant types, or
-relevant types but no matching node/edge instances), the reply is the
-preview line plus "관련된 내용을 찾을 수 없습니다." and the chat model is
-never called for a final answer — this is a deliberate behavior change
-from a bare GraphRAG setup: once a document with a graph is selected,
-a miss is reported as a miss rather than silently answering from the
+detail. If nothing was found at any stage (no relevant types, or a
+relevant type with zero actual instances), the reply is the preview
+line plus "관련된 내용을 찾을 수 없습니다." and the chat model is never
+called for a final answer — this is a deliberate behavior change from
+a bare GraphRAG setup: once a document with a graph is selected, a
+miss is reported as a miss rather than silently answering from the
 model's general knowledge. A technical failure (LLM returns unparseable
 JSON at either stage) is different from a miss and falls back to plain
 chat, same as when there's no graph at all.
@@ -363,9 +381,13 @@ transform cache, not the browser).
   to the LLM for both schema generation and extraction.
 - **GraphRAG instance matching is a naive substring match**, not
   embeddings or fuzzy matching — keywords the LLM extracts have to
-  substantially overlap with a node's `label` text to hit. A
-  GraphRAG-augmented chat turn costs up to three LLM calls (type
-  analysis, keyword extraction, then the answer) versus one for plain
-  chat — the type-analysis step alone is enough to short-circuit to
-  "not found" without the other two if nothing in the schema looked
-  relevant.
+  substantially overlap with a node's `label` text to hit. The
+  all-instances-of-type fallback (see above) covers the case where
+  this finds nothing but the type is genuinely relevant; it does *not*
+  help when a question needs a *specific* instance the keyword
+  extraction simply mis-extracted (e.g. mangled a name) — that still
+  reads as "not found." A GraphRAG-augmented chat turn costs up to
+  three LLM calls (type analysis, keyword extraction, then the answer)
+  versus one for plain chat — the type-analysis step alone is enough
+  to short-circuit to "not found" without the other two if nothing in
+  the schema looked relevant.

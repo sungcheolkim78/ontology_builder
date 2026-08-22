@@ -125,12 +125,18 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
         shutil.rmtree(GRAPH_DIR)
 
 
-def test_chat_reports_not_found_when_no_node_instance_matches(monkeypatch):
+def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
+    # A category-style question ("who are the people mentioned?") or a
+    # question/document language mismatch means no keyword literally
+    # matches a node label. Since the type analysis found a real, relevant
+    # type, the answer should still use every instance of that type rather
+    # than reporting "not found."
     write_graph_dir()
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": []}),
             json.dumps(["a stranger not in the graph"]),
+            "Ada Lovelace is the person mentioned.",
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -141,7 +147,7 @@ def test_chat_reports_not_found_when_no_node_instance_matches(monkeypatch):
         response = client.post(
             "/api/chat",
             json={
-                "messages": [{"role": "user", "content": "낯선 사람에 대한 질문"}],
+                "messages": [{"role": "user", "content": "언급된 사람은 누구인가요?"}],
                 "filename": "doc_raw.md",
             },
         )
@@ -149,8 +155,48 @@ def test_chat_reports_not_found_when_no_node_instance_matches(monkeypatch):
         assert response.status_code == 200
         body = response.json()
         assert "Person" in body["content"]
+        assert "Ada Lovelace is the person mentioned." in body["content"]
+        assert len(model.calls) == 3
+        final_messages = model.calls[2]
+        assert "Ada Lovelace" in final_messages[0].content
+    finally:
+        shutil.rmtree(GRAPH_DIR)
+
+
+def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatch):
+    # "Location" is a real, valid schema type (so type analysis isn't
+    # filtering it out), but there happens to be zero Location nodes
+    # actually extracted -- the fallback has nothing to fall back to, so
+    # this should still be a genuine "not found."
+    schema_with_unused_type = {
+        "node_types": SCHEMA["node_types"] + [{"name": "Location", "description": "a place"}],
+        "edge_types": SCHEMA["edge_types"],
+    }
+    write_graph_dir(schema=schema_with_unused_type)
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Location"], "edge_types": []}),
+            json.dumps(["nonexistent keyword"]),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "어디에서 일했나요?"}],
+                "filename": "doc_raw.md",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "Location" in body["content"]
         assert "찾을 수 없습니다" in body["content"]
-        assert len(model.calls) == 2  # type analysis + keyword extraction, no final answer call
+        assert len(model.calls) == 2
     finally:
         shutil.rmtree(GRAPH_DIR)
 
