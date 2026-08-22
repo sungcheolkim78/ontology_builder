@@ -1,5 +1,7 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { VNetworkGraph } from 'v-network-graph'
+import 'v-network-graph/lib/style.css'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -18,10 +20,6 @@ const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
-const RADIUS = 100
-const CENTER = 130
-const MIN_ZOOM = 0.3
-const MAX_ZOOM = 3
 
 const schemaTypeCount = computed(() => (schema.value ? schema.value.node_types.length : 0))
 
@@ -51,30 +49,37 @@ const displayEdges = computed(() => {
   return []
 })
 
-function colorFor(type) {
-  const types = [...new Set(displayNodes.value.map((n) => n.type))].sort()
-  const index = types.indexOf(type)
-  return TYPE_COLORS[index % TYPE_COLORS.length]
-}
-
-const positions = computed(() => {
-  const map = {}
-  displayNodes.value.forEach((node, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(displayNodes.value.length, 1)
-    map[node.id] = {
-      x: CENTER + RADIUS * Math.cos(angle),
-      y: CENTER + RADIUS * Math.sin(angle),
-    }
-  })
-  return map
-})
-
 const visibleNodes = computed(() => displayNodes.value.filter((n) => props.enabledTypes.has(n.type)))
 
 const visibleEdges = computed(() => {
   const visibleIds = new Set(visibleNodes.value.map((n) => n.id))
   return displayEdges.value.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
 })
+
+function colorFor(type) {
+  const types = [...new Set(visibleNodes.value.map((n) => n.type))].sort()
+  const index = types.indexOf(type)
+  return TYPE_COLORS[index % TYPE_COLORS.length]
+}
+
+// --- v-network-graph data shapes ---
+const vngNodes = computed(() => {
+  const result = {}
+  for (const n of visibleNodes.value) {
+    result[n.id] = { name: n.label, type: n.type }
+  }
+  return result
+})
+
+const vngEdges = computed(() => {
+  const result = {}
+  visibleEdges.value.forEach((e, i) => {
+    result[`e${i}`] = { source: e.source, target: e.target }
+  })
+  return result
+})
+
+const layouts = ref({ nodes: {} })
 
 watch(
   displayNodes,
@@ -84,48 +89,63 @@ watch(
   { immediate: true }
 )
 
-// --- zoom / pan ---
-const zoomScale = ref(1)
-const panX = ref(0)
-const panY = ref(0)
-let panStartX = 0
-let panStartY = 0
-let panOriginX = 0
-let panOriginY = 0
+watch(
+  visibleNodes,
+  (list) => {
+    const radius = 150
+    const center = 200
+    const positions = {}
+    list.forEach((node, i) => {
+      const existing = layouts.value.nodes[node.id]
+      if (existing) {
+        positions[node.id] = existing
+        return
+      }
+      const angle = (2 * Math.PI * i) / Math.max(list.length, 1)
+      positions[node.id] = {
+        x: center + radius * Math.cos(angle),
+        y: center + radius * Math.sin(angle),
+      }
+    })
+    layouts.value = { nodes: positions }
+  },
+  { immediate: true }
+)
 
-function onWheel(event) {
-  const delta = event.deltaY > 0 ? -0.1 : 0.1
-  zoomScale.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomScale.value + delta))
-}
+const configs = computed(() => ({
+  view: {
+    autoPanAndZoomOnLoad: 'fit-content',
+    fitContentMargin: '10%',
+  },
+  node: {
+    normal: {
+      radius: 18,
+      color: (node) => colorFor(node.type),
+    },
+    label: {
+      visible: true,
+      text: 'name',
+      fontSize: 10,
+    },
+  },
+  edge: {
+    normal: {
+      color: '#bbb',
+      width: 1.5,
+    },
+  },
+}))
 
-function startPan(event) {
-  panStartX = event.clientX
-  panStartY = event.clientY
-  panOriginX = panX.value
-  panOriginY = panY.value
-  window.addEventListener('mousemove', onPan)
-  window.addEventListener('mouseup', stopPan)
-}
-
-function onPan(event) {
-  panX.value = panOriginX + (event.clientX - panStartX)
-  panY.value = panOriginY + (event.clientY - panStartY)
-}
-
-function stopPan() {
-  window.removeEventListener('mousemove', onPan)
-  window.removeEventListener('mouseup', stopPan)
-}
+const graphRef = ref(null)
 
 function resetView() {
-  zoomScale.value = 1
-  panX.value = 0
-  panY.value = 0
+  graphRef.value?.fitToContents()
 }
 
-const groupTransform = computed(
-  () => `translate(${panX.value}px, ${panY.value}px) scale(${zoomScale.value})`
-)
+async function fitSoon() {
+  await nextTick()
+  graphRef.value?.fitToContents()
+}
 
 // --- data loading ---
 async function loadSchemaStatus(file) {
@@ -151,7 +171,7 @@ async function loadGraph(file) {
   edges.value = []
   error.value = ''
   message.value = ''
-  resetView()
+  layouts.value = { nodes: {} }
   if (!file) {
     status.value = 'empty'
     return
@@ -173,6 +193,7 @@ async function loadGraph(file) {
     status.value = 'error'
     error.value = '온톨로지를 불러오지 못했습니다: ' + err.message
   }
+  fitSoon()
 }
 
 watch(() => props.file, loadGraph, { immediate: true })
@@ -192,9 +213,10 @@ async function generateSchema() {
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
     schema.value = await res.json()
-    resetView()
+    layouts.value = { nodes: {} }
     message.value = `스키마 생성 완료 (노드 타입 ${schema.value.node_types.length}개)`
     emit('schema-updated')
+    fitSoon()
   } catch (err) {
     error.value = '스키마 생성 실패: ' + err.message
   } finally {
@@ -256,39 +278,14 @@ async function extract() {
 
     <p v-else-if="status === 'error'" class="error">{{ error }}</p>
 
-    <div
-      v-if="displayMode !== 'none'"
-      class="graph-viewport"
-      @wheel.prevent="onWheel"
-      @mousedown="startPan"
-    >
-      <svg viewBox="0 0 260 260" class="graph-svg" :style="{ transform: groupTransform }">
-        <line
-          v-for="(edge, i) in visibleEdges"
-          :key="i"
-          :x1="positions[edge.source].x"
-          :y1="positions[edge.source].y"
-          :x2="positions[edge.target].x"
-          :y2="positions[edge.target].y"
-          stroke="#bbb"
-        />
-        <g v-for="node in visibleNodes" :key="node.id">
-          <circle
-            :cx="positions[node.id].x"
-            :cy="positions[node.id].y"
-            r="18"
-            :fill="colorFor(node.type)"
-          />
-          <text
-            :x="positions[node.id].x"
-            :y="positions[node.id].y + 30"
-            text-anchor="middle"
-            class="node-label"
-          >
-            {{ node.label }}
-          </text>
-        </g>
-      </svg>
+    <div v-if="displayMode !== 'none'" class="graph-viewport">
+      <v-network-graph
+        ref="graphRef"
+        :nodes="vngNodes"
+        :edges="vngEdges"
+        :layouts="layouts"
+        :configs="configs"
+      />
     </div>
   </section>
 </template>
@@ -296,44 +293,36 @@ async function extract() {
 <style scoped>
 .graph {
   height: 100%;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   padding: 1rem;
 }
 .actions {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+  flex-shrink: 0;
 }
 .placeholder {
   color: #888;
+  flex-shrink: 0;
 }
 .schema-status {
   color: #555;
   font-size: 0.85rem;
+  flex-shrink: 0;
 }
 .success {
   color: #1a7f37;
+  flex-shrink: 0;
 }
 .error {
   color: red;
+  flex-shrink: 0;
 }
 .graph-viewport {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  max-width: 320px;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-}
-.graph-viewport:active {
-  cursor: grabbing;
-}
-.graph-svg {
-  width: 100%;
-  display: block;
-  transform-origin: center center;
-}
-.node-label {
-  font-size: 9px;
-  fill: #333;
 }
 </style>

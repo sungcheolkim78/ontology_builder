@@ -178,11 +178,20 @@ components under `src/components/`.
   `SettingsPanel`'s filter checkboxes always match what's on screen,
   and `schema-updated` after a successful generate/extract so `App.vue`
   can bump `schemaVersion` (which also tells `SettingsPanel` to refresh
-  its schema library list). Pan/zoom: mouse wheel scales
-  (0.3×–3×), drag pans, both applied as a CSS `transform` directly on
-  the `<svg>` (not an inner `<g>` — see the Vite staleness
-  troubleshooting note below for why that matters); a "리셋" button
-  restores the default view.
+  its schema library list). Rendering is delegated to the
+  [`v-network-graph`](https://dash14.github.io/v-network-graph/) library
+  (`<v-network-graph :nodes :edges :layouts :configs>`), which fills
+  100% of its container and provides pan/zoom/node-drag for free —
+  `displayNodes`/`displayEdges` (schema-preview or real graph, filtered
+  by `enabledTypes`) are converted into the id-keyed objects the
+  library expects, node colors come from `configs.node.normal.color`
+  (a function of `node.type`), and initial node positions are a
+  circular layout we compute once per node (`layouts`, a plain ref the
+  library also mutates on drag). `view.autoPanAndZoomOnLoad: "fit-content"`
+  fits the graph on first mount; a "리셋" button re-triggers the same
+  fit via the component's exposed `fitToContents()` method (accessed
+  through a template ref), also called automatically after
+  load/generate/extract so the view stays sensible across data changes.
 
 State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `graphFilters` (enabled node types, a `Set`), `availableTypes` (from
