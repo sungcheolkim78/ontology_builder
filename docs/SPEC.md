@@ -227,9 +227,20 @@ directly.
   `displayNodes`/`displayEdges` (schema-preview or real graph, filtered
   by `enabledTypes`) are converted into the id-keyed objects the
   library expects, node colors come from `configs.node.normal.color`
-  (a function of `node.type`), and initial node positions are a
+  (a function of `node.type`), edge colors likewise from
+  `configs.edge.normal.color` (a function of `edge.label`, using a
+  separate color palette from nodes), and initial node positions are a
   circular layout we compute once per node (`layouts`, a plain ref the
-  library also mutates on drag). `view.autoPanAndZoomOnLoad: "fit-content"`
+  library also mutates on drag). Edge labels need more than config —
+  v-network-graph only reads a label's *text* from the edge object's
+  own `label` field (set to the relation type name when building
+  `vngEdges`) via the `#edge-label` slot rendering a `<v-edge-label>`;
+  `configs.edge.label` only controls style (font size/color), not
+  content. A small legend (two `<table>`s, node types and edge types,
+  each row a color swatch + type name) sits above the graph so the
+  color coding is actually readable — colors are assigned by sorted
+  index into each palette, so they stay stable as long as the set of
+  visible types doesn't change. `view.autoPanAndZoomOnLoad: "fit-content"`
   fits the graph on first mount; a "리셋" button re-triggers the same
   fit via the component's exposed `fitToContents()` method (accessed
   through a template ref), also called automatically after

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { VNetworkGraph } from 'v-network-graph'
+import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
 
 const props = defineProps({
@@ -20,6 +20,7 @@ const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
+const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const schemaTypeCount = computed(() => (schema.value ? schema.value.node_types.length : 0))
 
@@ -62,6 +63,26 @@ function colorFor(type) {
   return TYPE_COLORS[index % TYPE_COLORS.length]
 }
 
+function edgeColorFor(type) {
+  const types = [...new Set(visibleEdges.value.map((e) => e.type))].sort()
+  const index = types.indexOf(type)
+  return EDGE_TYPE_COLORS[index % EDGE_TYPE_COLORS.length]
+}
+
+const nodeTypeLegend = computed(() =>
+  [...new Set(visibleNodes.value.map((n) => n.type))].sort().map((type) => ({
+    type,
+    color: colorFor(type),
+  }))
+)
+
+const edgeTypeLegend = computed(() =>
+  [...new Set(visibleEdges.value.map((e) => e.type))].sort().map((type) => ({
+    type,
+    color: edgeColorFor(type),
+  }))
+)
+
 // --- v-network-graph data shapes ---
 const vngNodes = computed(() => {
   const result = {}
@@ -74,7 +95,7 @@ const vngNodes = computed(() => {
 const vngEdges = computed(() => {
   const result = {}
   visibleEdges.value.forEach((e, i) => {
-    result[`e${i}`] = { source: e.source, target: e.target }
+    result[`e${i}`] = { source: e.source, target: e.target, label: e.type }
   })
   return result
 })
@@ -130,8 +151,12 @@ const configs = computed(() => ({
   },
   edge: {
     normal: {
-      color: '#bbb',
+      color: (edge) => edgeColorFor(edge.label),
       width: 1.5,
+    },
+    label: {
+      fontSize: 9,
+      color: '#555',
     },
   },
 }))
@@ -278,6 +303,31 @@ async function extract() {
 
     <p v-else-if="status === 'error'" class="error">{{ error }}</p>
 
+    <div v-if="displayMode !== 'none'" class="legend">
+      <div class="legend-table-wrap">
+        <table class="legend-table">
+          <caption>노드 타입</caption>
+          <tbody>
+            <tr v-for="item in nodeTypeLegend" :key="'n-' + item.type">
+              <td><span class="swatch" :style="{ background: item.color }"></span></td>
+              <td>{{ item.type }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="legend-table-wrap">
+        <table class="legend-table">
+          <caption>엣지 타입</caption>
+          <tbody>
+            <tr v-for="item in edgeTypeLegend" :key="'e-' + item.type">
+              <td><span class="swatch edge" :style="{ background: item.color }"></span></td>
+              <td>{{ item.type }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div v-if="displayMode !== 'none'" class="graph-viewport">
       <v-network-graph
         ref="graphRef"
@@ -285,7 +335,11 @@ async function extract() {
         :edges="vngEdges"
         :layouts="layouts"
         :configs="configs"
-      />
+      >
+        <template #edge-label="{ edge, ...slotProps }">
+          <v-edge-label :text="edge.label" align="center" vertical-align="above" v-bind="slotProps" />
+        </template>
+      </v-network-graph>
     </div>
   </section>
 </template>
@@ -324,5 +378,44 @@ async function extract() {
   flex: 1;
   min-height: 0;
   width: 100%;
+}
+.legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+  flex-shrink: 0;
+}
+.legend-table-wrap {
+  max-height: 80px;
+  overflow-y: auto;
+}
+.legend-table {
+  font-size: 0.75rem;
+  border-collapse: collapse;
+}
+.legend-table caption {
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #666;
+  margin-bottom: 0.15rem;
+}
+.legend-table td {
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.swatch.edge {
+  border-radius: 2px;
+  width: 14px;
+  height: 4px;
 }
 </style>
