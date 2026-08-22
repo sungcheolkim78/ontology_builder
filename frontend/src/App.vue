@@ -1,22 +1,23 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ChatPanel from './components/ChatPanel.vue'
 import DocumentPreview from './components/DocumentPreview.vue'
 import OntologyGraph from './components/OntologyGraph.vue'
+import SchemaGraphPreview from './components/SchemaGraphPreview.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 
-const MIN_RIGHT_WIDTH = 260
-const MAX_RIGHT_WIDTH = 800
+const MIN_SPLIT = 20
+const MAX_SPLIT = 80
 
 const parsedFile = ref(null)
 const graphFilters = ref(new Set())
 const availableTypes = ref([])
 const schemaVersion = ref(0)
 const graphRagHops = ref(1)
-const rightColumnWidth = ref(360)
+const colPercent = ref(50)
+const rowPercent = ref(50)
 
-let dragStartX = 0
-let dragStartWidth = 0
+const gridRef = ref(null)
 
 function onFileSelected(file) {
   parsedFile.value = file
@@ -38,23 +39,51 @@ function onHopsChanged(hops) {
   graphRagHops.value = hops
 }
 
-function startResize(event) {
+let dragStartX = 0
+let dragStartColPercent = 0
+let dragStartY = 0
+let dragStartRowPercent = 0
+
+function startColResize(event) {
   dragStartX = event.clientX
-  dragStartWidth = rightColumnWidth.value
-  window.addEventListener('mousemove', onResize)
-  window.addEventListener('mouseup', stopResize)
+  dragStartColPercent = colPercent.value
+  window.addEventListener('mousemove', onColResize)
+  window.addEventListener('mouseup', stopColResize)
 }
 
-function onResize(event) {
-  const delta = dragStartX - event.clientX
-  const next = dragStartWidth + delta
-  rightColumnWidth.value = Math.min(MAX_RIGHT_WIDTH, Math.max(MIN_RIGHT_WIDTH, next))
+function onColResize(event) {
+  const rect = gridRef.value.getBoundingClientRect()
+  const deltaPercent = ((event.clientX - dragStartX) / rect.width) * 100
+  colPercent.value = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, dragStartColPercent + deltaPercent))
 }
 
-function stopResize() {
-  window.removeEventListener('mousemove', onResize)
-  window.removeEventListener('mouseup', stopResize)
+function stopColResize() {
+  window.removeEventListener('mousemove', onColResize)
+  window.removeEventListener('mouseup', stopColResize)
 }
+
+function startRowResize(event) {
+  dragStartY = event.clientY
+  dragStartRowPercent = rowPercent.value
+  window.addEventListener('mousemove', onRowResize)
+  window.addEventListener('mouseup', stopRowResize)
+}
+
+function onRowResize(event) {
+  const rect = gridRef.value.getBoundingClientRect()
+  const deltaPercent = ((event.clientY - dragStartY) / rect.height) * 100
+  rowPercent.value = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, dragStartRowPercent + deltaPercent))
+}
+
+function stopRowResize() {
+  window.removeEventListener('mousemove', onRowResize)
+  window.removeEventListener('mouseup', stopRowResize)
+}
+
+const gridStyle = computed(() => ({
+  gridTemplateColumns: `${colPercent.value}% 6px 1fr`,
+  gridTemplateRows: `${rowPercent.value}% 6px 1fr`,
+}))
 </script>
 
 <template>
@@ -68,19 +97,27 @@ function stopResize() {
       @schema-used="onSchemaChanged"
       @hops-changed="onHopsChanged"
     />
-    <main class="chat-column">
-      <ChatPanel :file="parsedFile" :hops="graphRagHops" />
-    </main>
-    <div class="resizer" @mousedown="startResize"></div>
-    <div class="right-column" :style="{ width: rightColumnWidth + 'px' }">
-      <DocumentPreview :file="parsedFile" />
-      <OntologyGraph
-        :file="parsedFile"
-        :enabled-types="graphFilters"
-        :schema-version="schemaVersion"
-        @types-available="onTypesAvailable"
-        @schema-updated="onSchemaChanged"
-      />
+    <div class="main-grid" :style="gridStyle" ref="gridRef">
+      <div class="panel top-left">
+        <ChatPanel :file="parsedFile" :hops="graphRagHops" />
+      </div>
+      <div class="panel top-right">
+        <DocumentPreview :file="parsedFile" />
+      </div>
+      <div class="panel bottom-left">
+        <OntologyGraph
+          :file="parsedFile"
+          :enabled-types="graphFilters"
+          :schema-version="schemaVersion"
+          @types-available="onTypesAvailable"
+          @schema-updated="onSchemaChanged"
+        />
+      </div>
+      <div class="panel bottom-right">
+        <SchemaGraphPreview :file="parsedFile" :schema-version="schemaVersion" />
+      </div>
+      <div class="resizer-v" @mousedown="startColResize"></div>
+      <div class="resizer-h" @mousedown="startRowResize"></div>
     </div>
   </div>
 </template>
@@ -91,31 +128,57 @@ function stopResize() {
   height: 100vh;
   font-family: sans-serif;
 }
-.chat-column {
+.main-grid {
   flex: 1;
   min-width: 0;
+  display: grid;
+}
+.panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.top-left {
+  grid-column: 1;
+  grid-row: 1;
   padding: 1rem;
   display: flex;
   flex-direction: column;
 }
-.resizer {
-  width: 6px;
-  flex-shrink: 0;
+.top-right {
+  grid-column: 3;
+  grid-row: 1;
+  border-left: 1px solid #ccc;
+}
+.bottom-left {
+  grid-column: 1;
+  grid-row: 3;
+  border-top: 1px solid #ccc;
+}
+.bottom-right {
+  grid-column: 3;
+  grid-row: 3;
+  border-left: 1px solid #ccc;
+  border-top: 1px solid #ccc;
+}
+.resizer-v {
+  grid-column: 2;
+  grid-row: 1 / span 3;
   cursor: col-resize;
   background: transparent;
 }
-.resizer:hover,
-.resizer:active {
+.resizer-v:hover,
+.resizer-v:active {
   background: #b8d0ff;
 }
-.right-column {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid #ccc;
+.resizer-h {
+  grid-column: 1 / span 3;
+  grid-row: 2;
+  cursor: row-resize;
+  background: transparent;
 }
-.right-column > * {
-  flex: 1;
-  min-height: 0;
+.resizer-h:hover,
+.resizer-h:active {
+  background: #b8d0ff;
 }
 </style>

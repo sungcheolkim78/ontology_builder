@@ -159,16 +159,28 @@ calls (keyword extraction, then the actual answer).
 
 ## Frontend (`frontend/`)
 
-Vue 3 + Vite. Dashboard layout in `src/App.vue`, split into four
+Vue 3 + Vite. Dashboard layout in `src/App.vue`, split into five
 components under `src/components/`.
 
 ```
-┌──────────┬─────────────────────┬──────────────────┐
-│          │                     │  Document Preview │
-│ Settings │       Chat          ├──────────────────┤
-│ (280px)  │     (flexible)      │  Ontology Graph   │
-└──────────┴─────────────────────┴──────────────────┘
+┌──────────┬──────────────────┬──────────────────┐
+│          │      Chat        │  Document Preview │
+│ Settings │                  ├──────────────────┤
+│ (280px)  │  Ontology Graph  │  Schema / Graph   │
+│          │                  │  DB Preview       │
+└──────────┴──────────────────┴──────────────────┘
 ```
+
+The right-hand area is a CSS grid (`App.vue`'s `.main-grid`) split into
+four quadrants, independently resizable: a `.resizer-v` (drag
+horizontally) between the two columns and a `.resizer-h` (drag
+vertically) between the two rows, both implemented the same way as
+`SettingsPanel`'s old single resizer — plain
+mousedown/mousemove/mouseup on `window`, computing the new split as a
+percentage of the grid's `getBoundingClientRect()` and clamped to
+20–80%. `colPercent`/`rowPercent` in `App.vue` drive
+`grid-template-columns`/`grid-template-rows` (`{split}% 6px 1fr`)
+directly.
 
 - **`SettingsPanel.vue`** — reads `/api/config` for the active model
   name (read-only) and `/api/files` for the list of previously parsed
@@ -222,17 +234,23 @@ components under `src/components/`.
   fit via the component's exposed `fitToContents()` method (accessed
   through a template ref), also called automatically after
   load/generate/extract so the view stays sensible across data changes.
+- **`SchemaGraphPreview.vue`** — read-only raw-data viewer, three tabs
+  ("스키마"/"Nodes"/"Edges") over `GET /api/ontology/{filename}/schema`
+  and `GET /api/ontology/{filename}` (nodes/edges from the same
+  response), each rendered as `JSON.stringify(..., null, 2)` in a
+  `<pre>`. Refetches on file change (resetting to the "스키마" tab) and
+  on `schemaVersion` change, same pattern as `OntologyGraph`. Exists
+  because working with the pipeline surfaced a real need to inspect the
+  raw schema/node/edge JSON directly rather than only its rendered
+  graph form.
 
 State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `graphFilters` (enabled node types, a `Set`), `availableTypes` (from
 `OntologyGraph`'s `types-available`, passed down to `SettingsPanel`),
 `schemaVersion` (bumped by either `OntologyGraph`'s `schema-updated` or
-`SettingsPanel`'s `schema-used`, and passed to both as a refresh
-signal), `graphRagHops` (from `SettingsPanel`'s `hops-changed`, passed
-to `ChatPanel`).
-A draggable `.resizer` between the chat column and the right column
-(document preview + ontology graph) adjusts `rightColumnWidth` via
-plain mousedown/mousemove/mouseup, clamped to 260–800px. Chat messages
+`SettingsPanel`'s `schema-used`, and passed to `SettingsPanel` and
+`SchemaGraphPreview` as a refresh signal), `graphRagHops` (from
+`SettingsPanel`'s `hops-changed`, passed to `ChatPanel`). Chat messages
 stay local to `ChatPanel`.
 
 `vite.config.js` proxies `/api` and `/health` to `http://backend:8000`
