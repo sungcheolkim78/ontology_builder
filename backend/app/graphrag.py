@@ -104,8 +104,22 @@ def _build_graph(graph_data: dict) -> nx.DiGraph:
     for node in graph_data["nodes"]:
         g.add_node(node["id"])
     for edge in graph_data["edges"]:
-        g.add_edge(edge["source"], edge["target"], type=edge["type"])
+        g.add_edge(edge["source"], edge["target"], type=edge["type"], detail=edge.get("detail"))
     return g
+
+
+def _format_node_line(node: dict) -> str:
+    line = f"- {node['label']} ({node['type']})"
+    if node.get("detail"):
+        line += f": {node['detail']}"
+    return line
+
+
+def _format_edge_line(nodes_by_id: dict, source: str, target: str, data: dict) -> str:
+    line = f"- {nodes_by_id[source]['label']} --{data['type']}--> {nodes_by_id[target]['label']}"
+    if data.get("detail"):
+        line += f": {data['detail']}"
+    return line
 
 
 def _build_context_text(graph_data: dict, seed_ids: set, hops: int) -> str | None:
@@ -127,12 +141,10 @@ def _build_context_text(graph_data: dict, seed_ids: set, hops: int) -> str | Non
     subgraph = g.subgraph(collected)
 
     node_lines = [
-        f"- {nodes_by_id[nid]['label']} ({nodes_by_id[nid]['type']})"
-        for nid in collected
-        if nid in nodes_by_id
+        _format_node_line(nodes_by_id[nid]) for nid in collected if nid in nodes_by_id
     ]
     edge_lines = [
-        f"- {nodes_by_id[u]['label']} --{data['type']}--> {nodes_by_id[v]['label']}"
+        _format_edge_line(nodes_by_id, u, v, data)
         for u, v, data in subgraph.edges(data=True)
         if u in nodes_by_id and v in nodes_by_id
     ]

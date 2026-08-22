@@ -38,10 +38,16 @@ EXTRACT_PROMPT = """Using this ontology schema:
 Extract entities and relationships from the following document that conform to \
 this schema.
 
+For each node and edge, also include a "detail" field: one or two sentences of \
+specific supporting information from the document -- exact conditions, exceptions, \
+figures, dates, or phrasing -- that isn't captured by the label/type alone. Omit \
+"detail" (or leave it an empty string) if the document has nothing beyond the label \
+worth adding.
+
 Respond with ONLY valid JSON in this exact shape, no other text:
-{{"nodes": [{{"id": "...", "label": "...", "type": "<a node type name from the schema>"}}], \
-"edges": [{{"source": "<node id>", "target": "<node id>", \
-"type": "<an edge type name from the schema>"}}]}}
+{{"nodes": [{{"id": "...", "label": "...", "type": "<a node type name from the schema>", \
+"detail": "..."}}], "edges": [{{"source": "<node id>", "target": "<node id>", \
+"type": "<an edge type name from the schema>", "detail": "..."}}]}}
 
 Document:
 {document}

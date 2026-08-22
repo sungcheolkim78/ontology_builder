@@ -96,6 +96,12 @@ runs a schema-aware, two-stage search before the chat call:
    it) is expanded `hops` steps via `nx.ego_graph(..., undirected=True)`,
    and the resulting subgraph is formatted as an `Entities:`/`Relations:`
    text block, injected as a `system` message ahead of the conversation.
+   Each entity/relation line appends the node's or edge's `detail` text
+   when present (`- label (type): detail`), so the final answer isn't
+   limited to whatever a short label conveys — this is what lets a
+   question like "PhD 없이도 지원 가능한가요?" surface an exception
+   clause ("동등한 업계 경력이 있는 경우... 예외적으로 고려될 수
+   있습니다") that a bare `Requirement` label/type could never carry.
 
 `format_type_preview()` renders the determined types as a fixed-format
 line — `[관련 타입 분석] 노드: {...} / 엣지: {...}` (또는 "없음") — that's
@@ -160,11 +166,20 @@ it as this document's schema rather than erroring, so "extract" always
 produces *something*. Prompts the LLM to extract nodes/edges from the
 document conforming to that schema, saves `graph/{stem}/nodes.json`
 and `edges.json`, returns `{"nodes": [...], "edges": [...]}`. Node
-shape `{"id", "label", "type"}`, edge shape
-`{"source", "target", "type"}` (`source`/`target` are node ids). 400 on
+shape `{"id", "label", "type", "detail"}`, edge shape
+`{"source", "target", "type", "detail"}` (`source`/`target` are node
+ids). `detail` is an LLM-written free-text field — one or two
+sentences of anything from the document that the label/type alone
+loses (exact conditions, exceptions, figures, dates) — optional and
+often empty; it exists because label/type is a lossy summary and
+GraphRAG answers were otherwise limited to whatever a short label
+could convey (see the GraphRAG section below). 400 on
 unparseable/malformed LLM JSON. No validation that node/edge types
 actually match the schema — the LLM output is trusted structurally
-only (must have the right list/dict shape).
+only (must have the right list/dict shape). Graphs extracted before
+this field existed simply have no `detail` on their nodes/edges;
+re-running "그래프 추출" is the only way to backfill it, there's no
+migration.
 
 **`GET /api/ontology/{filename}`** — reads back the saved
 `nodes.json`/`edges.json`; 404 if extraction hasn't run yet.

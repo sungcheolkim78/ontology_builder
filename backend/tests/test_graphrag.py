@@ -220,3 +220,53 @@ def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeyp
 
     assert result["node_types"] == ["Organization"]
     assert result["context"] is None
+
+
+def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
+    nodes_with_detail = [
+        {
+            "id": "n1",
+            "label": "Ada Lovelace",
+            "type": "Person",
+            "detail": "Corresponded with Babbage from 1833 onward.",
+        },
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+    ]
+    edges_with_detail = [
+        {
+            "source": "n1",
+            "target": "n2",
+            "type": "WORKED_ON",
+            "detail": "Wrote the first published algorithm for the machine in 1843.",
+        },
+    ]
+    graph = {"nodes": nodes_with_detail, "edges": edges_with_detail}
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
+            json.dumps(["Ada Lovelace"]),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, graph, hops=1)
+
+    assert "Corresponded with Babbage from 1833 onward." in result["context"]
+    assert "Wrote the first published algorithm for the machine in 1843." in result["context"]
+
+
+def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
+    # Nodes/edges extracted before the detail field existed have none --
+    # must not error, and must not print a stray "None".
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
+            json.dumps(["Ada Lovelace"]),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, GRAPH, hops=1)
+
+    assert result["context"] is not None
+    assert "None" not in result["context"]
