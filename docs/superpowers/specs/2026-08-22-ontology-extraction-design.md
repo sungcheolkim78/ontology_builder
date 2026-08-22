@@ -40,7 +40,7 @@ Reuses `chat.get_chat_model()` — same LLM/config as the chat feature.
   prompts the LLM to propose a schema for that document, parses the
   response as JSON (stripping markdown code fences if present), saves
   to `data/graph/{stem}/schema.json`, returns it. Parse failure -> 400.
-- `POST /api/ontology/{filename}/extract` — loads `schema.json` (404 if
+- `POST /api/ontology/{filename}/extract` — loads `schema.json` (400 if
   missing, with a message telling the user to generate it first),
   prompts the LLM to extract nodes/edges from the document per that
   schema, parses JSON, saves `nodes.json` + `edges.json` under
