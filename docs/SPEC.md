@@ -18,7 +18,7 @@ Vue 3 dashboard frontend, and a podman-compose dev environment.
              OpenRouter API           anydoc (Rust)         backend/data/
              (via langchain,         doc → markdown         {name}_raw.md,
           chat + schema/extract)                       graph/{stem}/schema.json,
-                                                    graph.ladybugdb (nodes/edges)
+                                              graph/graph.ladybugdb (nodes/edges)
 ```
 
 Both services run as separate containers via `podman-compose.yml`,
@@ -34,7 +34,13 @@ FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
 and `app/telemetry.py` (OpenTelemetry tracing for every LLM call).
 
 `app/graphdb.py` owns the single LadybugDB connection at
-`backend/data/graph.ladybugdb` (opened lazily, cached at module level).
+`backend/data/graph/graph.ladybugdb` (opened lazily, cached at module
+level) — deliberately placed inside the `graph/` subdirectory rather
+than directly in `backend/data/`, since `GET /api/files` lists
+everything directly in `backend/data/` as a user document, and the
+`.ladybugdb` file (plus its `.wal` sidecar) would otherwise show up as
+fake documents and crash `GET /api/files/{name}` (binary content read
+as UTF-8 text).
 Storage is one Cypher node table and one Cypher rel table per distinct
 node/edge *type name*, shared across every document rather than
 per-document — each row carries a `source_document` property, and
@@ -228,7 +234,7 @@ yet. Used by the frontend to show schema status and to drive the
 it as this document's schema rather than erroring, so "extract" always
 produces *something*. Prompts the LLM to extract nodes/edges from the
 document conforming to that schema, then saves the result via
-`graphdb.write_graph()` into LadybugDB (`backend/data/graph.ladybugdb`)
+`graphdb.write_graph()` into LadybugDB (`backend/data/graph/graph.ladybugdb`)
 rather than as `nodes.json`/`edges.json` files, and returns
 `{"nodes": [...], "edges": [...]}`. Node shape
 `{"id", "label", "type", "detail"}`, edge shape
@@ -239,9 +245,18 @@ loses (exact conditions, exceptions, figures, dates) — optional and
 often empty; it exists because label/type is a lossy summary and
 GraphRAG answers were otherwise limited to whatever a short label
 could convey (see the GraphRAG section below). 400 on
-unparseable/malformed LLM JSON. No validation that node/edge types
-actually match the schema — the LLM output is trusted structurally
-only (must have the right list/dict shape). Graphs extracted before
+unparseable/malformed LLM JSON, and also 400 if a node/edge type name
+in the schema isn't a valid Cypher identifier (letters/digits/
+underscores, starting with a letter or underscore) — `graphdb.py`
+interpolates type names directly into DDL/Cypher, so it rejects unsafe
+ones via `_validate_identifier()` as a security backstop.
+`SCHEMA_PROMPT` (`app/ontology.py`) instructs the LLM to only propose
+identifier-safe type names to avoid hitting this in practice, but a
+non-compliant schema (e.g. hand-edited, or an LLM that ignores the
+instruction) still surfaces as a clean 400 rather than a crash. No
+validation that node/edge types actually match the schema — the LLM
+output is trusted structurally only (must have the right list/dict
+shape). Graphs extracted before
 this field existed simply have no `detail` on their nodes/edges;
 re-running "그래프 추출" is the only way to backfill it, there's no
 migration. `write_graph()` re-extracting the same document first
@@ -279,16 +294,21 @@ Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 ### Tests
 
 `backend/tests/` (pytest, run via `python -m pytest`): `test_chat.py`,
-`test_config.py`, `test_files.py`, `test_graphrag.py`, `test_ontology.py`,
-`test_parse.py`, `test_telemetry.py`. Chat/parse/ontology/graphrag tests
-mock the external calls (`get_chat_model`, `anydoc.to_markdown_bytes`);
-telemetry tests use a bare fake model (no OTel mocking needed — the
-default no-op tracer is already the behavior under test); file tests use
-the real filesystem. `test_chat.py`'s GraphRAG tests use a
-`SequencedChatModel` fake that returns a different canned response per
-`invoke()` call (in order) and records the messages it was called
-with, since one `/api/chat` request with `filename` set makes two LLM
-calls (keyword extraction, then the actual answer).
+`test_config.py`, `test_files.py`, `test_graphdb.py`, `test_graphrag.py`,
+`test_ontology.py`, `test_parse.py`, `test_telemetry.py`.
+Chat/parse/ontology/graphrag tests mock the external calls
+(`get_chat_model`, `anydoc.to_markdown_bytes`); telemetry tests use a
+bare fake model (no OTel mocking needed — the default no-op tracer is
+already the behavior under test); file tests use the real filesystem.
+`test_chat.py`'s GraphRAG tests use a `SequencedChatModel` fake that
+returns a different canned response per `invoke()` call (in order) and
+records the messages it was called with, since one `/api/chat` request
+with `filename` set makes two LLM calls (keyword extraction, then the
+actual answer). `test_graphdb.py` (39 of the backend's 88 tests) runs
+directly against a real LadybugDB database on disk — no mocking — via
+an autouse fixture that deletes and recreates `graphdb.DB_PATH` before
+and after every test; see the "Backend tests" section of `CLAUDE.md`
+for the operational caveat this implies.
 
 ## Frontend (`frontend/`)
 
@@ -493,9 +513,21 @@ transform cache, not the browser).
 - **No persistence beyond `backend/data/`, and no server-based
   database.** Parsed markdown and schemas live as flat files there;
   extracted graphs live in an embedded LadybugDB database file
-  (`backend/data/graph.ladybugdb`) rather than JSON, but it's still
-  local to the backend container/filesystem — there is no per-user/
-  session separation, and chat history is not saved anywhere.
+  (`backend/data/graph/graph.ladybugdb`) rather than JSON, but it's
+  still local to the backend container/filesystem — there is no
+  per-user/session separation, and chat history is not saved anywhere.
+- **No migration from the pre-LadybugDB JSON storage.** Documents
+  extracted before graph storage moved to LadybugDB have leftover
+  `graph/{stem}/nodes.json` / `edges.json` files on disk; the new code
+  never reads or deletes them, so they linger harmlessly but
+  permanently. Such documents behave as if never extracted
+  (`GET /api/ontology/{f}` → 404) until re-extracted, which populates
+  LadybugDB and leaves the stale JSON files in place, unused.
+- **No DDL garbage collection.** Re-extracting a document under a
+  different schema (different type names) leaves the old type's NODE/
+  REL tables behind, now with zero rows for that document — and if no
+  other document ever used that type, zero rows at all. Tables are
+  never dropped.
 - **No auth.** All endpoints are open; fine for local dev only.
 - **No streaming chat.** Responses return in one shot.
 - **No automated frontend tests.** Frontend changes are verified

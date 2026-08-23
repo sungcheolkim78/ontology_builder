@@ -64,6 +64,15 @@ OPENROUTER_API_KEY=dummy python -m pytest tests/test_chat.py::test_chat_returns_
 mocks the LLM call rather than hitting OpenRouter. Tests run directly
 against the venv, not inside a container.
 
+**Do not run the backend test suite while `podman-compose` is up.**
+`test_graphdb.py` (and other test files, via their fixtures) delete and
+recreate the real project-path `backend/data/graph/graph.ladybugdb` —
+not a temp directory — before and after tests. If the backend
+container has that file open, deleting it out from under it can
+corrupt its state or leave it writing to a deleted inode. Run tests
+only with the stack down, or be prepared to
+`podman-compose down && podman-compose up --build -d` afterward.
+
 ### Frontend
 
 No lint/build/test commands are wired up beyond `vite`. `npm run dev` /
