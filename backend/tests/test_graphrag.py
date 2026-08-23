@@ -1,12 +1,9 @@
 import json
 
+from app import graphdb
 from app.graphrag import (
-    all_edges_of_types,
-    all_nodes_of_types,
     determine_relevant_types,
     extract_keywords,
-    find_matching_edges,
-    find_relevant_nodes,
     format_type_preview,
     search_graph,
 )
@@ -22,7 +19,6 @@ EDGES = [
     {"source": "n3", "target": "n2", "type": "WORKED_ON"},
     {"source": "n3", "target": "n4", "type": "MEMBER_OF"},
 ]
-GRAPH = {"nodes": NODES, "edges": EDGES}
 
 SCHEMA = {
     "node_types": [
@@ -35,6 +31,8 @@ SCHEMA = {
         {"name": "MEMBER_OF", "description": "member of", "source": "Person", "target": "Organization"},
     ],
 }
+
+STEM = "doc_raw"
 
 
 class FakeChatModel:
@@ -56,35 +54,24 @@ class SequencedChatModel:
         return type("FakeResponse", (), {"content": content})()
 
 
-def test_find_relevant_nodes_matches_case_insensitively():
-    matched = find_relevant_nodes(NODES, ["ada"])
-    assert matched == ["n1"]
+def _remove_db_path():
+    import shutil
+
+    if graphdb.DB_PATH.exists():
+        if graphdb.DB_PATH.is_dir():
+            shutil.rmtree(graphdb.DB_PATH)
+        else:
+            graphdb.DB_PATH.unlink()
 
 
-def test_find_relevant_nodes_returns_empty_when_no_match():
-    matched = find_relevant_nodes(NODES, ["nonexistent"])
-    assert matched == []
+def setup_function():
+    graphdb.reset_connection()
+    _remove_db_path()
 
 
-def test_find_relevant_nodes_filters_by_allowed_types():
-    # "ada" matches n1's label, but n1 is type Person, not Organization
-    matched = find_relevant_nodes(NODES, ["ada"], allowed_types=["Organization"])
-    assert matched == []
-
-
-def test_find_relevant_nodes_empty_allowed_types_matches_nothing():
-    matched = find_relevant_nodes(NODES, ["ada"], allowed_types=[])
-    assert matched == []
-
-
-def test_find_matching_edges_filters_by_type_and_connection():
-    matched = find_matching_edges(EDGES, ["WORKED_ON"], {"n1"})
-    assert matched == [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
-
-
-def test_find_matching_edges_excludes_unconnected_nodes():
-    matched = find_matching_edges(EDGES, ["MEMBER_OF"], {"n1"})
-    assert matched == []
+def teardown_function():
+    graphdb.reset_connection()
+    _remove_db_path()
 
 
 def test_determine_relevant_types_parses_and_filters_hallucinated_types(monkeypatch):
@@ -122,6 +109,7 @@ def test_format_type_preview_shows_none_when_empty():
 
 
 def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
@@ -130,7 +118,7 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("What did Ada Lovelace work on?", SCHEMA, GRAPH, hops=1)
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
 
     assert result["node_types"] == ["Person"]
     assert result["edge_types"] == ["WORKED_ON"]
@@ -141,31 +129,18 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
 
 
 def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel([json.dumps({"node_types": [], "edge_types": []})])
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("completely unrelated question", SCHEMA, GRAPH, hops=1)
+    result = search_graph("completely unrelated question", SCHEMA, STEM, hops=1)
 
     assert result == {"node_types": [], "edge_types": [], "context": None}
-    assert len(model.calls) == 1  # only type analysis, no keyword extraction
-
-
-def test_all_nodes_of_types_returns_every_instance_of_given_types():
-    matched = all_nodes_of_types(NODES, ["Person"])
-    assert set(matched) == {"n1", "n3"}
-
-
-def test_all_edges_of_types_ignores_connection():
-    matched = all_edges_of_types(EDGES, ["MEMBER_OF"])
-    assert matched == [{"source": "n3", "target": "n4", "type": "MEMBER_OF"}]
+    assert len(model.calls) == 1
 
 
 def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
-    # Keyword extraction found nothing that substring-matches any node label
-    # (e.g. a category question like "who are the people?", or a
-    # question/document language mismatch) -- since the type IS relevant,
-    # fall back to every instance of that type rather than reporting "not
-    # found" when the graph clearly has data of that type.
+    graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": []}),
@@ -174,7 +149,7 @@ def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypa
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("who are the people?", SCHEMA, GRAPH, hops=1)
+    result = search_graph("who are the people?", SCHEMA, STEM, hops=1)
 
     assert result["node_types"] == ["Person"]
     assert result["context"] is not None
@@ -183,6 +158,7 @@ def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypa
 
 
 def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": [], "edge_types": ["MEMBER_OF"]}),
@@ -191,7 +167,7 @@ def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monk
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("what memberships exist?", SCHEMA, GRAPH, hops=1)
+    result = search_graph("what memberships exist?", SCHEMA, STEM, hops=1)
 
     assert result["edge_types"] == ["MEMBER_OF"]
     assert result["context"] is not None
@@ -200,14 +176,9 @@ def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monk
 
 
 def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeypatch):
-    # "Concept" is a real schema type but the fallback still finds real
-    # Concept nodes in this graph, so use a type with zero matching keyword
-    # AND zero actual instances to prove the genuine not-found path still
-    # works after adding the fallback.
-    graph_without_organizations = {
-        "nodes": [n for n in NODES if n["type"] != "Organization"],
-        "edges": [e for e in EDGES if e["type"] != "MEMBER_OF"],
-    }
+    nodes_without_organizations = [n for n in NODES if n["type"] != "Organization"]
+    edges_without_organizations = [e for e in EDGES if e["type"] != "MEMBER_OF"]
+    graphdb.write_graph(STEM, nodes_without_organizations, edges_without_organizations)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Organization"], "edge_types": []}),
@@ -216,7 +187,7 @@ def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeyp
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("what organizations?", SCHEMA, graph_without_organizations, hops=1)
+    result = search_graph("what organizations?", SCHEMA, STEM, hops=1)
 
     assert result["node_types"] == ["Organization"]
     assert result["context"] is None
@@ -240,7 +211,7 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
             "detail": "Wrote the first published algorithm for the machine in 1843.",
         },
     ]
-    graph = {"nodes": nodes_with_detail, "edges": edges_with_detail}
+    graphdb.write_graph(STEM, nodes_with_detail, edges_with_detail)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
@@ -249,15 +220,14 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("What did Ada Lovelace work on?", SCHEMA, graph, hops=1)
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
 
     assert "Corresponded with Babbage from 1833 onward." in result["context"]
     assert "Wrote the first published algorithm for the machine in 1843." in result["context"]
 
 
 def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
-    # Nodes/edges extracted before the detail field existed have none --
-    # must not error, and must not print a stray "None".
+    graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
@@ -266,7 +236,7 @@ def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
-    result = search_graph("What did Ada Lovelace work on?", SCHEMA, GRAPH, hops=1)
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
 
     assert result["context"] is not None
     assert "None" not in result["context"]
