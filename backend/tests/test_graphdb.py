@@ -33,6 +33,6 @@ def test_validate_identifier_accepts_safe_names():
 
 
 def test_validate_identifier_rejects_unsafe_names():
-    for bad in ["Person; DROP TABLE Person", "has space", "has-dash", "1StartsWithDigit", ""]:
+    for bad in ["Person; DROP TABLE Person", "has space", "has-dash", "1StartsWithDigit", "", "has`tick", "Person\n"]:
         with pytest.raises(ValueError):
             graphdb._validate_identifier(bad)

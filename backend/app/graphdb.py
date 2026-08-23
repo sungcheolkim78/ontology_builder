@@ -5,7 +5,7 @@ from ladybug import Connection, Database
 
 DB_PATH = Path(__file__).parent.parent / "data" / "graph.ladybugdb"
 
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 _database = None
 _connection = None
