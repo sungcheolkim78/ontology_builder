@@ -108,14 +108,23 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
     nodes_by_id = {n["id"]: n for n in nodes}
 
     node_types = _validate_identifier_set(n["type"] for n in nodes)
-    edge_specs = {
-        (
-            _validate_identifier(e["type"]),
-            _validate_identifier(nodes_by_id[e["source"]]["type"]),
-            _validate_identifier(nodes_by_id[e["target"]]["type"]),
+    # dict.fromkeys over a generator of tuples, same rationale as
+    # _validate_identifier_set above: a plain `set` comprehension here has
+    # hash-randomized iteration order, which would flip REL table creation
+    # order (and therefore load_graph's edge row order) across process runs
+    # for a document with 2+ distinct edge type/pair combinations. Tuples
+    # are hashable, so dict.fromkeys dedupes them directly while preserving
+    # first-occurrence order.
+    edge_specs = list(
+        dict.fromkeys(
+            (
+                _validate_identifier(e["type"]),
+                _validate_identifier(nodes_by_id[e["source"]]["type"]),
+                _validate_identifier(nodes_by_id[e["target"]]["type"]),
+            )
+            for e in edges
         )
-        for e in edges
-    }
+    )
 
     existing = _existing_tables(conn)
     for t in node_types:
@@ -188,16 +197,25 @@ def load_graph(stem: str) -> dict | None:
         return None
     conn = _get_connection()
 
+    # ORDER BY is required for determinism, not just style: an untyped
+    # multi-table pattern match (across heterogeneous NODE/REL tables) was
+    # observed to return rows in an order that varies from run to run even
+    # with a fixed PYTHONHASHSEED and identical internal catalog table IDs
+    # -- i.e. nondeterminism inside the DB engine's own execution of these
+    # patterns, not something controllable from this module by influencing
+    # table creation order.
     node_rows = conn.execute(
         "MATCH (n) WHERE n.source_document = $stem "
-        "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail",
+        "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail "
+        "ORDER BY n.id",
         {"stem": stem},
     ).rows_as_dict()
     nodes = [_node_from_row(row) for row in node_rows]
 
     edge_rows = conn.execute(
         "MATCH (a)-[r]->(b) WHERE r.source_document = $stem "
-        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
+        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target "
+        "ORDER BY r.type, a.id, b.id",
         {"stem": stem},
     ).rows_as_dict()
     edges = [_edge_from_row(row) for row in edge_rows]

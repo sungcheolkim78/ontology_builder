@@ -113,3 +113,30 @@ def test_write_graph_rejects_unsafe_type_name():
     bad_nodes = [{"id": "n1", "label": "X", "type": "Person; DROP TABLE Person"}]
     with pytest.raises(ValueError):
         graphdb.write_graph("doc_bad", bad_nodes, [])
+
+
+def test_write_graph_edge_row_order_is_deterministic_across_edge_types():
+    # Regression test for a determinism bug found while extending the
+    # node_types ordering fix to edge_specs: with 2+ distinct edge types,
+    # load_graph's `MATCH (a)-[r]->(b) ...` scan (an untyped pattern across
+    # heterogeneous REL tables) was observed to return rows in an order
+    # that varies from run to run -- even with a fixed PYTHONHASHSEED and
+    # identical internal catalog table IDs across runs, ruling out
+    # Python-level set/dict ordering (already fixed for both node_types and
+    # edge_specs) as the cause. The actual fix is the `ORDER BY` added to
+    # load_graph's queries; this test guards that regression.
+    nodes = [
+        {"id": "p1", "label": "Ada Lovelace", "type": "Person"},
+        {"id": "c1", "label": "Analytical Engine", "type": "Concept"},
+        {"id": "o1", "label": "Royal Society", "type": "Organization"},
+    ]
+    edges = [
+        {"source": "p1", "target": "c1", "type": "WORKED_ON"},
+        {"source": "p1", "target": "o1", "type": "MEMBER_OF"},
+    ]
+
+    graphdb.write_graph("doc_multi_edge_type", nodes, edges)
+
+    loaded = graphdb.load_graph("doc_multi_edge_type")
+    # ORDER BY r.type, a.id, b.id in load_graph -> alphabetical by type.
+    assert [e["type"] for e in loaded["edges"]] == ["MEMBER_OF", "WORKED_ON"]
