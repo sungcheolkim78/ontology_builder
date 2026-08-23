@@ -16,8 +16,9 @@ Vue 3 dashboard frontend, and a podman-compose dev environment.
                     ┌──────────────────────┼──────────────────────┐
                     ▼                      ▼                      ▼
              OpenRouter API           anydoc (Rust)         backend/data/
-             (via langchain,         doc → markdown         {name}_raw.md
-          chat + schema/extract)                     graph/{stem}/{schema,nodes,edges}.json
+             (via langchain,         doc → markdown         {name}_raw.md,
+          chat + schema/extract)                       graph/{stem}/schema.json,
+                                                    graph.ladybugdb (nodes/edges)
 ```
 
 Both services run as separate containers via `podman-compose.yml`,
@@ -26,10 +27,31 @@ each with source volume-mounted for hot-reload during development.
 ## Backend (`backend/`)
 
 FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
-`app/parser.py` (document → markdown conversion), `app/ontology.py`
-(schema generation + node/edge extraction), `app/graphrag.py`
-(keyword extraction + graph-based retrieval for chat), and
-`app/telemetry.py` (OpenTelemetry tracing for every LLM call).
+`app/parser.py` (document → markdown conversion), `app/graphdb.py`
+(LadybugDB connection + Cypher-backed node/edge storage and search),
+`app/ontology.py` (schema generation + node/edge extraction),
+`app/graphrag.py` (keyword extraction + graph-based retrieval for chat),
+and `app/telemetry.py` (OpenTelemetry tracing for every LLM call).
+
+`app/graphdb.py` owns the single LadybugDB connection at
+`backend/data/graph.ladybugdb` (opened lazily, cached at module level).
+Storage is one Cypher node table and one Cypher rel table per distinct
+node/edge *type name*, shared across every document rather than
+per-document — each row carries a `source_document` property, and
+every read/write function filters on it so one document's data doesn't
+leak into another's even though they may share a table. Node/edge type
+names come from LLM output, so anywhere a type name is interpolated
+into DDL or a Cypher label, it first passes `_validate_identifier()`
+(a safe `[A-Za-z_][A-Za-z0-9_]*` check) — a defense against LLM output
+that isn't a legal Cypher identifier. Node ids are stored internally as
+`{stem}::{id}` (globally unique across documents sharing a type table)
+and stripped back to the bare id before returning from any function.
+A database with zero REL tables at all (a fresh database, or every
+document written so far had zero edges) breaks an untyped relationship
+pattern match in two different ways — it can raise, or silently return
+nothing — so `load_graph`, `find_matching_edges`, `all_edges_of_types`,
+and `expand_hops` each check table existence first and take a
+REL-table-free path rather than relying on the query to fail safely.
 
 ### Telemetry
 
@@ -86,7 +108,10 @@ no network calls and negligible overhead when running tests locally
 
 **`POST /api/chat`** — body
 `{"messages": [{"role": "user"|"assistant"|"system", "content": "..."}], "filename": "...", "hops": 1}`.
-`filename`/`hops` are optional. Plain chat (no `filename`, or the
+`filename`/`hops` are optional; `hops` is clamped server-side to `1..5`
+regardless of what's sent (the frontend's number input already
+restricts it to that range, but the backend no longer trusts that).
+Plain chat (no `filename`, or the
 document has no schema/graph yet) works exactly as it always has:
 messages go straight to `ChatOpenAI`. When `filename` names a document
 that has *both* a schema and an extracted graph, `graphrag.search_graph()`
@@ -129,8 +154,10 @@ runs a schema-aware, two-stage search before the chat call:
    type has *zero actual instances* in the graph does the search still
    end empty after this fallback — a genuine miss.
 4. **Expansion** — the resulting node set (whichever stage produced
-   it) is expanded `hops` steps via `nx.ego_graph(..., undirected=True)`,
-   and the resulting subgraph is formatted as an `Entities:`/`Relations:`
+   it) is expanded `hops` steps via `graphdb.expand_hops()`, an
+   undirected, variable-length Cypher pattern match
+   (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB, and the
+   resulting subgraph is formatted as an `Entities:`/`Relations:`
    text block, injected as a `system` message ahead of the conversation.
    Each entity/relation line appends the node's or edge's `detail` text
    when present (`- label (type): detail`), so the final answer isn't
@@ -200,9 +227,11 @@ yet. Used by the frontend to show schema status and to drive the
 `DEFAULT_SCHEMA` (a generic `Entity`/`RELATED_TO` schema) and persists
 it as this document's schema rather than erroring, so "extract" always
 produces *something*. Prompts the LLM to extract nodes/edges from the
-document conforming to that schema, saves `graph/{stem}/nodes.json`
-and `edges.json`, returns `{"nodes": [...], "edges": [...]}`. Node
-shape `{"id", "label", "type", "detail"}`, edge shape
+document conforming to that schema, then saves the result via
+`graphdb.write_graph()` into LadybugDB (`backend/data/graph.ladybugdb`)
+rather than as `nodes.json`/`edges.json` files, and returns
+`{"nodes": [...], "edges": [...]}`. Node shape
+`{"id", "label", "type", "detail"}`, edge shape
 `{"source", "target", "type", "detail"}` (`source`/`target` are node
 ids). `detail` is an LLM-written free-text field — one or two
 sentences of anything from the document that the label/type alone
@@ -215,10 +244,15 @@ actually match the schema — the LLM output is trusted structurally
 only (must have the right list/dict shape). Graphs extracted before
 this field existed simply have no `detail` on their nodes/edges;
 re-running "그래프 추출" is the only way to backfill it, there's no
-migration.
+migration. `write_graph()` re-extracting the same document first
+deletes that document's own prior nodes/edges (scoped by
+`source_document`) before writing the new ones, so a re-extraction
+fully replaces rather than appends.
 
-**`GET /api/ontology/{filename}`** — reads back the saved
-`nodes.json`/`edges.json`; 404 if extraction hasn't run yet.
+**`GET /api/ontology/{filename}`** — reads back the saved graph via
+`graphdb.load_graph()` (LadybugDB, not `nodes.json`/`edges.json`);
+response shape is unchanged (`{"nodes": [...], "edges": [...]}`); 404
+if extraction hasn't run yet.
 
 ### Configuration
 
@@ -233,8 +267,13 @@ migration.
 ### Dependencies
 
 `requirements.txt`: `fastapi`, `uvicorn`, `langchain-openai`,
-`firecrawl-anydoc`, `python-multipart`, `networkx`, `opentelemetry-api`,
-`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`.
+`firecrawl-anydoc`, `python-multipart`, `networkx`, `ladybug`,
+`opentelemetry-api`, `opentelemetry-sdk`,
+`opentelemetry-exporter-otlp-proto-http`. `ladybug` is the embedded
+Cypher-native graph database (`graphdb.py`) that stores extracted
+nodes/edges; `networkx` remains a declared dependency but is no longer
+imported anywhere in `app/` — graph search and hop expansion are now
+Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 `requirements-dev.txt` adds `pytest`, `httpx` for testing.
 
 ### Tests
@@ -451,10 +490,12 @@ transform cache, not the browser).
 
 ## Known limitations / not yet built
 
-- **No persistence beyond the filesystem.** Parsed markdown and
-  extracted graphs live under `backend/data/`; there is no database,
-  no per-user/session separation, and chat history is not saved
-  anywhere.
+- **No persistence beyond `backend/data/`, and no server-based
+  database.** Parsed markdown and schemas live as flat files there;
+  extracted graphs live in an embedded LadybugDB database file
+  (`backend/data/graph.ladybugdb`) rather than JSON, but it's still
+  local to the backend container/filesystem — there is no per-user/
+  session separation, and chat history is not saved anywhere.
 - **No auth.** All endpoints are open; fine for local dev only.
 - **No streaming chat.** Responses return in one shot.
 - **No automated frontend tests.** Frontend changes are verified

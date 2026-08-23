@@ -84,6 +84,27 @@ business logic of its own beyond request/response shaping.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
+- `graphdb.py` — owns the single LadybugDB connection
+  (`backend/data/graph.ladybugdb`), opened lazily and cached at module
+  level. There's one Cypher node table and one Cypher rel table per
+  distinct node/edge *type name*, shared across every document rather
+  than per-document — each row carries a `source_document` property so
+  `write_graph`/`load_graph`/the search functions all filter to one
+  document's own rows within tables that may hold many documents' data.
+  Node/edge type names originate from LLM output (schema generation,
+  then extraction), so every place that interpolates one into DDL or a
+  Cypher label goes through `_validate_identifier()` first, which
+  rejects anything not matching a safe `[A-Za-z_][A-Za-z0-9_]*`
+  identifier pattern. Node ids are stored internally as `{stem}::{id}`
+  (globally unique across documents sharing the same type tables) and
+  stripped back to the bare id at every function's return boundary.
+  Several functions guard against a database with zero REL tables at
+  all (a fresh database, or every document written so far had zero
+  edges) — an untyped relationship pattern against such a database
+  either raises or silently returns nothing depending on the exact
+  query shape, so `load_graph`, `find_matching_edges`,
+  `all_edges_of_types`, and `expand_hops` all check table existence
+  first rather than relying on the query to fail safely.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
@@ -95,7 +116,10 @@ business logic of its own beyond request/response shaping.
   Both steps parse LLM output via `parse_json_response` (strips markdown
   code fences, raises `ValueError` on bad JSON — every LLM-JSON caller in
   this codebase reuses this function rather than parsing independently).
-  Persisted under `backend/data/graph/{stem}/{schema,nodes,edges}.json`.
+  Only the schema is still a JSON file, at
+  `backend/data/graph/{stem}/schema.json`; nodes/edges are persisted in
+  LadybugDB via `graphdb.write_graph`/`graphdb.load_graph`, not as
+  `nodes.json`/`edges.json`.
 - `graphrag.py` — the retrieval side of chat, a two-stage search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`
   sends the document's schema + the question to the LLM, asking which
@@ -110,9 +134,10 @@ business logic of its own beyond request/response shaping.
   responsibilities?") or a question/document language mismatch would
   otherwise always miss even when the type is genuinely relevant and the
   graph clearly has matching data. The matched node set expands via
-  `nx.ego_graph(radius=hops, undirected=True)` into an `Entities:`/
-  `Relations:` context block (each line including the node's/edge's
-  `detail` field when present — see above) injected into chat as a
+  `graphdb.expand_hops()` — an undirected, variable-length Cypher
+  pattern match (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB —
+  into an `Entities:`/`Relations:` context block (each line including the
+  node's/edge's `detail` field when present — see above) injected into chat as a
   system message, prefixed with a fixed preview line
   (`format_type_preview()`) showing the determined types. Once a
   document with an extracted graph is selected, finding nothing at
