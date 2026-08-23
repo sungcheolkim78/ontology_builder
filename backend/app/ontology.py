@@ -25,6 +25,12 @@ DEFAULT_SCHEMA = {
 SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
 extracting entities and relationships from it.
 
+Every "name" value (for both node_types and edge_types) MUST be a valid \
+identifier: letters, digits, and underscores only, no spaces or other \
+characters, and it must start with a letter or underscore (e.g. "JobTitle" \
+or "Job_Title", not "Job Title"). This applies even if the document is not \
+in English -- transliterate or translate the name into an ASCII identifier.
+
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"node_types": [{{"name": "...", "description": "..."}}], \
 "edge_types": [{{"name": "...", "description": "...", "source": "<node type name>", \
