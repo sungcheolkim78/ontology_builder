@@ -4,6 +4,7 @@ langchain-openai==1.6.0
 firecrawl-anydoc==0.2.3
 python-multipart==0.0.32
 networkx==3.6.1
+ladybug==0.19.1
 opentelemetry-api==1.44.0
 opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp-proto-http==1.44.0
