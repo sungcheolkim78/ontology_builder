@@ -212,12 +212,22 @@ def load_graph(stem: str) -> dict | None:
     ).rows_as_dict()
     nodes = [_node_from_row(row) for row in node_rows]
 
-    edge_rows = conn.execute(
-        "MATCH (a)-[r]->(b) WHERE r.source_document = $stem "
-        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target "
-        "ORDER BY r.type, a.id, b.id",
-        {"stem": stem},
-    ).rows_as_dict()
-    edges = [_edge_from_row(row) for row in edge_rows]
+    # No REL table exists at all when this is the very first write_graph
+    # call against a fresh database (or every document written so far had
+    # zero edges) -- the query below then has no relationship type to bind
+    # `r.source_document` against and raises `RuntimeError: Binder
+    # exception: Cannot find property source_document for r.` Guard on
+    # table existence rather than catching that error: matching on
+    # exception type/message would be fragile to library changes.
+    if any(kind == "REL" for kind in _existing_tables(conn).values()):
+        edge_rows = conn.execute(
+            "MATCH (a)-[r]->(b) WHERE r.source_document = $stem "
+            "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target "
+            "ORDER BY r.type, a.id, b.id",
+            {"stem": stem},
+        ).rows_as_dict()
+        edges = [_edge_from_row(row) for row in edge_rows]
+    else:
+        edges = []
 
     return {"nodes": nodes, "edges": edges}

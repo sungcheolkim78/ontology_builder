@@ -140,3 +140,21 @@ def test_write_graph_edge_row_order_is_deterministic_across_edge_types():
     loaded = graphdb.load_graph("doc_multi_edge_type")
     # ORDER BY r.type, a.id, b.id in load_graph -> alphabetical by type.
     assert [e["type"] for e in loaded["edges"]] == ["MEMBER_OF", "WORKED_ON"]
+
+
+def test_load_graph_handles_document_with_no_edges_on_fresh_database():
+    # Regression test: when this is the very first write_graph call ever
+    # against a fresh database (no REL table has been created yet at all),
+    # load_graph's edge query used to raise
+    # `RuntimeError: Binder exception: Cannot find property source_document
+    # for r.` instead of returning edges: []. The `clean_graphdb` autouse
+    # fixture wipes DB_PATH before every test, so this test -- calling
+    # write_graph exactly once, with zero edges -- is guaranteed to hit a
+    # database with no REL tables at all.
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph("doc_no_edges", nodes, [])
+
+    loaded = graphdb.load_graph("doc_no_edges")
+    assert loaded is not None
+    assert loaded["nodes"] == nodes
+    assert loaded["edges"] == []
