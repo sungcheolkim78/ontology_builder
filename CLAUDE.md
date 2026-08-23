@@ -155,8 +155,11 @@ backend for the current document, checked in this priority order:
 extracted graph (`GET /api/ontology/{filename}` succeeds) → schema preview
 (no extraction yet, but a schema exists — the schema's own types are drawn
 as if they were nodes/edges) → placeholder. Rendering itself is delegated
-to `v-network-graph`; this file only converts data into that library's
-shape and computes initial circular node positions.
+to `v-network-graph`; this file converts data into that library's shape
+and drives node positions with a `d3-force` simulation (charge + link +
+center + collide forces), writing each tick's `{x, y}` into the
+`layouts` ref that `v-network-graph` reads — layout is physics-based,
+not computed once.
 
 No automated frontend tests exist — changes are verified manually or via
 Playwright against the running podman-compose stack, not a test suite.

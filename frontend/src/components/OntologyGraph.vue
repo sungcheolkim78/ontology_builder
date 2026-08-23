@@ -1,7 +1,8 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -110,28 +111,38 @@ watch(
   { immediate: true }
 )
 
+// --- d3-force layout ---
+const CENTER = 200
+let simulation = null
+
 watch(
-  visibleNodes,
-  (list) => {
-    const radius = 150
-    const center = 200
-    const positions = {}
-    list.forEach((node, i) => {
+  [visibleNodes, visibleEdges],
+  ([nodeList, edgeList]) => {
+    const simNodes = nodeList.map((node) => {
       const existing = layouts.value.nodes[node.id]
-      if (existing) {
-        positions[node.id] = existing
-        return
-      }
-      const angle = (2 * Math.PI * i) / Math.max(list.length, 1)
-      positions[node.id] = {
-        x: center + radius * Math.cos(angle),
-        y: center + radius * Math.sin(angle),
-      }
+      return existing ? { id: node.id, x: existing.x, y: existing.y } : { id: node.id }
     })
-    layouts.value = { nodes: positions }
+    const simLinks = edgeList.map((e) => ({ source: e.source, target: e.target }))
+
+    simulation?.stop()
+    simulation = forceSimulation(simNodes)
+      .force('charge', forceManyBody().strength(-300))
+      .force('link', forceLink(simLinks).id((d) => d.id).distance(120))
+      .force('center', forceCenter(CENTER, CENTER))
+      .force('collide', forceCollide(30))
+      .on('tick', () => {
+        const positions = {}
+        simNodes.forEach((n) => {
+          positions[n.id] = { x: n.x, y: n.y }
+        })
+        layouts.value = { nodes: positions }
+      })
+      .on('end', fitSoon)
   },
   { immediate: true }
 )
+
+onUnmounted(() => simulation?.stop())
 
 const configs = computed(() => ({
   view: {

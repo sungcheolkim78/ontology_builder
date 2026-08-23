@@ -279,12 +279,22 @@ directly.
   the currently selected document, then emits `schema-used`. Refetches
   the schema list whenever its `schemaVersion` prop changes. Also
   renders a "GraphRAG 설정" number input (1–5, default 1) for the
-  retrieval hop count, emitting `hops-changed` on change.
+  retrieval hop count, emitting `hops-changed` on change, and a "채팅
+  표시 설정" checkbox (default checked) for whether chat messages render
+  as HTML markdown or plain text, emitting `markdown-changed`.
 - **`ChatPanel.vue`** — self-contained message list + input, calls
   `/api/chat` with the full local history on each send, plus the
   `file`/`hops` props (`filename` and `hops` in the request body) so
   the backend can run GraphRAG against the currently selected
-  document's graph.
+  document's graph. The `renderMarkdown` prop (from `SettingsPanel`'s
+  toggle) switches each message between `marked.parse(...)` piped
+  through `v-html` and a plain `<p>` with `white-space: pre-wrap` — same
+  unsanitized-`v-html` approach as `DocumentPreview.vue`, consistent
+  with that existing precedent rather than a new one. User and
+  assistant messages get distinct bubble backgrounds (`.message.user`
+  vs `.message.assistant`, keyed off the same `role` string already
+  used for the "나"/"챗봇" label) so a message's origin is visually
+  obvious without reading the label.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
@@ -312,9 +322,13 @@ directly.
   library expects, node colors come from `configs.node.normal.color`
   (a function of `node.type`), edge colors likewise from
   `configs.edge.normal.color` (a function of `edge.label`, using a
-  separate color palette from nodes), and initial node positions are a
-  circular layout we compute once per node (`layouts`, a plain ref the
-  library also mutates on drag). Edge labels need more than config —
+  separate color palette from nodes), and node positions come from a
+  `d3-force` simulation (`forceManyBody` + `forceLink` + `forceCenter` +
+  `forceCollide`) restarted whenever the visible node/edge set changes;
+  each `tick` writes `{x, y}` into `layouts` (a plain ref the library
+  also mutates on drag), and nodes that already have a position keep it
+  as the simulation's starting point rather than jumping, so toggling a
+  filter doesn't reshuffle the whole layout. Edge labels need more than config —
   v-network-graph only reads a label's *text* from the edge object's
   own `label` field (set to the relation type name when building
   `vngEdges`) via the `#edge-label` slot rendering a `<v-edge-label>`;
@@ -344,8 +358,9 @@ State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `schemaVersion` (bumped by either `OntologyGraph`'s `schema-updated` or
 `SettingsPanel`'s `schema-used`, and passed to `SettingsPanel` and
 `SchemaGraphPreview` as a refresh signal), `graphRagHops` (from
-`SettingsPanel`'s `hops-changed`, passed to `ChatPanel`). Chat messages
-stay local to `ChatPanel`.
+`SettingsPanel`'s `hops-changed`, passed to `ChatPanel`), `renderMarkdown`
+(from `SettingsPanel`'s `markdown-changed`, passed to `ChatPanel`). Chat
+messages stay local to `ChatPanel`.
 
 `vite.config.js` proxies `/api` and `/health` to `http://backend:8000`
 (the compose service name) so the browser only ever talks to

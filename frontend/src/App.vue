@@ -14,6 +14,7 @@ const graphFilters = ref(new Set())
 const availableTypes = ref([])
 const schemaVersion = ref(0)
 const graphRagHops = ref(1)
+const renderMarkdown = ref(true)
 const colPercent = ref(50)
 const rowPercent = ref(50)
 
@@ -37,6 +38,10 @@ function onSchemaChanged() {
 
 function onHopsChanged(hops) {
   graphRagHops.value = hops
+}
+
+function onMarkdownChanged(value) {
+  renderMarkdown.value = value
 }
 
 let dragStartX = 0
@@ -96,10 +101,11 @@ const gridStyle = computed(() => ({
       @filters-changed="onFiltersChanged"
       @schema-used="onSchemaChanged"
       @hops-changed="onHopsChanged"
+      @markdown-changed="onMarkdownChanged"
     />
     <div class="main-grid" :style="gridStyle" ref="gridRef">
       <div class="panel top-left">
-        <ChatPanel :file="parsedFile" :hops="graphRagHops" />
+        <ChatPanel :file="parsedFile" :hops="graphRagHops" :render-markdown="renderMarkdown" />
       </div>
       <div class="panel top-right">
         <DocumentPreview :file="parsedFile" />

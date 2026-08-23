@@ -6,7 +6,13 @@ const props = defineProps({
   availableTypes: { type: Array, default: () => [] },
   schemaVersion: { type: Number, default: 0 },
 })
-const emit = defineEmits(['file-selected', 'filters-changed', 'schema-used', 'hops-changed'])
+const emit = defineEmits([
+  'file-selected',
+  'filters-changed',
+  'schema-used',
+  'hops-changed',
+  'markdown-changed',
+])
 
 const model = ref('로딩 중...')
 const isUploading = ref(false)
@@ -17,11 +23,17 @@ const isUsingSchema = ref(false)
 const schemaUseError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
 const graphRagHops = ref(1)
+const renderMarkdown = ref(true)
 
 function onHopsInput(event) {
   const value = Math.max(1, Math.min(5, Number(event.target.value) || 1))
   graphRagHops.value = value
   emit('hops-changed', value)
+}
+
+function onMarkdownToggle(event) {
+  renderMarkdown.value = event.target.checked
+  emit('markdown-changed', renderMarkdown.value)
 }
 
 watch(
@@ -182,6 +194,18 @@ function toggleType(type) {
     </section>
 
     <section>
+      <h3>채팅 표시 설정</h3>
+      <label class="markdown-label">
+        <input
+          type="checkbox"
+          :checked="renderMarkdown"
+          @change="onMarkdownToggle"
+        />
+        마크다운 HTML로 렌더링
+      </label>
+    </section>
+
+    <section>
       <h3>GraphRAG 설정</h3>
       <label class="hops-label">
         검색 hop 수
@@ -272,6 +296,12 @@ function toggleType(type) {
   opacity: 0.5;
 }
 .hops-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.markdown-label {
   display: flex;
   align-items: center;
   gap: 0.5rem;
