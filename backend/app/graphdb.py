@@ -292,3 +292,62 @@ def all_edges_of_types(stem: str, allowed_types: list) -> list:
         {"types": allowed_types, "stem": stem},
     )
     return [_edge_from_row(row) for row in result.rows_as_dict()]
+
+
+def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
+    if not seed_ids:
+        return [], []
+    conn = _get_connection()
+    prefixed_seeds = [f"{stem}::{sid}" for sid in seed_ids]
+    hops = max(hops, 0)
+
+    # No REL table exists anywhere in the database yet (e.g. this document's
+    # own write_graph call had zero edges, and no other document has ever
+    # created a REL table either). This breaks both queries below, in two
+    # different ways -- confirmed experimentally against a real database,
+    # not assumed from the load_graph precedent:
+    #   1. The edges-among-expanded-set query (`MATCH (a)-[r]->(b) ...`) is
+    #      the same untyped relationship pattern as load_graph/
+    #      find_matching_edges/all_edges_of_types, and raises the same
+    #      `RuntimeError: Binder exception: Cannot find property
+    #      source_document for r.`
+    #   2. The variable-length node-expansion query
+    #      (`MATCH (n)-[*0..{hops}]-(m) ...`) does NOT raise -- it runs and
+    #      silently returns zero rows, even at hops=0 where m should always
+    #      include n itself (verified: the identical query against a
+    #      database that *does* have a REL table correctly returns the seed
+    #      node at hops=0; against a database with no REL table at all, it
+    #      returns nothing, seed included). Left unguarded, expand_hops
+    #      would silently drop the seed nodes for any document with no
+    #      edges anywhere in the whole database -- worse than an exception,
+    #      since nothing would signal the miss.
+    # Guard both the same way: fetch seed nodes directly (no relationship
+    # pattern at all) and skip the edge query, returning no edges.
+    has_rel_table = any(kind == "REL" for kind in _existing_tables(conn).values())
+
+    if has_rel_table:
+        node_rows = conn.execute(
+            f"MATCH (n)-[*0..{hops}]-(m) WHERE n.id IN $seeds AND m.source_document = $stem "
+            f"RETURN DISTINCT label(m) AS type, m.id AS id, m.label AS label, m.detail AS detail",
+            {"seeds": prefixed_seeds, "stem": stem},
+        )
+    else:
+        node_rows = conn.execute(
+            "MATCH (n) WHERE n.id IN $seeds AND n.source_document = $stem "
+            "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail",
+            {"seeds": prefixed_seeds, "stem": stem},
+        )
+    nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
+
+    if not has_rel_table:
+        return nodes, []
+
+    expanded_ids = [f"{stem}::{n['id']}" for n in nodes]
+    edge_rows = conn.execute(
+        "MATCH (a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids AND r.source_document = $stem "
+        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
+        {"ids": expanded_ids, "stem": stem},
+    )
+    edges = [_edge_from_row(row) for row in edge_rows.rows_as_dict()]
+
+    return nodes, edges

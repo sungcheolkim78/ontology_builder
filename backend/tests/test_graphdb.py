@@ -277,3 +277,82 @@ def test_all_edges_of_types_handles_document_with_no_edges_on_fresh_database():
     graphdb.write_graph("doc_no_edges", nodes, [])
 
     assert graphdb.all_edges_of_types("doc_no_edges", ["WORKED_ON"]) == []
+
+
+def test_expand_hops_zero_returns_only_seed():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    nodes, edges = graphdb.expand_hops("doc_a", {"n1"}, hops=0)
+
+    assert {n["id"] for n in nodes} == {"n1"}
+    assert edges == []
+
+
+def test_expand_hops_one_includes_neighbor_and_connecting_edge():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    nodes, edges = graphdb.expand_hops("doc_a", {"n1"}, hops=1)
+
+    assert {n["id"] for n in nodes} == {"n1", "n2"}
+    assert edges == [{"source": "n1", "target": "n2", "type": "WORKED_ON", "detail": "From 1842"}]
+
+
+def test_expand_hops_is_undirected():
+    # n2 -[WORKED_ON]-> nothing incoming to n1 structurally, but expansion
+    # from n2 must still reach n1 (undirected traversal).
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    nodes, _ = graphdb.expand_hops("doc_a", {"n2"}, hops=1)
+
+    assert {n["id"] for n in nodes} == {"n1", "n2"}
+
+
+def test_expand_hops_does_not_cross_documents():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    graphdb.write_graph("doc_b", [{"id": "n1", "label": "Unrelated", "type": "Person"}], [])
+
+    nodes, _ = graphdb.expand_hops("doc_a", {"n1"}, hops=5)
+
+    assert {n["id"] for n in nodes} == {"n1", "n2"}  # doc_a's own graph only
+
+
+def test_expand_hops_empty_seeds_returns_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    nodes, edges = graphdb.expand_hops("doc_a", set(), hops=1)
+
+    assert nodes == []
+    assert edges == []
+
+
+def test_expand_hops_zero_hops_on_zero_rel_table_database_returns_seed():
+    # Regression test for a silent-failure variant of the zero-REL-table bug
+    # seen in load_graph/find_matching_edges/all_edges_of_types. There, an
+    # untyped relationship pattern raised RuntimeError when no REL table
+    # existed. Here, the variable-length pattern `MATCH (n)-[*0..{hops}]-(m)`
+    # does NOT raise against a database with zero REL tables -- verified
+    # experimentally -- it runs and silently returns zero rows, even at
+    # hops=0 where m should always include n itself. The clean_graphdb
+    # autouse fixture wipes DB_PATH before every test, so a single
+    # write_graph call with zero edges guarantees no REL table exists yet.
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph("doc_no_edges", nodes, [])
+
+    result_nodes, edges = graphdb.expand_hops("doc_no_edges", {"n1"}, hops=0)
+
+    assert {n["id"] for n in result_nodes} == {"n1"}
+    assert edges == []
+
+
+def test_expand_hops_nonzero_hops_on_zero_rel_table_database_returns_seed():
+    # Same underlying bug as above, exercised with hops > 0: still no
+    # traversal is possible (there are no relationships in the whole
+    # database), but the seed node itself must still come back rather than
+    # an empty list or a raised RuntimeError.
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph("doc_no_edges", nodes, [])
+
+    result_nodes, edges = graphdb.expand_hops("doc_no_edges", {"n1"}, hops=3)
+
+    assert {n["id"] for n in result_nodes} == {"n1"}
+    assert edges == []
