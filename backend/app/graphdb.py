@@ -256,3 +256,39 @@ def all_nodes_of_types(stem: str, allowed_types: list) -> list:
         {"types": allowed_types, "stem": stem},
     )
     return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
+
+
+def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set) -> list:
+    if not allowed_types or not matched_node_ids:
+        return []
+    conn = _get_connection()
+    # See load_graph's comment on the same guard: an untyped relationship
+    # pattern raises `RuntimeError: Binder exception: Cannot find property
+    # source_document for r.` when no REL table exists anywhere in the
+    # database yet (e.g. this document's own write_graph call had zero
+    # edges, and no other document has ever created a REL table either).
+    if not any(kind == "REL" for kind in _existing_tables(conn).values()):
+        return []
+    prefixed_ids = [f"{stem}::{nid}" for nid in matched_node_ids]
+    result = conn.execute(
+        "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
+        "AND (a.id IN $ids OR b.id IN $ids) "
+        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
+        {"types": allowed_types, "stem": stem, "ids": prefixed_ids},
+    )
+    return [_edge_from_row(row) for row in result.rows_as_dict()]
+
+
+def all_edges_of_types(stem: str, allowed_types: list) -> list:
+    if not allowed_types:
+        return []
+    conn = _get_connection()
+    # See load_graph's comment on the same guard.
+    if not any(kind == "REL" for kind in _existing_tables(conn).values()):
+        return []
+    result = conn.execute(
+        "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
+        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
+        {"types": allowed_types, "stem": stem},
+    )
+    return [_edge_from_row(row) for row in result.rows_as_dict()]

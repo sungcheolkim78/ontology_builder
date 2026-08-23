@@ -214,3 +214,66 @@ def test_all_nodes_of_types_empty_types_matches_nothing():
     graphdb.write_graph("doc_a", NODES, EDGES)
 
     assert graphdb.all_nodes_of_types("doc_a", []) == []
+
+
+def test_find_matching_edges_filters_by_type_and_connection():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    matched = graphdb.find_matching_edges("doc_a", ["WORKED_ON"], {"n1"})
+
+    assert matched == [{"source": "n1", "target": "n2", "type": "WORKED_ON", "detail": "From 1842"}]
+
+
+def test_find_matching_edges_excludes_unconnected_nodes():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    matched = graphdb.find_matching_edges("doc_a", ["WORKED_ON"], {"some_other_id"})
+
+    assert matched == []
+
+
+def test_find_matching_edges_empty_matched_ids_matches_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.find_matching_edges("doc_a", ["WORKED_ON"], set()) == []
+
+
+def test_all_edges_of_types_ignores_connection():
+    nodes = [
+        {"id": "n3", "label": "Charles Babbage", "type": "Person"},
+        {"id": "n4", "label": "Royal Society", "type": "Organization"},
+    ]
+    edges = [{"source": "n3", "target": "n4", "type": "MEMBER_OF"}]
+    graphdb.write_graph("doc_a", NODES + nodes, EDGES + edges)
+
+    matched = graphdb.all_edges_of_types("doc_a", ["MEMBER_OF"])
+
+    assert matched == [{"source": "n3", "target": "n4", "type": "MEMBER_OF"}]
+
+
+def test_all_edges_of_types_empty_types_matches_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.all_edges_of_types("doc_a", []) == []
+
+
+def test_find_matching_edges_handles_document_with_no_edges_on_fresh_database():
+    # Regression test for the same zero-REL-table failure mode fixed in
+    # load_graph (see test_load_graph_handles_document_with_no_edges_on_fresh_database):
+    # a naive `MATCH (a)-[r]->(b) WHERE r.type IN $types ...` raises
+    # `RuntimeError: Binder exception: Cannot find property source_document
+    # for r.` when no REL table exists at all anywhere in the database. The
+    # clean_graphdb autouse fixture wipes DB_PATH before every test, so this
+    # is guaranteed to be the very first write_graph call against a fresh
+    # database, with zero edges -- no REL table exists yet.
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph("doc_no_edges", nodes, [])
+
+    assert graphdb.find_matching_edges("doc_no_edges", ["WORKED_ON"], {"n1"}) == []
+
+
+def test_all_edges_of_types_handles_document_with_no_edges_on_fresh_database():
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph("doc_no_edges", nodes, [])
+
+    assert graphdb.all_edges_of_types("doc_no_edges", ["WORKED_ON"]) == []
