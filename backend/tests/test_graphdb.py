@@ -36,3 +36,80 @@ def test_validate_identifier_rejects_unsafe_names():
     for bad in ["Person; DROP TABLE Person", "has space", "has-dash", "1StartsWithDigit", "", "has`tick", "Person\n"]:
         with pytest.raises(ValueError):
             graphdb._validate_identifier(bad)
+
+
+NODES = [
+    {"id": "n1", "label": "Ada Lovelace", "type": "Person", "detail": "Mathematician"},
+    {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+]
+EDGES = [
+    {"source": "n1", "target": "n2", "type": "WORKED_ON", "detail": "From 1842"},
+]
+
+
+def test_write_and_load_graph_round_trips():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.has_graph("doc_a") is True
+    loaded = graphdb.load_graph("doc_a")
+
+    assert loaded is not None
+    assert sorted(loaded["nodes"], key=lambda n: n["id"]) == sorted(NODES, key=lambda n: n["id"])
+    assert loaded["edges"] == EDGES
+
+
+def test_load_graph_returns_none_for_unextracted_document():
+    assert graphdb.load_graph("never_extracted") is None
+
+
+def test_write_graph_scopes_by_document():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    graphdb.write_graph(
+        "doc_b",
+        [{"id": "n1", "label": "Charles Babbage", "type": "Person"}],
+        [],
+    )
+
+    loaded_a = graphdb.load_graph("doc_a")
+    loaded_b = graphdb.load_graph("doc_b")
+
+    assert [n["label"] for n in loaded_a["nodes"]] == sorted(
+        [n["label"] for n in loaded_a["nodes"]]
+    )  # sanity: just doc_a's own data
+    assert {n["label"] for n in loaded_a["nodes"]} == {"Ada Lovelace", "Analytical Engine"}
+    assert {n["label"] for n in loaded_b["nodes"]} == {"Charles Babbage"}
+
+
+def test_write_graph_re_extraction_replaces_previous_data():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    new_nodes = [{"id": "m1", "label": "Grace Hopper", "type": "Person"}]
+    graphdb.write_graph("doc_a", new_nodes, [])
+
+    loaded = graphdb.load_graph("doc_a")
+    assert loaded["nodes"] == new_nodes
+    assert loaded["edges"] == []
+
+
+def test_write_graph_extends_edge_table_with_new_type_pair():
+    # First document: WORKED_ON goes Person -> Concept.
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    # Second document: same edge type name, different (source, target) pair --
+    # must ALTER TABLE ADD FROM/TO rather than fail.
+    nodes_b = [
+        {"id": "p1", "label": "Person Two", "type": "Person"},
+        {"id": "o1", "label": "Org One", "type": "Organization"},
+    ]
+    edges_b = [{"source": "p1", "target": "o1", "type": "WORKED_ON"}]
+
+    graphdb.write_graph("doc_b", nodes_b, edges_b)
+
+    loaded_b = graphdb.load_graph("doc_b")
+    assert loaded_b["edges"] == edges_b
+
+
+def test_write_graph_rejects_unsafe_type_name():
+    bad_nodes = [{"id": "n1", "label": "X", "type": "Person; DROP TABLE Person"}]
+    with pytest.raises(ValueError):
+        graphdb.write_graph("doc_bad", bad_nodes, [])
