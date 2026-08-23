@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 from app import graphdb
@@ -113,6 +116,29 @@ def test_write_graph_rejects_unsafe_type_name():
     bad_nodes = [{"id": "n1", "label": "X", "type": "Person; DROP TABLE Person"}]
     with pytest.raises(ValueError):
         graphdb.write_graph("doc_bad", bad_nodes, [])
+
+
+def test_write_graph_raises_value_error_for_edge_with_unknown_source_node():
+    # Regression test: an LLM extraction hallucinating an edge endpoint (a
+    # node id not present in this document's own `nodes` list) used to raise
+    # a raw KeyError from `nodes_by_id[edge["source"]]` deep inside
+    # write_graph, propagating as an uncaught 500 on the extract endpoint.
+    # It must instead raise ValueError, checked before any DDL/transaction
+    # work begins, so main.py's existing `except ValueError -> 400` handling
+    # covers it like every other malformed-LLM-output case.
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    bad_edges = [{"source": "n1", "target": "does_not_exist", "type": "WORKED_ON"}]
+
+    with pytest.raises(ValueError):
+        graphdb.write_graph("doc_dangling_edge", nodes, bad_edges)
+
+
+def test_write_graph_raises_value_error_for_edge_with_unknown_target_node():
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    bad_edges = [{"source": "does_not_exist", "target": "n1", "type": "WORKED_ON"}]
+
+    with pytest.raises(ValueError):
+        graphdb.write_graph("doc_dangling_edge", nodes, bad_edges)
 
 
 def test_write_graph_edge_row_order_is_deterministic_across_edge_types():
@@ -342,6 +368,111 @@ def test_expand_hops_zero_hops_on_zero_rel_table_database_returns_seed():
 
     assert {n["id"] for n in result_nodes} == {"n1"}
     assert edges == []
+
+
+def test_load_graph_handles_document_with_zero_nodes_on_fresh_database():
+    # Symmetric regression test to
+    # test_load_graph_handles_document_with_no_edges_on_fresh_database, but
+    # for the NODE-table case: a document extraction that legitimately
+    # yields zero nodes (and therefore zero edges) still calls
+    # write_graph, which still marks has_graph(stem) == True via the
+    # _ExtractedDocument marker row -- but on a fresh database with no NODE
+    # tables at all, load_graph's untyped `MATCH (n) ...` node query used to
+    # raise `RuntimeError: Binder exception: Cannot find property
+    # source_document for n.` instead of returning nodes: [].
+    graphdb.write_graph("doc_empty", [], [])
+
+    loaded = graphdb.load_graph("doc_empty")
+    assert loaded == {"nodes": [], "edges": []}
+
+
+def test_find_relevant_nodes_handles_zero_node_tables_on_fresh_database():
+    graphdb.write_graph("doc_empty", [], [])
+
+    assert graphdb.find_relevant_nodes("doc_empty", ["ada"], ["Person"]) == []
+
+
+def test_all_nodes_of_types_handles_zero_node_tables_on_fresh_database():
+    graphdb.write_graph("doc_empty", [], [])
+
+    assert graphdb.all_nodes_of_types("doc_empty", ["Person"]) == []
+
+
+def test_expand_hops_handles_zero_node_tables_on_fresh_database():
+    graphdb.write_graph("doc_empty", [], [])
+
+    nodes, edges = graphdb.expand_hops("doc_empty", {"n1"}, hops=1)
+
+    assert nodes == []
+    assert edges == []
+
+
+def test_write_graph_is_thread_safe_under_concurrent_calls():
+    # Regression test for a genuine data-loss bug: graphdb.py holds one
+    # module-level Connection, but FastAPI's synchronous `def` endpoints run
+    # on a real worker threadpool, so concurrent requests execute
+    # write_graph on different threads simultaneously. write_graph's
+    # explicit BEGIN TRANSACTION/COMMIT/ROLLBACK is per-connection state --
+    # two overlapping calls interleave destructively (verified: a second
+    # thread's BEGIN while the first's transaction is open raises
+    # "RuntimeError: Connection already has an active transaction", and the
+    # first thread's subsequent COMMIT then fails too -- after its DETACH
+    # DELETE has already run, i.e. actual data loss).
+    #
+    # To force genuine overlap rather than relying on timing luck, this
+    # patches the shared connection's `execute` so the *first* thread to
+    # reach "BEGIN TRANSACTION" pauses right after starting it -- leaving
+    # its transaction open for a window the second thread's write_graph
+    # call (released from the barrier at the same time) is guaranteed to
+    # run into.
+    conn = graphdb._get_connection()
+    original_execute = conn.execute
+    first_transaction_started = threading.Event()
+
+    def patched_execute(query, *args, **kwargs):
+        if query == "BEGIN TRANSACTION" and not first_transaction_started.is_set():
+            first_transaction_started.set()
+            result = original_execute(query, *args, **kwargs)
+            time.sleep(0.3)
+            return result
+        return original_execute(query, *args, **kwargs)
+
+    conn.execute = patched_execute
+
+    barrier = threading.Barrier(2)
+    errors = []
+
+    nodes_a = [{"id": f"a{i:02d}", "label": f"Node A{i}", "type": "Person"} for i in range(10)]
+    edges_a = [
+        {"source": f"a{i:02d}", "target": f"a{i + 1:02d}", "type": "KNOWS"}
+        for i in range(len(nodes_a) - 1)
+    ]
+    nodes_b = [{"id": f"b{i:02d}", "label": f"Node B{i}", "type": "Person"} for i in range(10)]
+    edges_b = [
+        {"source": f"b{i:02d}", "target": f"b{i + 1:02d}", "type": "KNOWS"}
+        for i in range(len(nodes_b) - 1)
+    ]
+
+    def run(stem, nodes, edges):
+        barrier.wait()
+        try:
+            graphdb.write_graph(stem, nodes, edges)
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=run, args=("doc_concurrent_a", nodes_a, edges_a))
+    t2 = threading.Thread(target=run, args=("doc_concurrent_b", nodes_b, edges_b))
+    try:
+        t1.start()
+        t2.start()
+        t1.join(timeout=30)
+        t2.join(timeout=30)
+    finally:
+        conn.execute = original_execute
+
+    assert errors == []
+    assert graphdb.load_graph("doc_concurrent_a") == {"nodes": nodes_a, "edges": edges_a}
+    assert graphdb.load_graph("doc_concurrent_b") == {"nodes": nodes_b, "edges": edges_b}
 
 
 def test_expand_hops_nonzero_hops_on_zero_rel_table_database_returns_seed():

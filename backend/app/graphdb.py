@@ -1,14 +1,40 @@
+import functools
 import re
+import threading
 from pathlib import Path
 
 from ladybug import Connection, Database
 
-DB_PATH = Path(__file__).parent.parent / "data" / "graph.ladybugdb"
+DB_PATH = Path(__file__).parent.parent / "data" / "graph" / "graph.ladybugdb"
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 _database = None
 _connection = None
+
+# FastAPI's synchronous `def` endpoints run on a real worker threadpool, so
+# concurrent requests genuinely execute these functions on different
+# threads against the single module-level Connection above. write_graph's
+# explicit BEGIN TRANSACTION/COMMIT/ROLLBACK (and the DDL statements
+# preceding it) are per-connection state; overlapping calls interleave
+# destructively (verified: a second thread's BEGIN while the first's
+# transaction is open raises "Connection already has an active
+# transaction", concurrent CREATE TABLE IF NOT EXISTS-style checks can
+# raise "already exists in catalog", etc.). This lock serializes every
+# public function in this module. It's an RLock rather than a plain Lock
+# because load_graph calls has_graph internally -- both are synchronized,
+# and a plain Lock would deadlock a thread against itself on that nested
+# acquisition.
+_lock = threading.RLock()
+
+
+def _synchronized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with _lock:
+            return func(*args, **kwargs)
+
+    return wrapper
 
 
 def _validate_identifier(name: str) -> str:
@@ -43,6 +69,7 @@ def reset_connection() -> None:
         _database = None
 
 
+@_synchronized
 def has_graph(stem: str) -> bool:
     conn = _get_connection()
     result = conn.execute(
@@ -80,6 +107,19 @@ def _existing_tables(conn) -> dict:
     }
 
 
+def _has_table_of_kind(conn, kind: str) -> bool:
+    # A generic, untyped pattern (`MATCH (n) ...` or `MATCH (a)-[r]->(b) ...`)
+    # raises `RuntimeError: Binder exception: Cannot find property ... for
+    # n/r.` when the database has zero tables of the relevant kind (NODE or
+    # REL) -- there's no table at all for the pattern to bind the property
+    # lookup against. This happens on a genuinely fresh database, or after a
+    # document extraction that legitimately yields zero nodes/edges when no
+    # other document has created a table of that kind either. Guard on table
+    # existence rather than catching the error: matching on exception
+    # type/message would be fragile to library changes.
+    return any(k == kind for k in _existing_tables(conn).values())
+
+
 def _existing_pairs(conn, rel_type: str) -> set:
     rows = conn.execute(f'CALL show_connection("{rel_type}") RETURN *').rows_as_dict()
     return {(row["source table name"], row["destination table name"]) for row in rows}
@@ -103,9 +143,21 @@ def _edge_from_row(row: dict) -> dict:
     return edge
 
 
+@_synchronized
 def write_graph(stem: str, nodes: list, edges: list) -> None:
     conn = _get_connection()
     nodes_by_id = {n["id"]: n for n in nodes}
+
+    # Fail fast, before any DDL/transaction work begins: an LLM extraction
+    # can hallucinate an edge endpoint that isn't among this document's own
+    # extracted nodes. Left unchecked, `nodes_by_id[edge["source"/"target"]]`
+    # below raises a raw KeyError instead of the ValueError every other
+    # malformed-LLM-output case in this codebase raises.
+    for edge in edges:
+        if edge["source"] not in nodes_by_id:
+            raise ValueError(f"edge references unknown node id: {edge['source']!r}")
+        if edge["target"] not in nodes_by_id:
+            raise ValueError(f"edge references unknown node id: {edge['target']!r}")
 
     node_types = _validate_identifier_set(n["type"] for n in nodes)
     # dict.fromkeys over a generator of tuples, same rationale as
@@ -192,6 +244,7 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         raise
 
 
+@_synchronized
 def load_graph(stem: str) -> dict | None:
     if not has_graph(stem):
         return None
@@ -204,22 +257,24 @@ def load_graph(stem: str) -> dict | None:
     # -- i.e. nondeterminism inside the DB engine's own execution of these
     # patterns, not something controllable from this module by influencing
     # table creation order.
-    node_rows = conn.execute(
-        "MATCH (n) WHERE n.source_document = $stem "
-        "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail "
-        "ORDER BY n.id",
-        {"stem": stem},
-    ).rows_as_dict()
-    nodes = [_node_from_row(row) for row in node_rows]
+    # No NODE table exists at all when this is the very first write_graph
+    # call against a fresh database and that call had zero nodes (or every
+    # document written so far had zero nodes) -- see _has_table_of_kind.
+    if _has_table_of_kind(conn, "NODE"):
+        node_rows = conn.execute(
+            "MATCH (n) WHERE n.source_document = $stem "
+            "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail "
+            "ORDER BY n.id",
+            {"stem": stem},
+        ).rows_as_dict()
+        nodes = [_node_from_row(row) for row in node_rows]
+    else:
+        nodes = []
 
     # No REL table exists at all when this is the very first write_graph
     # call against a fresh database (or every document written so far had
-    # zero edges) -- the query below then has no relationship type to bind
-    # `r.source_document` against and raises `RuntimeError: Binder
-    # exception: Cannot find property source_document for r.` Guard on
-    # table existence rather than catching that error: matching on
-    # exception type/message would be fragile to library changes.
-    if any(kind == "REL" for kind in _existing_tables(conn).values()):
+    # zero edges) -- see _has_table_of_kind.
+    if _has_table_of_kind(conn, "REL"):
         edge_rows = conn.execute(
             "MATCH (a)-[r]->(b) WHERE r.source_document = $stem "
             "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target "
@@ -233,10 +288,14 @@ def load_graph(stem: str) -> dict | None:
     return {"nodes": nodes, "edges": edges}
 
 
+@_synchronized
 def find_relevant_nodes(stem: str, keywords: list, allowed_types: list) -> list:
     if not allowed_types or not keywords:
         return []
     conn = _get_connection()
+    # No NODE table exists at all -- see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "NODE"):
+        return []
     result = conn.execute(
         "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
         "AND ANY(kw IN $keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
@@ -247,10 +306,14 @@ def find_relevant_nodes(stem: str, keywords: list, allowed_types: list) -> list:
     return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
 
 
+@_synchronized
 def all_nodes_of_types(stem: str, allowed_types: list) -> list:
     if not allowed_types:
         return []
     conn = _get_connection()
+    # No NODE table exists at all -- see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "NODE"):
+        return []
     result = conn.execute(
         "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem RETURN n.id AS id",
         {"types": allowed_types, "stem": stem},
@@ -258,16 +321,13 @@ def all_nodes_of_types(stem: str, allowed_types: list) -> list:
     return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
 
 
+@_synchronized
 def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set) -> list:
     if not allowed_types or not matched_node_ids:
         return []
     conn = _get_connection()
-    # See load_graph's comment on the same guard: an untyped relationship
-    # pattern raises `RuntimeError: Binder exception: Cannot find property
-    # source_document for r.` when no REL table exists anywhere in the
-    # database yet (e.g. this document's own write_graph call had zero
-    # edges, and no other document has ever created a REL table either).
-    if not any(kind == "REL" for kind in _existing_tables(conn).values()):
+    # No REL table exists at all -- see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "REL"):
         return []
     prefixed_ids = [f"{stem}::{nid}" for nid in matched_node_ids]
     result = conn.execute(
@@ -279,12 +339,13 @@ def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set) -
     return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
+@_synchronized
 def all_edges_of_types(stem: str, allowed_types: list) -> list:
     if not allowed_types:
         return []
     conn = _get_connection()
-    # See load_graph's comment on the same guard.
-    if not any(kind == "REL" for kind in _existing_tables(conn).values()):
+    # No REL table exists at all -- see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "REL"):
         return []
     result = conn.execute(
         "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
@@ -294,12 +355,20 @@ def all_edges_of_types(stem: str, allowed_types: list) -> list:
     return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
+@_synchronized
 def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
     if not seed_ids:
         return [], []
     conn = _get_connection()
     prefixed_seeds = [f"{stem}::{sid}" for sid in seed_ids]
     hops = max(hops, 0)
+
+    # No NODE table exists at all -- see _has_table_of_kind. Nothing can
+    # possibly match (there are no nodes in the whole database), and both
+    # queries below assume at least one NODE table exists, so short-circuit
+    # before running either.
+    if not _has_table_of_kind(conn, "NODE"):
+        return [], []
 
     # No REL table exists anywhere in the database yet (e.g. this document's
     # own write_graph call had zero edges, and no other document has ever
@@ -323,7 +392,7 @@ def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
     #      since nothing would signal the miss.
     # Guard both the same way: fetch seed nodes directly (no relationship
     # pattern at all) and skip the edge query, returning no edges.
-    has_rel_table = any(kind == "REL" for kind in _existing_tables(conn).values())
+    has_rel_table = _has_table_of_kind(conn, "REL")
 
     if has_rel_table:
         node_rows = conn.execute(
