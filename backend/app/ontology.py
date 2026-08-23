@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.chat import get_chat_model
 from app.telemetry import invoke_with_telemetry
+from app import graphdb
 
 GRAPH_DIR = Path(__file__).parent.parent / "data" / "graph"
 
@@ -111,10 +112,7 @@ def load_schema(stem: str) -> dict | None:
 
 
 def save_graph(stem: str, graph: dict) -> None:
-    d = graph_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "nodes.json").write_text(json.dumps(graph["nodes"]))
-    (d / "edges.json").write_text(json.dumps(graph["edges"]))
+    graphdb.write_graph(stem, graph["nodes"], graph["edges"])
 
 
 def list_schema_stems() -> list[str]:
@@ -128,12 +126,4 @@ def list_schema_stems() -> list[str]:
 
 
 def load_graph(stem: str) -> dict | None:
-    d = graph_dir_for(stem)
-    nodes_path = d / "nodes.json"
-    edges_path = d / "edges.json"
-    if not nodes_path.is_file() or not edges_path.is_file():
-        return None
-    return {
-        "nodes": json.loads(nodes_path.read_text()),
-        "edges": json.loads(edges_path.read_text()),
-    }
+    return graphdb.load_graph(stem)

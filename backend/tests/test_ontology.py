@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 
 import pytest
@@ -19,14 +20,27 @@ class FakeChatModel:
 
 @pytest.fixture(autouse=True)
 def clean_dirs():
+    from app import graphdb
+    graphdb.reset_connection()
     for d in (DATA_DIR, GRAPH_DIR):
         if d.exists():
             shutil.rmtree(d)
+    if graphdb.DB_PATH.exists():
+        if graphdb.DB_PATH.is_file():
+            os.remove(graphdb.DB_PATH)
+        else:
+            shutil.rmtree(graphdb.DB_PATH)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     yield
+    graphdb.reset_connection()
     for d in (DATA_DIR, GRAPH_DIR):
         if d.exists():
             shutil.rmtree(d)
+    if graphdb.DB_PATH.exists():
+        if graphdb.DB_PATH.is_file():
+            os.remove(graphdb.DB_PATH)
+        else:
+            shutil.rmtree(graphdb.DB_PATH)
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):
@@ -108,8 +122,8 @@ def test_extract_saves_and_returns_graph(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
-    assert json.loads((schema_dir / "nodes.json").read_text()) == graph["nodes"]
-    assert json.loads((schema_dir / "edges.json").read_text()) == graph["edges"]
+    from app import graphdb
+    assert graphdb.load_graph("doc_raw") == graph
 
 
 def test_extract_returns_400_on_invalid_json(monkeypatch):
@@ -128,12 +142,10 @@ def test_extract_returns_400_on_invalid_json(monkeypatch):
 
 
 def test_get_ontology_returns_saved_graph():
-    graph_dir = GRAPH_DIR / "doc_raw"
-    graph_dir.mkdir(parents=True)
+    from app import graphdb
     nodes = [{"id": "n1", "label": "Alice", "type": "Person"}]
     edges = []
-    (graph_dir / "nodes.json").write_text(json.dumps(nodes))
-    (graph_dir / "edges.json").write_text(json.dumps(edges))
+    graphdb.write_graph("doc_raw", nodes, edges)
     client = TestClient(app)
 
     response = client.get("/api/ontology/doc_raw.md")

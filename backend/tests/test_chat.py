@@ -1,10 +1,12 @@
 import json
+import os
 import shutil
 
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.ontology import GRAPH_DIR
+from app import graphdb
 
 NODES = [
     {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
@@ -46,8 +48,7 @@ def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
     graph_dir = GRAPH_DIR / stem
     graph_dir.mkdir(parents=True)
     (graph_dir / "schema.json").write_text(json.dumps(schema))
-    (graph_dir / "nodes.json").write_text(json.dumps(nodes))
-    (graph_dir / "edges.json").write_text(json.dumps(edges))
+    graphdb.write_graph(stem, nodes, edges)
     return graph_dir
 
 
@@ -98,7 +99,14 @@ def test_chat_with_filename_injects_graph_context_and_type_preview(monkeypatch):
         assert final_messages[0].content.startswith("다음은")
         assert "Analytical Engine" in final_messages[0].content
     finally:
-        shutil.rmtree(GRAPH_DIR)
+        graphdb.reset_connection()
+        if GRAPH_DIR.exists():
+            shutil.rmtree(GRAPH_DIR)
+        if graphdb.DB_PATH.exists():
+            if graphdb.DB_PATH.is_file():
+                os.remove(graphdb.DB_PATH)
+            else:
+                shutil.rmtree(graphdb.DB_PATH)
 
 
 def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
@@ -122,7 +130,14 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
         assert "찾을 수 없습니다" in body["content"]
         assert len(model.calls) == 1  # only type analysis, no final answer call
     finally:
-        shutil.rmtree(GRAPH_DIR)
+        graphdb.reset_connection()
+        if GRAPH_DIR.exists():
+            shutil.rmtree(GRAPH_DIR)
+        if graphdb.DB_PATH.exists():
+            if graphdb.DB_PATH.is_file():
+                os.remove(graphdb.DB_PATH)
+            else:
+                shutil.rmtree(graphdb.DB_PATH)
 
 
 def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
@@ -160,7 +175,14 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
         final_messages = model.calls[2]
         assert "Ada Lovelace" in final_messages[0].content
     finally:
-        shutil.rmtree(GRAPH_DIR)
+        graphdb.reset_connection()
+        if GRAPH_DIR.exists():
+            shutil.rmtree(GRAPH_DIR)
+        if graphdb.DB_PATH.exists():
+            if graphdb.DB_PATH.is_file():
+                os.remove(graphdb.DB_PATH)
+            else:
+                shutil.rmtree(graphdb.DB_PATH)
 
 
 def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatch):
@@ -198,7 +220,14 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
         assert "찾을 수 없습니다" in body["content"]
         assert len(model.calls) == 2
     finally:
-        shutil.rmtree(GRAPH_DIR)
+        graphdb.reset_connection()
+        if GRAPH_DIR.exists():
+            shutil.rmtree(GRAPH_DIR)
+        if graphdb.DB_PATH.exists():
+            if graphdb.DB_PATH.is_file():
+                os.remove(graphdb.DB_PATH)
+            else:
+                shutil.rmtree(graphdb.DB_PATH)
 
 
 def test_chat_with_filename_but_no_graph_skips_retrieval(monkeypatch):
