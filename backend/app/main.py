@@ -20,6 +20,9 @@ from app.ontology import (
     save_schema,
 )
 from app.parser import DATA_DIR, parse_to_markdown_file
+from app.telemetry import configure_telemetry, invoke_with_telemetry
+
+configure_telemetry()
 
 app = FastAPI()
 
@@ -81,7 +84,9 @@ def chat(request: ChatRequest):
                         }
                     ] + messages
                     model = get_chat_model()
-                    response = model.invoke(to_langchain_messages(augmented))
+                    response = invoke_with_telemetry(
+                        "chat.answer", model, to_langchain_messages(augmented)
+                    )
                     content = f"{preview}\n\n{response.content}"
                 else:
                     content = f"{preview}\n\n관련된 내용을 찾을 수 없습니다."
@@ -89,7 +94,7 @@ def chat(request: ChatRequest):
 
     model = get_chat_model()
     lc_messages = to_langchain_messages(messages)
-    response = model.invoke(lc_messages)
+    response = invoke_with_telemetry("chat.answer", model, lc_messages)
     return {"role": "assistant", "content": response.content}
 
 

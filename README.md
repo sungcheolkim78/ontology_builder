@@ -36,6 +36,8 @@ podman-compose up --build -d
 
 실행되면 브라우저에서 `http://localhost:5173`으로 접속합니다.
 
+모든 LLM 호출(채팅, 스키마 생성, 그래프 추출, GraphRAG 검색)은 `http://localhost:16686` (Jaeger UI)에서 추적할 수 있습니다.
+
 ## 사용 방법
 
 1. 좌측 패널에서 문서를 업로드

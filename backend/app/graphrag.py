@@ -4,6 +4,7 @@ import networkx as nx
 
 from app.chat import get_chat_model
 from app.ontology import parse_json_response
+from app.telemetry import invoke_with_telemetry
 
 KEYWORD_PROMPT = """Extract the key entities, names, or specific terms mentioned in this \
 question that might refer to nodes in a knowledge graph.
@@ -33,7 +34,9 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 
 def extract_keywords(question: str) -> list:
     model = get_chat_model()
-    response = model.invoke(KEYWORD_PROMPT.format(question=question))
+    response = invoke_with_telemetry(
+        "graphrag.extract_keywords", model, KEYWORD_PROMPT.format(question=question)
+    )
     keywords = parse_json_response(response.content)
     if not isinstance(keywords, list):
         raise ValueError("keyword extraction did not return a JSON list")
@@ -42,8 +45,10 @@ def extract_keywords(question: str) -> list:
 
 def determine_relevant_types(question: str, schema: dict) -> dict:
     model = get_chat_model()
-    response = model.invoke(
-        TYPE_ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question)
+    response = invoke_with_telemetry(
+        "graphrag.determine_types",
+        model,
+        TYPE_ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question),
     )
     result = parse_json_response(response.content)
     if not isinstance(result.get("node_types"), list) or not isinstance(

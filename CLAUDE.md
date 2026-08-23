@@ -87,20 +87,48 @@ business logic of its own beyond request/response shaping.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
-  or `DEFAULT_SCHEMA` as a last resort). Both steps parse LLM output via
-  `parse_json_response` (strips markdown code fences, raises `ValueError`
-  on bad JSON — every LLM-JSON caller in this codebase reuses this
-  function rather than parsing independently). Persisted under
-  `backend/data/graph/{stem}/{schema,nodes,edges}.json`.
-- `graphrag.py` — the retrieval side of chat. `extract_keywords()` asks the
-  LLM for entities in the user's question; `find_relevant_nodes()` matches
-  those against node labels (case-insensitive substring, no embeddings);
-  `retrieve_graph_context()` loads the document's graph into a
-  `networkx.DiGraph` and expands matched nodes via
-  `nx.ego_graph(radius=hops, undirected=True)` to build the context text
-  injected into chat as a system message. Any failure at any stage (no
-  graph yet, no keyword match, bad LLM JSON) is a silent no-op fallback to
-  plain chat, never a user-facing error.
+  or `DEFAULT_SCHEMA` as a last resort). Nodes/edges also get an optional
+  `detail` field: one or two sentences of document-specific nuance (exact
+  conditions, exceptions, figures) that label/type alone would lose —
+  added because label/type extraction is a lossy summary, and GraphRAG
+  answers were otherwise capped at whatever a short label could convey.
+  Both steps parse LLM output via `parse_json_response` (strips markdown
+  code fences, raises `ValueError` on bad JSON — every LLM-JSON caller in
+  this codebase reuses this function rather than parsing independently).
+  Persisted under `backend/data/graph/{stem}/{schema,nodes,edges}.json`.
+- `graphrag.py` — the retrieval side of chat, a two-stage search rather
+  than plain keyword matching. Stage 1: `determine_relevant_types()`
+  sends the document's schema + the question to the LLM, asking which
+  node/edge *types* (by exact schema name) are relevant; empty result on
+  both short-circuits immediately with no further LLM calls. Stage 2:
+  `extract_keywords()` + `find_relevant_nodes()`/`find_matching_edges()`
+  search for specific instances of those types. If that finds nothing,
+  `all_nodes_of_types()`/`all_edges_of_types()` fall back to *every*
+  instance of the determined types rather than reporting nothing found —
+  this exists because keyword-substring matching only ever finds a
+  *specific named* instance, so category questions ("what are the
+  responsibilities?") or a question/document language mismatch would
+  otherwise always miss even when the type is genuinely relevant and the
+  graph clearly has matching data. The matched node set expands via
+  `nx.ego_graph(radius=hops, undirected=True)` into an `Entities:`/
+  `Relations:` context block (each line including the node's/edge's
+  `detail` field when present — see above) injected into chat as a
+  system message, prefixed with a fixed preview line
+  (`format_type_preview()`) showing the determined types. Once a
+  document with an extracted graph is selected, finding nothing at
+  either stage is reported as "관련된 내용을 찾을 수 없습니다" rather
+  than silently answering from the model's general knowledge — a
+  deliberate behavior change from typical RAG fallback; a genuine
+  technical failure (unparseable LLM JSON) is different from a miss and
+  still falls back to plain chat.
+- `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)`
+  wraps every LLM call site (all five: chat answer, schema generation,
+  graph extraction, type analysis, keyword extraction) in an
+  OpenTelemetry span recording model/prompt-length/response-length/
+  success metadata (never the prompt or response text). Only exports
+  anywhere if `OTEL_EXPORTER_OTLP_ENDPOINT` is set (podman-compose points
+  it at the bundled Jaeger service); otherwise the OpenTelemetry API's
+  no-op tracer is active, so this is always safe to call in tests.
 
 **Testing LLM calls:** `get_chat_model` is imported into each module's own
 namespace, so tests patch it per-module (`app.ontology.get_chat_model`,

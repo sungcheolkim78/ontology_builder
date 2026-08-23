@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 from app.chat import get_chat_model
+from app.telemetry import invoke_with_telemetry
 
 GRAPH_DIR = Path(__file__).parent.parent / "data" / "graph"
 
@@ -67,7 +68,9 @@ def parse_json_response(text: str) -> dict:
 
 def generate_schema(document_text: str) -> dict:
     model = get_chat_model()
-    response = model.invoke(SCHEMA_PROMPT.format(document=document_text))
+    response = invoke_with_telemetry(
+        "ontology.generate_schema", model, SCHEMA_PROMPT.format(document=document_text)
+    )
     schema = parse_json_response(response.content)
     if not isinstance(schema.get("node_types"), list) or not isinstance(
         schema.get("edge_types"), list
@@ -81,7 +84,7 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     prompt = EXTRACT_PROMPT.format(
         schema=json.dumps(schema), document=document_text
     )
-    response = model.invoke(prompt)
+    response = invoke_with_telemetry("ontology.extract_graph", model, prompt)
     graph = parse_json_response(response.content)
     if not isinstance(graph.get("nodes"), list) or not isinstance(
         graph.get("edges"), list

@@ -27,8 +27,33 @@ each with source volume-mounted for hot-reload during development.
 
 FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
 `app/parser.py` (document → markdown conversion), `app/ontology.py`
-(schema generation + node/edge extraction), and `app/graphrag.py`
-(keyword extraction + graph-based retrieval for chat).
+(schema generation + node/edge extraction), `app/graphrag.py`
+(keyword extraction + graph-based retrieval for chat), and
+`app/telemetry.py` (OpenTelemetry tracing for every LLM call).
+
+### Telemetry
+
+`app/telemetry.py` exports `invoke_with_telemetry(operation, model, prompt)`,
+a drop-in replacement for `model.invoke(prompt)` used at all five LLM
+call sites (`chat.answer` in `main.py`; `ontology.generate_schema` and
+`ontology.extract_graph`; `graphrag.determine_types` and
+`graphrag.extract_keywords`). Each call wraps a span named `llm.{operation}`
+recording `gen_ai.request.model`, `gen_ai.prompt.length`,
+`gen_ai.response.length`, `gen_ai.call.success`, and
+`gen_ai.usage.{input,output}_tokens` when the provider returns them —
+metadata only, never the prompt/response text itself. Span duration is
+automatic (OpenTelemetry records start/end time on every span; Jaeger's
+UI displays it without any manual tracking). On an exception, the span
+records it and sets an error status before the exception is re-raised
+unchanged — tracing never swallows or alters application errors.
+
+`configure_telemetry()` (called once at import time in `main.py`) only
+registers a real `TracerProvider` + OTLP HTTP exporter if
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set in the environment; otherwise the
+OpenTelemetry API's built-in no-op tracer stays active, so
+`invoke_with_telemetry` is always safe to call — in particular, it adds
+no network calls and negligible overhead when running tests locally
+(outside podman-compose, where that env var is never set).
 
 ### Endpoints
 
@@ -189,19 +214,26 @@ migration.
 - `OPENROUTER_API_KEY` (required), `OPENROUTER_MODEL` (optional,
   default `openai/gpt-4o-mini`) — read from `backend/.env`
   (git-ignored; `backend/.env.example` documents the format).
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (optional) — set by `podman-compose.yml`
+  to Jaeger's OTLP HTTP receiver; unset in any other environment
+  (including local pytest runs) disables tracing entirely rather than
+  erroring.
 
 ### Dependencies
 
 `requirements.txt`: `fastapi`, `uvicorn`, `langchain-openai`,
-`firecrawl-anydoc`, `python-multipart`, `networkx`.
+`firecrawl-anydoc`, `python-multipart`, `networkx`, `opentelemetry-api`,
+`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`.
 `requirements-dev.txt` adds `pytest`, `httpx` for testing.
 
 ### Tests
 
 `backend/tests/` (pytest, run via `python -m pytest`): `test_chat.py`,
 `test_config.py`, `test_files.py`, `test_graphrag.py`, `test_ontology.py`,
-`test_parse.py`. Chat/parse/ontology/graphrag tests mock the external
-calls (`get_chat_model`, `anydoc.to_markdown_bytes`); file tests use
+`test_parse.py`, `test_telemetry.py`. Chat/parse/ontology/graphrag tests
+mock the external calls (`get_chat_model`, `anydoc.to_markdown_bytes`);
+telemetry tests use a bare fake model (no OTel mocking needed — the
+default no-op tracer is already the behavior under test); file tests use
 the real filesystem. `test_chat.py`'s GraphRAG tests use a
 `SequencedChatModel` fake that returns a different canned response per
 `invoke()` call (in order) and records the messages it was called
@@ -321,14 +353,21 @@ stay local to `ChatPanel`.
 
 ## Deployment (dev)
 
-`podman-compose.yml` defines two services:
+`podman-compose.yml` defines three services:
 
+- **jaeger** — `jaegertracing/all-in-one`, UI at `localhost:16686`. No
+  volumes (traces are in-memory; they don't survive `down`).
 - **backend** — builds `backend/Dockerfile` (`python:3.12-slim`,
-  `uvicorn --reload`), port 8000, `env_file: backend/.env`, volumes for
-  `app/` and `data/` (hot-reload + host-visible parse output).
+  `uvicorn --reload`), port 8000, `env_file: backend/.env`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at jaeger, volumes for `app/`
+  and `data/` (hot-reload + host-visible parse output), `depends_on: jaeger`.
 - **frontend** — builds `frontend/Dockerfile` (`node:20-slim`, `vite`
   dev server), port 5173, volumes for `src/`, `index.html`,
   `vite.config.js`, `depends_on: backend`.
+
+Every LLM call shows up as a trace at `http://localhost:16686` (search
+by service `ontology-builder-backend`) — useful for seeing which
+GraphRAG stage a slow chat response actually spent time in.
 
 Run with `podman-compose up --build`. Requires a running
 `podman machine` and a `backend/.env` with a real `OPENROUTER_API_KEY`.
