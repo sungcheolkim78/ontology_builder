@@ -1,4 +1,5 @@
 import pytest
+from langchain_core.exceptions import ModelConnectionError
 
 from app.telemetry import invoke_with_telemetry
 
@@ -20,6 +21,22 @@ class FakeModel:
     def invoke(self, prompt):
         self.received_prompt = prompt
         if self.error:
+            raise self.error
+        return self.response
+
+
+class FlakyModel:
+    model_name = "test-model"
+
+    def __init__(self, fail_times, error, response):
+        self.fail_times = fail_times
+        self.error = error
+        self.response = response
+        self.call_count = 0
+
+    def invoke(self, prompt):
+        self.call_count += 1
+        if self.call_count <= self.fail_times:
             raise self.error
         return self.response
 
@@ -58,3 +75,40 @@ def test_invoke_with_telemetry_works_without_configured_exporter():
     result = invoke_with_telemetry("test.operation", model, "prompt")
 
     assert result.content == "plain"
+
+
+def test_invoke_with_telemetry_retries_on_connection_error_then_succeeds():
+    model = FlakyModel(
+        fail_times=2,
+        error=ModelConnectionError("transient"),
+        response=FakeResponse("recovered"),
+    )
+
+    result = invoke_with_telemetry(
+        "test.operation", model, "prompt", max_retries=2, retry_delay=0
+    )
+
+    assert result.content == "recovered"
+    assert model.call_count == 3
+
+
+def test_invoke_with_telemetry_reraises_after_exhausting_retries():
+    model = FlakyModel(
+        fail_times=99,
+        error=ModelConnectionError("still down"),
+        response=FakeResponse("never"),
+    )
+
+    with pytest.raises(ModelConnectionError, match="still down"):
+        invoke_with_telemetry("test.operation", model, "prompt", max_retries=2, retry_delay=0)
+
+    assert model.call_count == 3
+
+
+def test_invoke_with_telemetry_does_not_retry_non_connection_errors():
+    model = FlakyModel(fail_times=1, error=ValueError("boom"), response=FakeResponse("x"))
+
+    with pytest.raises(ValueError, match="boom"):
+        invoke_with_telemetry("test.operation", model, "prompt", max_retries=2, retry_delay=0)
+
+    assert model.call_count == 1

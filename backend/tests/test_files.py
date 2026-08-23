@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 from pathlib import Path
@@ -5,15 +6,27 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app import graphdb
 from app.main import app
+from app.ontology import GRAPH_DIR
 from app.parser import DATA_DIR
+
+
+class FakeChatModel:
+    def __init__(self, content):
+        self.content = content
+
+    def invoke(self, messages):
+        return type("FakeResponse", (), {"content": self.content})()
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
+    graphdb.reset_connection()
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
     yield
+    graphdb.reset_connection()
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
 
@@ -73,6 +86,34 @@ def test_get_file_returns_404_for_missing_file():
     response = client.get("/api/files/does_not_exist.md")
 
     assert response.status_code == 404
+
+
+def test_list_files_excludes_ladybugdb_files(monkeypatch):
+    # Regression test: graphdb.DB_PATH must live outside DATA_DIR's top
+    # level, since GET /api/files lists everything directly in DATA_DIR.
+    # Extracting a graph creates the ladybug DB file (and a .wal sidecar);
+    # neither should ever show up as a "document" here.
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "doc_raw.md").write_text("# Doc\nAlice works at Acme.")
+    schema_dir = GRAPH_DIR / "doc_raw"
+    schema_dir.mkdir(parents=True)
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    (schema_dir / "schema.json").write_text(json.dumps(schema))
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+    )
+    client = TestClient(app)
+
+    extract_response = client.post("/api/ontology/doc_raw.md/extract")
+    assert extract_response.status_code == 200
+
+    response = client.get("/api/files")
+
+    assert response.status_code == 200
+    filenames = [f["filename"] for f in response.json()["files"]]
+    assert "graph.ladybugdb" not in filenames
+    assert not any(".ladybugdb" in name for name in filenames)
 
 
 def test_get_file_blocks_path_traversal():

@@ -1,7 +1,8 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -18,6 +19,26 @@ const error = ref('')
 const message = ref('')
 const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
+const elapsedSeconds = ref(0)
+let elapsedTimer = null
+
+function startElapsedTimer() {
+  elapsedSeconds.value = 0
+  elapsedTimer = setInterval(() => {
+    elapsedSeconds.value += 1
+  }, 1000)
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedTimer)
+  elapsedTimer = null
+}
+
+const progressMessage = computed(() => {
+  if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
+  if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
+  return ''
+})
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
@@ -110,28 +131,41 @@ watch(
   { immediate: true }
 )
 
+// --- d3-force layout ---
+const CENTER = 200
+let simulation = null
+
 watch(
-  visibleNodes,
-  (list) => {
-    const radius = 150
-    const center = 200
-    const positions = {}
-    list.forEach((node, i) => {
+  [visibleNodes, visibleEdges],
+  ([nodeList, edgeList]) => {
+    const simNodes = nodeList.map((node) => {
       const existing = layouts.value.nodes[node.id]
-      if (existing) {
-        positions[node.id] = existing
-        return
-      }
-      const angle = (2 * Math.PI * i) / Math.max(list.length, 1)
-      positions[node.id] = {
-        x: center + radius * Math.cos(angle),
-        y: center + radius * Math.sin(angle),
-      }
+      return existing ? { id: node.id, x: existing.x, y: existing.y } : { id: node.id }
     })
-    layouts.value = { nodes: positions }
+    const simLinks = edgeList.map((e) => ({ source: e.source, target: e.target }))
+
+    simulation?.stop()
+    simulation = forceSimulation(simNodes)
+      .force('charge', forceManyBody().strength(-300))
+      .force('link', forceLink(simLinks).id((d) => d.id).distance(120))
+      .force('center', forceCenter(CENTER, CENTER))
+      .force('collide', forceCollide(30))
+      .on('tick', () => {
+        const positions = {}
+        simNodes.forEach((n) => {
+          positions[n.id] = { x: n.x, y: n.y }
+        })
+        layouts.value = { nodes: positions }
+      })
+      .on('end', fitSoon)
   },
   { immediate: true }
 )
+
+onUnmounted(() => {
+  simulation?.stop()
+  stopElapsedTimer()
+})
 
 const configs = computed(() => ({
   view: {
@@ -229,6 +263,7 @@ async function generateSchema() {
   isGeneratingSchema.value = true
   error.value = ''
   message.value = ''
+  startElapsedTimer()
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
@@ -239,13 +274,14 @@ async function generateSchema() {
     }
     schema.value = await res.json()
     layouts.value = { nodes: {} }
-    message.value = `스키마 생성 완료 (노드 타입 ${schema.value.node_types.length}개)`
+    message.value = `스키마 생성 완료 (노드 타입 ${schema.value.node_types.length}개, 엣지 타입 ${schema.value.edge_types.length}개)`
     emit('schema-updated')
     fitSoon()
   } catch (err) {
     error.value = '스키마 생성 실패: ' + err.message
   } finally {
     isGeneratingSchema.value = false
+    stopElapsedTimer()
   }
 }
 
@@ -254,6 +290,7 @@ async function extract() {
   isExtracting.value = true
   error.value = ''
   message.value = ''
+  startElapsedTimer()
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
       method: 'POST',
@@ -263,12 +300,13 @@ async function extract() {
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
     await loadGraph(props.file)
-    message.value = '그래프 추출 완료'
+    message.value = `그래프 추출 완료 (노드 ${nodes.value.length}개, 엣지 ${edges.value.length}개)`
     emit('schema-updated')
   } catch (err) {
     error.value = '그래프 추출 실패: ' + err.message
   } finally {
     isExtracting.value = false
+    stopElapsedTimer()
   }
 }
 </script>
@@ -293,6 +331,7 @@ async function extract() {
         <template v-if="schemaTypeCount === 0">활성 스키마 없음 (추출 시 기본 스키마 사용)</template>
         <template v-else>활성 스키마: 노드 타입 {{ schemaTypeCount }}개</template>
       </p>
+      <p v-if="progressMessage" class="progress">{{ progressMessage }}</p>
       <p v-if="message" class="success">{{ message }}</p>
       <p v-if="error" class="error">{{ error }}</p>
       <p v-if="displayMode === 'schema'" class="placeholder">스키마 미리보기 (아직 추출 전)</p>
@@ -364,6 +403,11 @@ async function extract() {
 .schema-status {
   color: #555;
   font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.progress {
+  color: #555;
+  font-style: italic;
   flex-shrink: 0;
 }
 .success {

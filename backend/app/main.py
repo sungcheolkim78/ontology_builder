@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from app import graphdb
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
 from app.graphrag import format_type_preview, search_graph
 from app.ontology import (
@@ -67,10 +68,10 @@ def chat(request: ChatRequest):
     if request.filename and messages:
         stem = _stem(request.filename)
         schema = load_schema(stem)
-        graph_data = load_graph(stem)
-        if schema and graph_data:
+        if schema and graphdb.has_graph(stem):
+            hops = max(1, min(5, request.hops))
             try:
-                result = search_graph(messages[-1]["content"], schema, graph_data, request.hops)
+                result = search_graph(messages[-1]["content"], schema, stem, hops)
             except ValueError:
                 result = None
 
@@ -188,9 +189,9 @@ def create_extraction(filename: str):
         save_schema(stem, schema)
     try:
         graph = extract_graph(doc_path.read_text(), schema)
+        save_graph(stem, graph)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    save_graph(stem, graph)
     return graph
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.chat import get_chat_model
 from app.telemetry import invoke_with_telemetry
+from app import graphdb
 
 GRAPH_DIR = Path(__file__).parent.parent / "data" / "graph"
 
@@ -23,6 +24,12 @@ DEFAULT_SCHEMA = {
 
 SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
 extracting entities and relationships from it.
+
+Every "name" value (for both node_types and edge_types) MUST be a valid \
+identifier: letters, digits, and underscores only, no spaces or other \
+characters, and it must start with a letter or underscore (e.g. "JobTitle" \
+or "Job_Title", not "Job Title"). This applies even if the document is not \
+in English -- transliterate or translate the name into an ASCII identifier.
 
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"node_types": [{{"name": "...", "description": "..."}}], \
@@ -111,10 +118,7 @@ def load_schema(stem: str) -> dict | None:
 
 
 def save_graph(stem: str, graph: dict) -> None:
-    d = graph_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "nodes.json").write_text(json.dumps(graph["nodes"]))
-    (d / "edges.json").write_text(json.dumps(graph["edges"]))
+    graphdb.write_graph(stem, graph["nodes"], graph["edges"])
 
 
 def list_schema_stems() -> list[str]:
@@ -128,12 +132,4 @@ def list_schema_stems() -> list[str]:
 
 
 def load_graph(stem: str) -> dict | None:
-    d = graph_dir_for(stem)
-    nodes_path = d / "nodes.json"
-    edges_path = d / "edges.json"
-    if not nodes_path.is_file() or not edges_path.is_file():
-        return None
-    return {
-        "nodes": json.loads(nodes_path.read_text()),
-        "edges": json.loads(edges_path.read_text()),
-    }
+    return graphdb.load_graph(stem)

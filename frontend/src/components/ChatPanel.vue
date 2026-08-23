@@ -1,9 +1,11 @@
 <script setup>
+import { marked } from 'marked'
 import { ref } from 'vue'
 
 const props = defineProps({
   file: { type: Object, default: null },
   hops: { type: Number, default: 1 },
+  renderMarkdown: { type: Boolean, default: true },
 })
 
 const messages = ref([])
@@ -53,7 +55,8 @@ async function sendMessage() {
         :class="msg.role"
       >
         <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
-        <p>{{ msg.content }}</p>
+        <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
+        <p v-else>{{ msg.content }}</p>
       </div>
       <p v-if="isLoading">응답 중...</p>
       <p v-if="error" class="error">{{ error }}</p>
@@ -83,13 +86,33 @@ async function sendMessage() {
 }
 .message {
   margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
 }
 .message.user {
   text-align: right;
+  background: #dbe9ff;
+}
+.message.assistant {
+  background: #f0f0f0;
 }
 .message p {
   margin: 0.25rem 0 0;
   white-space: pre-wrap;
+}
+.message .markdown {
+  margin: 0.25rem 0 0;
+}
+.message .markdown :deep(p) {
+  margin: 0.25rem 0;
+}
+.message .markdown :deep(table) {
+  border-collapse: collapse;
+}
+.message .markdown :deep(td),
+.message .markdown :deep(th) {
+  border: 1px solid #ccc;
+  padding: 0.25rem 0.5rem;
 }
 .error {
   color: red;
