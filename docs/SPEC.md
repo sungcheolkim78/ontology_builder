@@ -47,6 +47,17 @@ UI displays it without any manual tracking). On an exception, the span
 records it and sets an error status before the exception is re-raised
 unchanged — tracing never swallows or alters application errors.
 
+`invoke_with_telemetry` also retries on
+`langchain_core.exceptions.ModelConnectionError` (the provider-agnostic
+base class langchain raises for connection-level failures, e.g. the
+`OpenAIConnectionError` langchain-openai raises for a dropped OpenRouter
+connection) up to `max_retries` times (default 2) with a fixed
+`retry_delay` (default 1.0s) between attempts, recording
+`gen_ai.retry.count` on the span either way. Any other exception type is
+raised immediately with no retry. This exists because a transient
+OpenRouter connection error was observed in practice during a real
+`extract_graph` call — not a hypothetical failure mode.
+
 `configure_telemetry()` (called once at import time in `main.py`) only
 registers a real `TracerProvider` + OTLP HTTP exporter if
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set in the environment; otherwise the
@@ -308,7 +319,14 @@ directly.
   nodes/edges themselves) if a schema exists; otherwise a placeholder
   telling the user to generate or pick a schema. "스키마 생성" and
   "그래프 추출" buttons are always available once a file is selected.
-  Emits `types-available` with the sorted unique node types of
+  While either request is in flight, a `setInterval`-driven
+  `elapsedSeconds` counter drives an operation-specific status line
+  ("문서를 읽어 스키마 생성 중... {n}초" / "문서를 읽고 주어진 스키마로
+  노드와 에지를 생성 중... {n}초") so a long LLM call doesn't look frozen;
+  on success the same status line is replaced with a count summary
+  ("스키마 생성 완료 (노드 타입 X개, 엣지 타입 Y개)" /
+  "그래프 추출 완료 (노드 X개, 엣지 Y개)"). Emits `types-available` with
+  the sorted unique node types of
   whatever is currently drawn (schema or real graph), so
   `SettingsPanel`'s filter checkboxes always match what's on screen,
   and `schema-updated` after a successful generate/extract so `App.vue`

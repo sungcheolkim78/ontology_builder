@@ -1,5 +1,7 @@
 import os
+import time
 
+from langchain_core.exceptions import ModelConnectionError
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -42,10 +44,17 @@ def _prompt_text(prompt) -> str:
     return "\n".join(getattr(m, "content", str(m)) for m in prompt)
 
 
-def invoke_with_telemetry(operation: str, model, prompt):
+def invoke_with_telemetry(operation: str, model, prompt, max_retries: int = 2, retry_delay: float = 1.0):
     """Calls model.invoke(prompt), recording a span with model/prompt/response
     metadata (not the prompt/response text itself). Span timing is captured
-    automatically by OpenTelemetry, so no manual duration tracking here."""
+    automatically by OpenTelemetry, so no manual duration tracking here.
+
+    Transient network failures (langchain_core.exceptions.ModelConnectionError,
+    the provider-agnostic base class every langchain chat model raises for
+    connection-level errors) are retried up to `max_retries` times with a
+    fixed delay -- this is a real, if infrequent, failure mode of the
+    OpenRouter connection in this environment. Any other exception is not
+    retried."""
     model_name = getattr(model, "model_name", None) or getattr(model, "model", "unknown")
 
     with _tracer.start_as_current_span(f"llm.{operation}") as span:
@@ -53,14 +62,27 @@ def invoke_with_telemetry(operation: str, model, prompt):
         span.set_attribute("gen_ai.request.model", str(model_name))
         span.set_attribute("gen_ai.prompt.length", len(_prompt_text(prompt)))
 
-        try:
-            response = model.invoke(prompt)
-        except Exception as exc:
-            span.record_exception(exc)
-            span.set_attribute("gen_ai.call.success", False)
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            raise
+        attempt = 0
+        while True:
+            try:
+                response = model.invoke(prompt)
+                break
+            except ModelConnectionError as exc:
+                attempt += 1
+                if attempt > max_retries:
+                    span.record_exception(exc)
+                    span.set_attribute("gen_ai.call.success", False)
+                    span.set_attribute("gen_ai.retry.count", attempt - 1)
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    raise
+                time.sleep(retry_delay)
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_attribute("gen_ai.call.success", False)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
 
+        span.set_attribute("gen_ai.retry.count", attempt)
         span.set_attribute("gen_ai.call.success", True)
         span.set_attribute("gen_ai.response.length", len(response.content))
         usage = getattr(response, "usage_metadata", None)

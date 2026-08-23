@@ -128,7 +128,13 @@ business logic of its own beyond request/response shaping.
   success metadata (never the prompt or response text). Only exports
   anywhere if `OTEL_EXPORTER_OTLP_ENDPOINT` is set (podman-compose points
   it at the bundled Jaeger service); otherwise the OpenTelemetry API's
-  no-op tracer is active, so this is always safe to call in tests.
+  no-op tracer is active, so this is always safe to call in tests. Also
+  retries up to `max_retries` (default 2) times, with a fixed delay,
+  on `langchain_core.exceptions.ModelConnectionError` — the
+  provider-agnostic base class langchain raises for connection-level
+  failures — since transient OpenRouter connection errors are a real
+  failure mode observed in this environment; any other exception is
+  raised immediately, not retried.
 
 **Testing LLM calls:** `get_chat_model` is imported into each module's own
 namespace, so tests patch it per-module (`app.ontology.get_chat_model`,
