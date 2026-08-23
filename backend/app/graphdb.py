@@ -231,3 +231,28 @@ def load_graph(stem: str) -> dict | None:
         edges = []
 
     return {"nodes": nodes, "edges": edges}
+
+
+def find_relevant_nodes(stem: str, keywords: list, allowed_types: list) -> list:
+    if not allowed_types or not keywords:
+        return []
+    conn = _get_connection()
+    result = conn.execute(
+        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
+        "AND ANY(kw IN $keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
+        "OR toLower(kw) CONTAINS toLower(n.label)) "
+        "RETURN n.id AS id",
+        {"types": allowed_types, "stem": stem, "keywords": keywords},
+    )
+    return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
+
+
+def all_nodes_of_types(stem: str, allowed_types: list) -> list:
+    if not allowed_types:
+        return []
+    conn = _get_connection()
+    result = conn.execute(
+        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem RETURN n.id AS id",
+        {"types": allowed_types, "stem": stem},
+    )
+    return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]

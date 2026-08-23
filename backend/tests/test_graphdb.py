@@ -158,3 +158,59 @@ def test_load_graph_handles_document_with_no_edges_on_fresh_database():
     assert loaded is not None
     assert loaded["nodes"] == nodes
     assert loaded["edges"] == []
+
+
+def test_find_relevant_nodes_matches_case_insensitively():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Person"])
+
+    assert matched == ["n1"]
+
+
+def test_find_relevant_nodes_returns_empty_when_no_match():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    matched = graphdb.find_relevant_nodes("doc_a", ["nonexistent"], ["Person"])
+
+    assert matched == []
+
+
+def test_find_relevant_nodes_filters_by_allowed_types():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Concept"])
+
+    assert matched == []
+
+
+def test_find_relevant_nodes_empty_allowed_types_matches_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.find_relevant_nodes("doc_a", ["ada"], []) == []
+
+
+def test_find_relevant_nodes_scoped_to_document():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    graphdb.write_graph(
+        "doc_b", [{"id": "n1", "label": "Ada Impersonator", "type": "Person"}], []
+    )
+
+    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Person"])
+
+    assert matched == ["n1"]  # doc_a's n1, not doc_b's
+
+
+def test_all_nodes_of_types_returns_every_instance():
+    nodes = NODES + [{"id": "n3", "label": "Charles Babbage", "type": "Person"}]
+    graphdb.write_graph("doc_a", nodes, EDGES)
+
+    matched = graphdb.all_nodes_of_types("doc_a", ["Person"])
+
+    assert set(matched) == {"n1", "n3"}
+
+
+def test_all_nodes_of_types_empty_types_matches_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.all_nodes_of_types("doc_a", []) == []
