@@ -30,6 +30,19 @@ const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
 const renderMarkdown = ref(true)
 
+const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
+const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
+
+function colorForType(type) {
+  const index = props.availableTypes.indexOf(type)
+  return TYPE_COLORS[index % TYPE_COLORS.length]
+}
+
+function colorForEdgeType(type) {
+  const index = props.availableEdgeTypes.indexOf(type)
+  return EDGE_TYPE_COLORS[index % EDGE_TYPE_COLORS.length]
+}
+
 function onHopsInput(event) {
   const value = Math.max(1, Math.min(5, Number(event.target.value) || 1))
   graphRagHops.value = value
@@ -183,8 +196,8 @@ function toggleEdgeType(type) {
 
 <template>
   <aside class="settings">
-    <h2>설정</h2>
-
+    <h1 class="panel-title">Ontology Builder</h1>
+    <div class="panel-body">
     <section>
       <h3>LLM 모델</h3>
       <p class="model-name">{{ model }}</p>
@@ -264,12 +277,15 @@ function toggleEdgeType(type) {
         아직 추출된 그래프가 없습니다
       </p>
       <label v-for="type in availableTypes" :key="type" class="filter-item">
-        <input
-          type="checkbox"
-          :checked="enabledTypes.has(type)"
-          @change="toggleType(type)"
-        />
-        {{ type }}
+        <span class="filter-item-left">
+          <input
+            type="checkbox"
+            :checked="enabledTypes.has(type)"
+            @change="toggleType(type)"
+          />
+          {{ type }}
+        </span>
+        <span class="type-swatch" :style="{ background: colorForType(type) }"></span>
       </label>
     </section>
 
@@ -279,24 +295,43 @@ function toggleEdgeType(type) {
         아직 추출된 그래프가 없습니다
       </p>
       <label v-for="type in availableEdgeTypes" :key="type" class="filter-item">
-        <input
-          type="checkbox"
-          :checked="enabledEdgeTypes.has(type)"
-          @change="toggleEdgeType(type)"
-        />
-        {{ type }}
+        <span class="filter-item-left">
+          <input
+            type="checkbox"
+            :checked="enabledEdgeTypes.has(type)"
+            @change="toggleEdgeType(type)"
+          />
+          {{ type }}
+        </span>
+        <span class="edge-swatch" :style="{ background: colorForEdgeType(type) }"></span>
       </label>
     </section>
+    </div>
   </aside>
 </template>
 
 <style scoped>
 .settings {
-  width: 280px;
+  width: 270px;
   flex-shrink: 0;
   border-right: 1px solid #ccc;
-  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel-title {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  color: #fff;
+  background: #1f2937;
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: 1rem;
 }
 .settings section {
   margin-bottom: 1.5rem;
@@ -315,8 +350,31 @@ function toggleEdgeType(type) {
   display: inline-block;
 }
 .filter-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-bottom: 0.25rem;
+}
+.filter-item-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-wrap: anywhere;
+}
+.type-swatch {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.edge-swatch {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 20px;
+  height: 5px;
+  border-radius: 2px;
 }
 .error {
   color: red;

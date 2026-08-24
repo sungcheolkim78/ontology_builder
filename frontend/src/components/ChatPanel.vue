@@ -73,76 +73,78 @@ async function sendMessage() {
 
 <template>
   <section class="chat">
-    <h2>Chat</h2>
+    <h2 class="panel-title">Chat</h2>
 
-    <div class="messages">
-      <div
-        v-for="(msg, i) in messages"
-        :key="i"
-        class="message"
-        :class="msg.role"
-      >
-        <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+    <div class="panel-body">
+      <div class="messages">
         <div
-          v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
-          class="type-analysis"
+          v-for="(msg, i) in messages"
+          :key="i"
+          class="message"
+          :class="msg.role"
         >
-          <div class="type-analysis-row">
-            <span class="type-analysis-label">노드:</span>
-            <template v-if="msg.nodeTypes.length">
-              <button
-                v-for="type in msg.nodeTypes"
-                :key="'n-' + type"
-                type="button"
-                class="type-chip node-type"
-                :class="{ inactive: !enabledTypes.has(type) }"
-                @click="emit('toggle-type', { kind: 'node', type })"
-              >
-                {{ type }}
-              </button>
-            </template>
-            <span v-else class="type-analysis-empty">없음</span>
-          </div>
-          <div class="type-analysis-row">
-            <span class="type-analysis-label">엣지:</span>
-            <template v-if="msg.edgeTypes.length">
-              <button
-                v-for="type in msg.edgeTypes"
-                :key="'e-' + type"
-                type="button"
-                class="type-chip edge-type"
-                :class="{ inactive: !enabledEdgeTypes.has(type) }"
-                @click="emit('toggle-type', { kind: 'edge', type })"
-              >
-                {{ type }}
-              </button>
-            </template>
-            <span v-else class="type-analysis-empty">없음</span>
-          </div>
-        </div>
-        <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
-        <p v-else>{{ msg.content }}</p>
-        <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
-          <span class="related-label">관련 노드:</span>
-          <button
-            v-for="node in msg.relatedNodes"
-            :key="node.id"
-            type="button"
-            class="node-chip"
-            @click="emit('highlight-nodes', [node.id])"
+          <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+          <div
+            v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
+            class="type-analysis"
           >
-            {{ node.label }}
-          </button>
+            <div class="type-analysis-row">
+              <span class="type-analysis-label">노드:</span>
+              <template v-if="msg.nodeTypes.length">
+                <button
+                  v-for="type in msg.nodeTypes"
+                  :key="'n-' + type"
+                  type="button"
+                  class="type-chip node-type"
+                  :class="{ inactive: !enabledTypes.has(type) }"
+                  @click="emit('toggle-type', { kind: 'node', type })"
+                >
+                  {{ type }}
+                </button>
+              </template>
+              <span v-else class="type-analysis-empty">없음</span>
+            </div>
+            <div class="type-analysis-row">
+              <span class="type-analysis-label">엣지:</span>
+              <template v-if="msg.edgeTypes.length">
+                <button
+                  v-for="type in msg.edgeTypes"
+                  :key="'e-' + type"
+                  type="button"
+                  class="type-chip edge-type"
+                  :class="{ inactive: !enabledEdgeTypes.has(type) }"
+                  @click="emit('toggle-type', { kind: 'edge', type })"
+                >
+                  {{ type }}
+                </button>
+              </template>
+              <span v-else class="type-analysis-empty">없음</span>
+            </div>
+          </div>
+          <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
+          <p v-else>{{ msg.content }}</p>
+          <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
+            <span class="related-label">관련 노드:</span>
+            <button
+              v-for="node in msg.relatedNodes"
+              :key="node.id"
+              type="button"
+              class="node-chip"
+              @click="emit('highlight-nodes', [node.id])"
+            >
+              {{ node.label }}
+            </button>
+          </div>
         </div>
+        <p v-if="isLoading">응답 중... (ESC로 취소)</p>
+        <p v-if="error" class="error">{{ error }}</p>
       </div>
-      <p v-if="isLoading">응답 중... (ESC로 취소)</p>
-      <p v-if="error" class="error">{{ error }}</p>
-    </div>
 
-    <form class="input-row" @submit.prevent="sendMessage">
-      <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
-      <button type="submit" :disabled="isLoading">전송</button>
-    </form>
+      <form class="input-row" @submit.prevent="sendMessage">
+        <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
+        <button type="submit" :disabled="isLoading">전송</button>
+      </form>
+    </div>
   </section>
 </template>
 
@@ -152,6 +154,21 @@ async function sendMessage() {
   flex-direction: column;
   height: 100%;
   min-width: 0;
+}
+.panel-title {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  color: #fff;
+  background: #2563eb;
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
 }
 .messages {
   flex: 1;

@@ -111,9 +111,12 @@ function stopRowResize() {
 }
 
 const gridStyle = computed(() => ({
-  gridTemplateColumns: `${colPercent.value}% 6px 1fr`,
-  gridTemplateRows: `${rowPercent.value}% 6px 1fr`,
+  gridTemplateColumns: `${colPercent.value}% 1fr`,
+  gridTemplateRows: `${rowPercent.value}% 1fr`,
 }))
+
+const colResizerStyle = computed(() => ({ left: `calc(${colPercent.value}% - 4px)` }))
+const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)` }))
 </script>
 
 <template>
@@ -162,8 +165,8 @@ const gridStyle = computed(() => ({
       <div class="panel bottom-right">
         <SchemaGraphPreview :file="parsedFile" :schema-version="schemaVersion" />
       </div>
-      <div class="resizer-v" @mousedown="startColResize"></div>
-      <div class="resizer-h" @mousedown="startRowResize"></div>
+      <div class="resizer-v" :style="colResizerStyle" @mousedown="startColResize"></div>
+      <div class="resizer-h" :style="rowResizerStyle" @mousedown="startRowResize"></div>
     </div>
   </div>
 </template>
@@ -175,6 +178,7 @@ const gridStyle = computed(() => ({
   font-family: sans-serif;
 }
 .main-grid {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: grid;
@@ -187,29 +191,31 @@ const gridStyle = computed(() => ({
 .top-left {
   grid-column: 1;
   grid-row: 1;
-  padding: 1rem;
   display: flex;
   flex-direction: column;
 }
 .top-right {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
   border-left: 1px solid #ccc;
 }
 .bottom-left {
   grid-column: 1;
-  grid-row: 3;
+  grid-row: 2;
   border-top: 1px solid #ccc;
 }
 .bottom-right {
-  grid-column: 3;
-  grid-row: 3;
+  grid-column: 2;
+  grid-row: 2;
   border-left: 1px solid #ccc;
   border-top: 1px solid #ccc;
 }
 .resizer-v {
-  grid-column: 2;
-  grid-row: 1 / span 3;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 2;
   cursor: col-resize;
   background: transparent;
 }
@@ -218,8 +224,11 @@ const gridStyle = computed(() => ({
   background: #b8d0ff;
 }
 .resizer-h {
-  grid-column: 1 / span 3;
-  grid-row: 2;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 2;
   cursor: row-resize;
   background: transparent;
 }
