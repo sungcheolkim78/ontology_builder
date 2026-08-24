@@ -147,14 +147,20 @@ business logic of its own beyond request/response shaping.
   pattern match (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB —
   into an `Entities:`/`Relations:` context block (each line including the
   node's/edge's `detail` field when present — see above) injected into chat as a
-  system message, prefixed with a fixed preview line
-  (`format_type_preview()`) showing the determined types. Once a
-  document with an extracted graph is selected, finding nothing at
-  either stage is reported as "관련된 내용을 찾을 수 없습니다" rather
-  than silently answering from the model's general knowledge — a
-  deliberate behavior change from typical RAG fallback; a genuine
-  technical failure (unparseable LLM JSON) is different from a miss and
-  still falls back to plain chat.
+  system message. `search_graph()` returns the determined
+  `node_types`/`edge_types` and the matched/expanded `related_nodes`/
+  `related_edges` alongside the context text; `main.py`'s `/api/chat`
+  passes all four straight through as their own response fields rather
+  than baking them into `content` as text, so the frontend can render
+  them as clickable chips (type chips toggle that type's graph filter;
+  node chips highlight+auto-pan to that node — see
+  `OntologyGraph.vue`/`ChatPanel.vue` below) instead of parsing a
+  fixed-format line. Once a document with an extracted graph is
+  selected, finding nothing at either stage is reported as "관련된
+  내용을 찾을 수 없습니다" rather than silently answering from the
+  model's general knowledge — a deliberate behavior change from typical
+  RAG fallback; a genuine technical failure (unparseable LLM JSON) is
+  different from a miss and still falls back to plain chat.
 - `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)`
   wraps every LLM call site (all five: chat answer, schema generation,
   graph extraction, type analysis, keyword extraction) in an
@@ -182,13 +188,18 @@ recorded for inspection).
 ### Frontend (`frontend/src/`)
 
 No state management library — `App.vue` owns all cross-component state
-and wires four components together purely via props/emitted events:
+and wires five components together purely via props/emitted events:
 `SettingsPanel` (model info, upload, document list, schema library, node
-filters, GraphRAG hop count), `ChatPanel`, `DocumentPreview`,
-`OntologyGraph`. Reading `App.vue`'s props/emit wiring is the fastest way
-to understand how a change in one panel reaches another — e.g. selecting a
-document in `SettingsPanel` sets `parsedFile` in `App.vue`, which flows
-down to `DocumentPreview`, `OntologyGraph`, and `ChatPanel` simultaneously.
+and edge type filters, GraphRAG hop count), `ChatPanel`, `DocumentPreview`,
+`OntologyGraph`, `SchemaGraphPreview`. Reading `App.vue`'s props/emit
+wiring is the fastest way to understand how a change in one panel reaches
+another — e.g. selecting a document in `SettingsPanel` sets `parsedFile`
+in `App.vue`, which flows down to `DocumentPreview`, `OntologyGraph`,
+`SchemaGraphPreview`, and `ChatPanel` simultaneously; or a type/node chip
+clicked in `ChatPanel`'s chat history flows the other way, through
+`App.vue`, into `SettingsPanel`'s filter state or `OntologyGraph`'s
+highlight/pan (see `graphrag.py` above and `docs/SPEC.md` for the full
+wiring).
 
 `OntologyGraph.vue` has three display modes driven by what's on the
 backend for the current document, checked in this priority order:

@@ -316,7 +316,7 @@ already the behavior under test); file tests use the real filesystem.
 returns a different canned response per `invoke()` call (in order) and
 records the messages it was called with, since one `/api/chat` request
 with `filename` set makes two LLM calls (keyword extraction, then the
-actual answer). `test_graphdb.py` (39 of the backend's 88 tests) runs
+actual answer). `test_graphdb.py` (39 of the backend's 86 tests) runs
 directly against a real LadybugDB database on disk — no mocking — via
 an autouse fixture that deletes and recreates `graphdb.DB_PATH` before
 and after every test; see the "Backend tests" section of `CLAUDE.md`
@@ -379,7 +379,16 @@ directly.
   `/api/chat` with the full local history on each send, plus the
   `file`/`hops` props (`filename` and `hops` in the request body) so
   the backend can run GraphRAG against the currently selected
-  document's graph. The `renderMarkdown` prop (from `SettingsPanel`'s
+  document's graph. The in-flight request's `AbortController` is
+  aborted when the user presses Escape while `isLoading` is true (a
+  `keydown` listener on `window`, added/removed in `onMounted`/
+  `onUnmounted`); the backend has no cancellation API, so this only
+  stops the client from waiting on the response — the server may keep
+  processing the LLM call to completion regardless, its result simply
+  discarded. Aborting shows "요청이 취소되었습니다." and immediately frees
+  the input for the next message rather than leaving it disabled until
+  the original request would have resolved. The `renderMarkdown` prop
+  (from `SettingsPanel`'s
   toggle) switches each message between `marked.parse(...)` piped
   through `v-html` and a plain `<p>` with `white-space: pre-wrap` — same
   unsanitized-`v-html` approach as `DocumentPreview.vue`, consistent
