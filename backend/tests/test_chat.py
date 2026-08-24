@@ -65,7 +65,7 @@ def test_chat_returns_assistant_reply(monkeypatch):
     assert response.json() == {"role": "assistant", "content": "echo: hello"}
 
 
-def test_chat_with_filename_injects_graph_context_and_type_preview(monkeypatch):
+def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monkeypatch):
     write_graph_dir()
     model = SequencedChatModel(
         [
@@ -91,9 +91,9 @@ def test_chat_with_filename_injects_graph_context_and_type_preview(monkeypatch):
         assert response.status_code == 200
         body = response.json()
         assert body["role"] == "assistant"
-        assert "Person" in body["content"]
-        assert "WORKED_ON" in body["content"]
-        assert "Ada Lovelace worked on the Analytical Engine." in body["content"]
+        assert body["content"] == "Ada Lovelace worked on the Analytical Engine."
+        assert body["node_types"] == ["Person"]
+        assert body["edge_types"] == ["WORKED_ON"]
         assert len(model.calls) == 3
         final_messages = model.calls[2]
         assert final_messages[0].content.startswith("다음은")
@@ -132,7 +132,9 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
 
         assert response.status_code == 200
         body = response.json()
-        assert "찾을 수 없습니다" in body["content"]
+        assert body["content"] == "관련된 내용을 찾을 수 없습니다."
+        assert body["node_types"] == []
+        assert body["edge_types"] == []
         assert len(model.calls) == 1  # only type analysis, no final answer call
     finally:
         graphdb.reset_connection()
@@ -174,8 +176,8 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
 
         assert response.status_code == 200
         body = response.json()
-        assert "Person" in body["content"]
-        assert "Ada Lovelace is the person mentioned." in body["content"]
+        assert body["node_types"] == ["Person"]
+        assert body["content"] == "Ada Lovelace is the person mentioned."
         assert len(model.calls) == 3
         final_messages = model.calls[2]
         assert "Ada Lovelace" in final_messages[0].content
@@ -221,8 +223,8 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
 
         assert response.status_code == 200
         body = response.json()
-        assert "Location" in body["content"]
-        assert "찾을 수 없습니다" in body["content"]
+        assert body["node_types"] == ["Location"]
+        assert body["content"] == "관련된 내용을 찾을 수 없습니다."
         assert len(model.calls) == 2
     finally:
         graphdb.reset_connection()

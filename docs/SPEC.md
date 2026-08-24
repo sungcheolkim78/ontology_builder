@@ -172,32 +172,31 @@ runs a schema-aware, two-stage search before the chat call:
    clause ("동등한 업계 경력이 있는 경우... 예외적으로 고려될 수
    있습니다") that a bare `Requirement` label/type could never carry.
 
-`format_type_preview()` renders the determined types as a fixed-format
-line — `[관련 타입 분석] 노드: {...} / 엣지: {...}` (또는 "없음") — that's
-**always prepended to the assistant's reply** when this path runs, so
-the type-analysis step is visible, not just an internal implementation
-detail. If nothing was found at any stage (no relevant types, or a
-relevant type with zero actual instances), the reply is the preview
-line plus "관련된 내용을 찾을 수 없습니다." and the chat model is never
-called for a final answer — this is a deliberate behavior change from
-a bare GraphRAG setup: once a document with a graph is selected, a
-miss is reported as a miss rather than silently answering from the
-model's general knowledge. A technical failure (LLM returns unparseable
-JSON at either stage) is different from a miss and falls back to plain
-chat, same as when there's no graph at all.
-
 When the GraphRAG path runs (schema + graph both exist, and
-`search_graph()` doesn't raise), the response also carries
-`related_nodes`/`related_edges` — the exact node/edge objects
-(`{"id", "label", "type", "detail"}` / `{"source", "target", "type",
-"detail"}`) that `search_graph()` matched and expanded via
+`search_graph()` doesn't raise), the response carries the determined
+types as their own fields — `node_types`/`edge_types` (the same lists
+`determine_relevant_types()` produced, already filtered to real schema
+names) — rather than a text line baked into `content`. `content` is
+just the model's answer, or the bare "관련된 내용을 찾을 수 없습니다."
+when nothing was found at any stage (no relevant types, or a relevant
+type with zero actual instances) — in that case the chat model is
+never called for a final answer. This is a deliberate behavior change
+from a bare GraphRAG setup: once a document with a graph is selected,
+a miss is reported as a miss rather than silently answering from the
+model's general knowledge. A technical failure (LLM returns
+unparseable JSON at either stage) is different from a miss and falls
+back to plain chat, same as when there's no graph at all. The response
+also carries `related_nodes`/`related_edges` — the exact node/edge
+objects (`{"id", "label", "type", "detail"}` / `{"source", "target",
+"type", "detail"}`) that `search_graph()` matched and expanded via
 `graphdb.expand_hops()`, i.e. precisely the entities backing that
 answer's context text, not an LLM-guessed citation. Plain chat (no
-`filename`, or no schema/graph yet) omits these two keys entirely
-rather than sending empty lists, so existing plain-chat response shape
-is unchanged. The frontend uses this list to render a "관련 노드" link
-per message that highlights the matching nodes in the ontology graph
-panel — see the Frontend section.
+`filename`, or no schema/graph yet) omits all four keys entirely rather
+than sending empty values, so the existing plain-chat response shape
+is unchanged. The frontend renders `node_types`/`edge_types` as
+clickable chips that toggle that type's graph filter, and
+`related_nodes` as chips that highlight the matching nodes in the
+ontology graph panel — see the Frontend section.
 
 **`POST /api/parse`** — multipart upload, field `file`. Extracts the
 extension from the filename (sanitized via `os.path.basename` to
@@ -355,7 +354,18 @@ directly.
   item emits `file-selected` (`{filename, path}`), highlighting it.
   Renders one filter checkbox per entry in the `availableTypes` prop
   (the real node types of whatever graph is currently loaded — nothing
-  hardcoded); toggling emits `filters-changed`. Also reads
+  hardcoded); toggling emits `filters-changed`. A parallel "그래프 엣지
+  필터" section does the same for `availableEdgeTypes`/
+  `edge-filters-changed`. Both filter sets are still owned locally
+  (`enabledTypes`/`enabledEdgeTypes` reset to "everything on" whenever
+  the corresponding `available*Types` prop changes, e.g. after a new
+  extraction), but can also be driven externally: the `toggleTypeRequest`/
+  `toggleEdgeTypeRequest` props each carry a fresh `{type}` object on
+  every change (a new object each time, so the same type clicked twice
+  in a row still triggers a watcher fire) and a watcher calls the same
+  `toggleType()`/`toggleEdgeType()` a checkbox click would — this is how
+  `ChatPanel`'s type-analysis chips (see below) reach the filter state
+  that actually lives here, via `App.vue` as a relay. Also reads
   `GET /api/ontology/schemas` for a "스키마 라이브러리" list (every schema
   generated so far, across all documents); clicking one calls
   `POST /api/ontology/{selectedFilename}/schema/use` to copy it onto
@@ -379,21 +389,36 @@ directly.
   used for the "나"/"챗봇" label) so a message's origin is visually
   obvious without reading the label. Each assistant message that came
   from a GraphRAG-backed answer also stores the response's
-  `related_nodes` (see `POST /api/chat` above) and renders one "관련
-  노드" chip per node; clicking a chip emits `highlight-nodes` with
-  that single node's id in a one-element array. `App.vue` forwards this
-  straight through to `OntologyGraph` as `highlightedNodeIds` — no
-  sentence-level attribution, this links a whole answer to the graph
-  entities it was actually retrieved from, not specific words within
-  it (see the GraphRAG section above for why: those ids come from
-  `search_graph()`'s own matched/expanded set, not a citation the LLM
-  invented, so nothing here can point at a node that doesn't exist).
+  `node_types`/`edge_types`/`related_nodes` (see `POST /api/chat`
+  above) and renders two chip rows above the answer text — "노드:" and
+  "엣지:" — one chip per determined type, separated from the answer by
+  a dashed border and margin (the "one line of breathing room before
+  the GraphRAG result" gap). Each type chip's `inactive` class comes
+  from comparing it against the `enabledTypes`/`enabledEdgeTypes` props
+  (passed down from `App.vue`, the same Sets `OntologyGraph` filters
+  by) so a chip visually shows whether that type is currently shown or
+  hidden in the graph; clicking one emits `toggle-type` with `{kind:
+  'node'|'edge', type}`, which `App.vue` turns into a fresh
+  `toggleTypeRequest`/`toggleEdgeTypeRequest` object for `SettingsPanel`
+  (see above) — this is a toggle on the *type*, filtering every node/edge
+  of that type in the graph, not a highlight of specific instances.
+  Below that, a separate "관련 노드" chip row (unrelated to the type
+  toggle above it) renders one chip per related node; clicking a chip
+  emits `highlight-nodes` with that single node's id in a one-element
+  array. `App.vue` forwards this straight through to `OntologyGraph` as
+  `highlightedNodeIds` — no sentence-level attribution, this links a
+  whole answer to the graph entities it was actually retrieved from,
+  not specific words within it (see the GraphRAG section above for why:
+  those ids come from `search_graph()`'s own matched/expanded set, not
+  a citation the LLM invented, so nothing here can point at a node that
+  doesn't exist).
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
   Limitations history for why.
 - **`OntologyGraph.vue`** — takes `file`, `enabledTypes`,
-  `schemaVersion`, and `highlightedNodeIds` props. On file change, checks
+  `enabledEdgeTypes`, `schemaVersion`, and `highlightedNodeIds` props.
+  On file change, checks
   `GET /api/ontology/{filename}/schema` and `GET /api/ontology/{filename}`
   to decide what to draw, in priority order: an extracted graph (real
   `nodes`/`edges`) if one exists; otherwise a **schema preview** (the
@@ -407,8 +432,8 @@ directly.
   노드와 에지를 생성 중... {n}초") so a long LLM call doesn't look frozen;
   on success the same status line is replaced with a count summary
   ("스키마 생성 완료 (노드 타입 X개, 엣지 타입 Y개)" /
-  "그래프 추출 완료 (노드 X개, 엣지 Y개)"). Emits `types-available` with
-  the sorted unique node types of
+  "그래프 추출 완료 (노드 X개, 엣지 Y개)"). Emits `types-available`/
+  `edge-types-available` with the sorted unique node/edge types of
   whatever is currently drawn (schema or real graph), so
   `SettingsPanel`'s filter checkboxes always match what's on screen,
   and `schema-updated` after a successful generate/extract so `App.vue`
@@ -417,8 +442,10 @@ directly.
   [`v-network-graph`](https://dash14.github.io/v-network-graph/) library
   (`<v-network-graph :nodes :edges :layouts :configs>`), which fills
   100% of its container and provides pan/zoom/node-drag for free —
-  `displayNodes`/`displayEdges` (schema-preview or real graph, filtered
-  by `enabledTypes`) are converted into the id-keyed objects the
+  `displayNodes` (schema-preview or real graph, filtered by
+  `enabledTypes`) and `displayEdges` (additionally filtered by
+  `enabledEdgeTypes`, on top of requiring both endpoints to already be
+  visible) are converted into the id-keyed objects the
   library expects, node colors come from `configs.node.normal.color`
   (a function of `node.type`), edge colors likewise from
   `configs.edge.normal.color` (a function of `edge.label`, using a
@@ -472,16 +499,24 @@ directly.
   graph form.
 
 State lives in `App.vue`: `parsedFile` (selected/uploaded document),
-`graphFilters` (enabled node types, a `Set`), `availableTypes` (from
-`OntologyGraph`'s `types-available`, passed down to `SettingsPanel`),
+`graphFilters`/`edgeGraphFilters` (enabled node/edge types, both
+`Set`s, passed to both `OntologyGraph` as `enabledTypes`/
+`enabledEdgeTypes` and to `ChatPanel` under the same prop names so its
+type chips can show active/inactive), `availableTypes`/
+`availableEdgeTypes` (from `OntologyGraph`'s `types-available`/
+`edge-types-available`, passed down to `SettingsPanel`),
 `schemaVersion` (bumped by either `OntologyGraph`'s `schema-updated` or
 `SettingsPanel`'s `schema-used`, and passed to `SettingsPanel` and
 `SchemaGraphPreview` as a refresh signal), `graphRagHops` (from
 `SettingsPanel`'s `hops-changed`, passed to `ChatPanel`), `renderMarkdown`
 (from `SettingsPanel`'s `markdown-changed`, passed to `ChatPanel`),
 `highlightedNodeIds` (from `ChatPanel`'s `highlight-nodes`, passed to
-`OntologyGraph`). Chat messages (and the `related_nodes` attached to
-each) stay local to `ChatPanel`.
+`OntologyGraph`), `toggleTypeRequest`/`toggleEdgeTypeRequest` (from
+`ChatPanel`'s `toggle-type`, each wrapped in a fresh object and passed
+to `SettingsPanel`, which is the actual owner of the filter `Set`s —
+see `SettingsPanel.vue` above). Chat messages (and the
+`node_types`/`edge_types`/`related_nodes` attached to each) stay local
+to `ChatPanel`.
 
 `vite.config.js` proxies `/api` and `/health` to `http://backend:8000`
 (the compose service name) so the browser only ever talks to

@@ -11,11 +11,15 @@ const MAX_SPLIT = 80
 
 const parsedFile = ref(null)
 const graphFilters = ref(new Set())
+const edgeGraphFilters = ref(new Set())
 const availableTypes = ref([])
+const availableEdgeTypes = ref([])
 const schemaVersion = ref(0)
 const graphRagHops = ref(1)
 const renderMarkdown = ref(true)
 const highlightedNodeIds = ref([])
+const toggleTypeRequest = ref(null)
+const toggleEdgeTypeRequest = ref(null)
 const colPercent = ref(50)
 const rowPercent = ref(50)
 
@@ -29,8 +33,16 @@ function onFiltersChanged(filters) {
   graphFilters.value = filters
 }
 
+function onEdgeFiltersChanged(filters) {
+  edgeGraphFilters.value = filters
+}
+
 function onTypesAvailable(types) {
   availableTypes.value = types
+}
+
+function onEdgeTypesAvailable(types) {
+  availableEdgeTypes.value = types
 }
 
 function onSchemaChanged() {
@@ -47,6 +59,14 @@ function onMarkdownChanged(value) {
 
 function onHighlightNodes(nodeIds) {
   highlightedNodeIds.value = nodeIds
+}
+
+function onToggleType({ kind, type }) {
+  if (kind === 'edge') {
+    toggleEdgeTypeRequest.value = { type }
+  } else {
+    toggleTypeRequest.value = { type }
+  }
 }
 
 let dragStartX = 0
@@ -101,9 +121,13 @@ const gridStyle = computed(() => ({
     <SettingsPanel
       :selected-filename="parsedFile?.filename"
       :available-types="availableTypes"
+      :available-edge-types="availableEdgeTypes"
       :schema-version="schemaVersion"
+      :toggle-type-request="toggleTypeRequest"
+      :toggle-edge-type-request="toggleEdgeTypeRequest"
       @file-selected="onFileSelected"
       @filters-changed="onFiltersChanged"
+      @edge-filters-changed="onEdgeFiltersChanged"
       @schema-used="onSchemaChanged"
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
@@ -114,7 +138,10 @@ const gridStyle = computed(() => ({
           :file="parsedFile"
           :hops="graphRagHops"
           :render-markdown="renderMarkdown"
+          :enabled-types="graphFilters"
+          :enabled-edge-types="edgeGraphFilters"
           @highlight-nodes="onHighlightNodes"
+          @toggle-type="onToggleType"
         />
       </div>
       <div class="panel top-right">
@@ -124,9 +151,11 @@ const gridStyle = computed(() => ({
         <OntologyGraph
           :file="parsedFile"
           :enabled-types="graphFilters"
+          :enabled-edge-types="edgeGraphFilters"
           :schema-version="schemaVersion"
           :highlighted-node-ids="highlightedNodeIds"
           @types-available="onTypesAvailable"
+          @edge-types-available="onEdgeTypesAvailable"
           @schema-updated="onSchemaChanged"
         />
       </div>

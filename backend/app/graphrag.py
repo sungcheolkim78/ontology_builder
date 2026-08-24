@@ -63,12 +63,6 @@ def determine_relevant_types(question: str, schema: dict) -> dict:
     }
 
 
-def format_type_preview(node_types: list, edge_types: list) -> str:
-    node_part = ", ".join(node_types) if node_types else "없음"
-    edge_part = ", ".join(edge_types) if edge_types else "없음"
-    return f"[관련 타입 분석] 노드: {node_part} / 엣지: {edge_part}"
-
-
 def _format_node_line(node: dict) -> str:
     line = f"- {node['label']} ({node['type']})"
     if node.get("detail"):

@@ -7,10 +7,11 @@ import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } 
 const props = defineProps({
   file: { type: Object, default: null },
   enabledTypes: { type: Set, default: () => new Set() },
+  enabledEdgeTypes: { type: Set, default: () => new Set() },
   schemaVersion: { type: Number, default: 0 },
   highlightedNodeIds: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['types-available', 'schema-updated'])
+const emit = defineEmits(['types-available', 'edge-types-available', 'schema-updated'])
 
 const nodes = ref([])
 const edges = ref([])
@@ -76,7 +77,9 @@ const visibleNodes = computed(() => displayNodes.value.filter((n) => props.enabl
 
 const visibleEdges = computed(() => {
   const visibleIds = new Set(visibleNodes.value.map((n) => n.id))
-  return displayEdges.value.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+  return displayEdges.value.filter(
+    (e) => props.enabledEdgeTypes.has(e.type) && visibleIds.has(e.source) && visibleIds.has(e.target)
+  )
 })
 
 function colorFor(type) {
@@ -137,6 +140,14 @@ watch(
   displayNodes,
   (list) => {
     emit('types-available', [...new Set(list.map((n) => n.type))].sort())
+  },
+  { immediate: true }
+)
+
+watch(
+  displayEdges,
+  (list) => {
+    emit('edge-types-available', [...new Set(list.map((e) => e.type))].sort())
   },
   { immediate: true }
 )

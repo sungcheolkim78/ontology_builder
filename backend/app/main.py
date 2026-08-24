@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app import graphdb
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
-from app.graphrag import format_type_preview, search_graph
+from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
     extract_graph,
@@ -76,7 +76,6 @@ def chat(request: ChatRequest):
                 result = None
 
             if result is not None:
-                preview = format_type_preview(result["node_types"], result["edge_types"])
                 if result["context"]:
                     augmented = [
                         {
@@ -88,12 +87,14 @@ def chat(request: ChatRequest):
                     response = invoke_with_telemetry(
                         "chat.answer", model, to_langchain_messages(augmented)
                     )
-                    content = f"{preview}\n\n{response.content}"
+                    content = response.content
                 else:
-                    content = f"{preview}\n\n관련된 내용을 찾을 수 없습니다."
+                    content = "관련된 내용을 찾을 수 없습니다."
                 return {
                     "role": "assistant",
                     "content": content,
+                    "node_types": result["node_types"],
+                    "edge_types": result["edge_types"],
                     "related_nodes": result["related_nodes"],
                     "related_edges": result["related_edges"],
                 }

@@ -4,11 +4,15 @@ import { onMounted, ref, watch } from 'vue'
 const props = defineProps({
   selectedFilename: { type: String, default: null },
   availableTypes: { type: Array, default: () => [] },
+  availableEdgeTypes: { type: Array, default: () => [] },
   schemaVersion: { type: Number, default: 0 },
+  toggleTypeRequest: { type: Object, default: null },
+  toggleEdgeTypeRequest: { type: Object, default: null },
 })
 const emit = defineEmits([
   'file-selected',
   'filters-changed',
+  'edge-filters-changed',
   'schema-used',
   'hops-changed',
   'markdown-changed',
@@ -22,6 +26,7 @@ const schemas = ref([])
 const isUsingSchema = ref(false)
 const schemaUseError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
+const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
 const renderMarkdown = ref(true)
 
@@ -41,6 +46,28 @@ watch(
   (types) => {
     enabledTypes.value = new Set(types)
     emit('filters-changed', enabledTypes.value)
+  }
+)
+
+watch(
+  () => props.availableEdgeTypes,
+  (types) => {
+    enabledEdgeTypes.value = new Set(types)
+    emit('edge-filters-changed', enabledEdgeTypes.value)
+  }
+)
+
+watch(
+  () => props.toggleTypeRequest,
+  (req) => {
+    if (req) toggleType(req.type)
+  }
+)
+
+watch(
+  () => props.toggleEdgeTypeRequest,
+  (req) => {
+    if (req) toggleEdgeType(req.type)
   }
 )
 
@@ -141,6 +168,17 @@ function toggleType(type) {
   enabledTypes.value = next
   emit('filters-changed', next)
 }
+
+function toggleEdgeType(type) {
+  const next = new Set(enabledEdgeTypes.value)
+  if (next.has(type)) {
+    next.delete(type)
+  } else {
+    next.add(type)
+  }
+  enabledEdgeTypes.value = next
+  emit('edge-filters-changed', next)
+}
 </script>
 
 <template>
@@ -230,6 +268,21 @@ function toggleType(type) {
           type="checkbox"
           :checked="enabledTypes.has(type)"
           @change="toggleType(type)"
+        />
+        {{ type }}
+      </label>
+    </section>
+
+    <section>
+      <h3>그래프 엣지 필터</h3>
+      <p v-if="availableEdgeTypes.length === 0" class="placeholder">
+        아직 추출된 그래프가 없습니다
+      </p>
+      <label v-for="type in availableEdgeTypes" :key="type" class="filter-item">
+        <input
+          type="checkbox"
+          :checked="enabledEdgeTypes.has(type)"
+          @change="toggleEdgeType(type)"
         />
         {{ type }}
       </label>

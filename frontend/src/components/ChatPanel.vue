@@ -6,9 +6,11 @@ const props = defineProps({
   file: { type: Object, default: null },
   hops: { type: Number, default: 1 },
   renderMarkdown: { type: Boolean, default: true },
+  enabledTypes: { type: Set, default: () => new Set() },
+  enabledEdgeTypes: { type: Set, default: () => new Set() },
 })
 
-const emit = defineEmits(['highlight-nodes'])
+const emit = defineEmits(['highlight-nodes', 'toggle-type'])
 
 const messages = ref([])
 const input = ref('')
@@ -52,6 +54,8 @@ async function sendMessage() {
     messages.value.push({
       role: data.role,
       content: data.content,
+      nodeTypes: data.node_types ?? [],
+      edgeTypes: data.edge_types ?? [],
       relatedNodes: data.related_nodes ?? [],
     })
   } catch (err) {
@@ -79,6 +83,43 @@ async function sendMessage() {
         :class="msg.role"
       >
         <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+        <div
+          v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
+          class="type-analysis"
+        >
+          <div class="type-analysis-row">
+            <span class="type-analysis-label">노드:</span>
+            <template v-if="msg.nodeTypes.length">
+              <button
+                v-for="type in msg.nodeTypes"
+                :key="'n-' + type"
+                type="button"
+                class="type-chip node-type"
+                :class="{ inactive: !enabledTypes.has(type) }"
+                @click="emit('toggle-type', { kind: 'node', type })"
+              >
+                {{ type }}
+              </button>
+            </template>
+            <span v-else class="type-analysis-empty">없음</span>
+          </div>
+          <div class="type-analysis-row">
+            <span class="type-analysis-label">엣지:</span>
+            <template v-if="msg.edgeTypes.length">
+              <button
+                v-for="type in msg.edgeTypes"
+                :key="'e-' + type"
+                type="button"
+                class="type-chip edge-type"
+                :class="{ inactive: !enabledEdgeTypes.has(type) }"
+                @click="emit('toggle-type', { kind: 'edge', type })"
+              >
+                {{ type }}
+              </button>
+            </template>
+            <span v-else class="type-analysis-empty">없음</span>
+          </div>
+        </div>
         <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
         <p v-else>{{ msg.content }}</p>
         <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
@@ -149,6 +190,53 @@ async function sendMessage() {
 .message .markdown :deep(th) {
   border: 1px solid #ccc;
   padding: 0.25rem 0.5rem;
+}
+.type-analysis {
+  margin: 0.25rem 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed #ccc;
+}
+.type-analysis-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+.type-analysis-label {
+  font-size: 0.75rem;
+  color: #666;
+}
+.type-analysis-empty {
+  font-size: 0.75rem;
+  color: #999;
+}
+.type-chip {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  cursor: pointer;
+  background: white;
+}
+.type-chip.node-type {
+  border: 1px solid #4fbf7a;
+  color: #2f8a54;
+}
+.type-chip.node-type:hover {
+  background: #4fbf7a;
+  color: white;
+}
+.type-chip.edge-type {
+  border: 1px solid #8a6d3b;
+  color: #8a6d3b;
+}
+.type-chip.edge-type:hover {
+  background: #8a6d3b;
+  color: white;
+}
+.type-chip.inactive {
+  opacity: 0.4;
+  text-decoration: line-through;
 }
 .related-nodes {
   margin-top: 0.5rem;

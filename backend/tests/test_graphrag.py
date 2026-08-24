@@ -4,7 +4,6 @@ from app import graphdb
 from app.graphrag import (
     determine_relevant_types,
     extract_keywords,
-    format_type_preview,
     search_graph,
 )
 
@@ -95,17 +94,6 @@ def test_determine_relevant_types_raises_on_invalid_json(monkeypatch):
         assert False, "expected ValueError"
     except ValueError:
         pass
-
-
-def test_format_type_preview_lists_types():
-    text = format_type_preview(["Person"], ["WORKED_ON"])
-    assert "Person" in text
-    assert "WORKED_ON" in text
-
-
-def test_format_type_preview_shows_none_when_empty():
-    text = format_type_preview([], [])
-    assert "없음" in text
 
 
 def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
