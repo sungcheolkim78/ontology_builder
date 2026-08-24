@@ -1,0 +1,48 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - heading "Ontology Builder" [level=1] [ref=f2e5]
+    - generic [ref=f2e6]:
+      - generic [ref=f2e7]:
+        - heading "LLM 모델" [level=3] [ref=f2e8]
+        - paragraph [ref=f2e9]: google/gemini-3.7-flash
+      - generic [ref=f2e10]:
+        - heading "문서 업로드" [level=3] [ref=f2e11]
+        - button "Choose File" [ref=f2e12]
+      - generic [ref=f2e13]:
+        - heading "업로드된 문서" [level=3] [ref=f2e14]
+        - list [ref=f2e15]:
+          - listitem [ref=f2e16] [cursor=pointer]: 1775193768309_raw.md
+      - generic [ref=f2e17]:
+        - heading "스키마 라이브러리" [level=3] [ref=f2e18]
+        - paragraph [ref=f2e19]: 생성된 스키마가 없습니다
+      - generic [ref=f2e20]:
+        - heading "채팅 표시 설정" [level=3] [ref=f2e21]
+        - generic [ref=f2e22]:
+          - checkbox "마크다운 HTML로 렌더링" [checked] [ref=f2e23]
+          - text: 마크다운 HTML로 렌더링
+      - generic [ref=f2e24]:
+        - heading "GraphRAG 설정" [level=3] [ref=f2e25]
+        - generic [ref=f2e26]:
+          - text: 검색 hop 수
+          - spinbutton "검색 hop 수" [ref=f2e27]: "1"
+      - generic [ref=f2e28]:
+        - heading "그래프 노드 필터" [level=3] [ref=f2e29]
+        - paragraph [ref=f2e30]: 아직 추출된 그래프가 없습니다
+      - generic [ref=f2e31]:
+        - heading "그래프 엣지 필터" [level=3] [ref=f2e32]
+        - paragraph [ref=f2e33]: 아직 추출된 그래프가 없습니다
+  - generic [ref=f2e34]:
+    - generic [ref=f2e36]:
+      - heading "Chat" [level=2] [ref=f2e37]
+      - generic [ref=f2e40]:
+        - textbox "메시지를 입력하세요" [ref=f2e41]
+        - button "전송" [ref=f2e42]
+    - generic [ref=f2e44]:
+      - heading "문서 Preview" [level=2] [ref=f2e45]
+      - paragraph [ref=f2e47]: 업로드된 문서가 없습니다
+    - generic [ref=f2e49]:
+      - heading "온톨로지 그래프" [level=2] [ref=f2e50]
+      - paragraph [ref=f2e52]: 문서를 선택하세요
+    - generic [ref=f2e54]:
+      - heading "스키마 / 그래프DB" [level=2] [ref=f2e55]
+      - paragraph [ref=f2e57]: 문서를 선택하세요
