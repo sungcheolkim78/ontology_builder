@@ -1,6 +1,6 @@
 <script setup>
 import { marked } from 'marked'
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -13,6 +13,17 @@ const input = ref('')
 const isLoading = ref(false)
 const error = ref('')
 
+let abortController = null
+
+function handleKeydown(e) {
+  if (e.key === 'Escape' && isLoading.value && abortController) {
+    abortController.abort()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleKeydown))
+onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
+
 async function sendMessage() {
   const content = input.value.trim()
   if (!content || isLoading.value) return
@@ -21,6 +32,7 @@ async function sendMessage() {
   input.value = ''
   error.value = ''
   isLoading.value = true
+  abortController = new AbortController()
 
   try {
     const res = await fetch('/api/chat', {
@@ -31,14 +43,20 @@ async function sendMessage() {
         filename: props.file?.filename ?? null,
         hops: props.hops,
       }),
+      signal: abortController.signal,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     messages.value.push({ role: data.role, content: data.content })
   } catch (err) {
-    error.value = '메시지 전송 실패: ' + err.message
+    if (err.name === 'AbortError') {
+      error.value = '요청이 취소되었습니다.'
+    } else {
+      error.value = '메시지 전송 실패: ' + err.message
+    }
   } finally {
     isLoading.value = false
+    abortController = null
   }
 }
 </script>
@@ -58,7 +76,7 @@ async function sendMessage() {
         <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
         <p v-else>{{ msg.content }}</p>
       </div>
-      <p v-if="isLoading">응답 중...</p>
+      <p v-if="isLoading">응답 중... (ESC로 취소)</p>
       <p v-if="error" class="error">{{ error }}</p>
     </div>
 
