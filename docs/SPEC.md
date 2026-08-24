@@ -186,6 +186,19 @@ model's general knowledge. A technical failure (LLM returns unparseable
 JSON at either stage) is different from a miss and falls back to plain
 chat, same as when there's no graph at all.
 
+When the GraphRAG path runs (schema + graph both exist, and
+`search_graph()` doesn't raise), the response also carries
+`related_nodes`/`related_edges` — the exact node/edge objects
+(`{"id", "label", "type", "detail"}` / `{"source", "target", "type",
+"detail"}`) that `search_graph()` matched and expanded via
+`graphdb.expand_hops()`, i.e. precisely the entities backing that
+answer's context text, not an LLM-guessed citation. Plain chat (no
+`filename`, or no schema/graph yet) omits these two keys entirely
+rather than sending empty lists, so existing plain-chat response shape
+is unchanged. The frontend uses this list to render a "관련 노드" link
+per message that highlights the matching nodes in the ontology graph
+panel — see the Frontend section.
+
 **`POST /api/parse`** — multipart upload, field `file`. Extracts the
 extension from the filename (sanitized via `os.path.basename` to
 prevent path traversal), calls `anydoc.to_markdown_bytes(data, ext)`,
@@ -364,13 +377,23 @@ directly.
   assistant messages get distinct bubble backgrounds (`.message.user`
   vs `.message.assistant`, keyed off the same `role` string already
   used for the "나"/"챗봇" label) so a message's origin is visually
-  obvious without reading the label.
+  obvious without reading the label. Each assistant message that came
+  from a GraphRAG-backed answer also stores the response's
+  `related_nodes` (see `POST /api/chat` above) and renders one "관련
+  노드" chip per node; clicking a chip emits `highlight-nodes` with
+  that single node's id in a one-element array. `App.vue` forwards this
+  straight through to `OntologyGraph` as `highlightedNodeIds` — no
+  sentence-level attribution, this links a whole answer to the graph
+  entities it was actually retrieved from, not specific words within
+  it (see the GraphRAG section above for why: those ids come from
+  `search_graph()`'s own matched/expanded set, not a citation the LLM
+  invented, so nothing here can point at a node that doesn't exist).
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
   Limitations history for why.
-- **`OntologyGraph.vue`** — takes `file`, `enabledTypes`, and
-  `schemaVersion` props. On file change, checks
+- **`OntologyGraph.vue`** — takes `file`, `enabledTypes`,
+  `schemaVersion`, and `highlightedNodeIds` props. On file change, checks
   `GET /api/ontology/{filename}/schema` and `GET /api/ontology/{filename}`
   to decide what to draw, in priority order: an extracted graph (real
   `nodes`/`edges`) if one exists; otherwise a **schema preview** (the
@@ -419,6 +442,25 @@ directly.
   fit via the component's exposed `fitToContents()` method (accessed
   through a template ref), also called automatically after
   load/generate/extract so the view stays sensible across data changes.
+  `highlightedNodeIds` (from `ChatPanel`'s "관련 노드" chips, via
+  `App.vue`) is watched into a `selectedNodes` ref bound with
+  `v-model:selected-nodes` on `<v-network-graph>`; `configs.node.selected`
+  gives selected nodes a larger radius and a gold stroke so a
+  highlighted node reads as visually distinct without a custom
+  render slot. Reset to `[]` on file change so a stale id from a
+  previous document's chat history can't linger. The same watcher also
+  calls `focusOnNodes()`, which re-centers the view on the
+  highlighted node(s) without changing zoom level: it averages the
+  `layouts` position of every highlighted id (so multiple ids center
+  on their centroid), reads the current `getViewBox()` box, shifts it
+  by the same width/height around that centroid, and applies it via
+  `setViewBox()` inside `transitionWhile()` so the pan animates instead
+  of jumping. This is a manual reimplementation rather than a
+  `fitToContents()` call, since that method fits the *entire* graph's
+  bounding box and has no "fit to a subset of nodes" mode; positions
+  outside the currently loaded `layouts` (e.g. a chip clicked in the
+  schema-preview display mode, where ids are schema type names, not
+  real node ids) are silently skipped rather than panning anywhere.
 - **`SchemaGraphPreview.vue`** — read-only raw-data viewer, three tabs
   ("스키마"/"Nodes"/"Edges") over `GET /api/ontology/{filename}/schema`
   and `GET /api/ontology/{filename}` (nodes/edges from the same
@@ -436,8 +478,10 @@ State lives in `App.vue`: `parsedFile` (selected/uploaded document),
 `SettingsPanel`'s `schema-used`, and passed to `SettingsPanel` and
 `SchemaGraphPreview` as a refresh signal), `graphRagHops` (from
 `SettingsPanel`'s `hops-changed`, passed to `ChatPanel`), `renderMarkdown`
-(from `SettingsPanel`'s `markdown-changed`, passed to `ChatPanel`). Chat
-messages stay local to `ChatPanel`.
+(from `SettingsPanel`'s `markdown-changed`, passed to `ChatPanel`),
+`highlightedNodeIds` (from `ChatPanel`'s `highlight-nodes`, passed to
+`OntologyGraph`). Chat messages (and the `related_nodes` attached to
+each) stay local to `ChatPanel`.
 
 `vite.config.js` proxies `/api` and `/health` to `http://backend:8000`
 (the compose service name) so the browser only ever talks to

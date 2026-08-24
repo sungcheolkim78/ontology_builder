@@ -8,6 +8,8 @@ const props = defineProps({
   renderMarkdown: { type: Boolean, default: true },
 })
 
+const emit = defineEmits(['highlight-nodes'])
+
 const messages = ref([])
 const input = ref('')
 const isLoading = ref(false)
@@ -39,7 +41,7 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: messages.value,
+        messages: messages.value.map(({ role, content }) => ({ role, content })),
         filename: props.file?.filename ?? null,
         hops: props.hops,
       }),
@@ -47,7 +49,11 @@ async function sendMessage() {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    messages.value.push({ role: data.role, content: data.content })
+    messages.value.push({
+      role: data.role,
+      content: data.content,
+      relatedNodes: data.related_nodes ?? [],
+    })
   } catch (err) {
     if (err.name === 'AbortError') {
       error.value = '요청이 취소되었습니다.'
@@ -75,6 +81,18 @@ async function sendMessage() {
         <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
         <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
         <p v-else>{{ msg.content }}</p>
+        <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
+          <span class="related-label">관련 노드:</span>
+          <button
+            v-for="node in msg.relatedNodes"
+            :key="node.id"
+            type="button"
+            class="node-chip"
+            @click="emit('highlight-nodes', [node.id])"
+          >
+            {{ node.label }}
+          </button>
+        </div>
       </div>
       <p v-if="isLoading">응답 중... (ESC로 취소)</p>
       <p v-if="error" class="error">{{ error }}</p>
@@ -131,6 +149,30 @@ async function sendMessage() {
 .message .markdown :deep(th) {
   border: 1px solid #ccc;
   padding: 0.25rem 0.5rem;
+}
+.related-nodes {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.related-label {
+  font-size: 0.75rem;
+  color: #666;
+}
+.node-chip {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid #4f8ef7;
+  background: white;
+  color: #4f8ef7;
+  cursor: pointer;
+}
+.node-chip:hover {
+  background: #4f8ef7;
+  color: white;
 }
 .error {
   color: red;

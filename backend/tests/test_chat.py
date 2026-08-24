@@ -98,6 +98,11 @@ def test_chat_with_filename_injects_graph_context_and_type_preview(monkeypatch):
         final_messages = model.calls[2]
         assert final_messages[0].content.startswith("다음은")
         assert "Analytical Engine" in final_messages[0].content
+        assert {n["label"] for n in body["related_nodes"]} == {
+            "Ada Lovelace",
+            "Analytical Engine",
+        }
+        assert [e["type"] for e in body["related_edges"]] == ["WORKED_ON"]
     finally:
         graphdb.reset_connection()
         if GRAPH_DIR.exists():

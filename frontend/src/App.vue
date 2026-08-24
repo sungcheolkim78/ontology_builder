@@ -15,6 +15,7 @@ const availableTypes = ref([])
 const schemaVersion = ref(0)
 const graphRagHops = ref(1)
 const renderMarkdown = ref(true)
+const highlightedNodeIds = ref([])
 const colPercent = ref(50)
 const rowPercent = ref(50)
 
@@ -42,6 +43,10 @@ function onHopsChanged(hops) {
 
 function onMarkdownChanged(value) {
   renderMarkdown.value = value
+}
+
+function onHighlightNodes(nodeIds) {
+  highlightedNodeIds.value = nodeIds
 }
 
 let dragStartX = 0
@@ -105,7 +110,12 @@ const gridStyle = computed(() => ({
     />
     <div class="main-grid" :style="gridStyle" ref="gridRef">
       <div class="panel top-left">
-        <ChatPanel :file="parsedFile" :hops="graphRagHops" :render-markdown="renderMarkdown" />
+        <ChatPanel
+          :file="parsedFile"
+          :hops="graphRagHops"
+          :render-markdown="renderMarkdown"
+          @highlight-nodes="onHighlightNodes"
+        />
       </div>
       <div class="panel top-right">
         <DocumentPreview :file="parsedFile" />
@@ -115,6 +125,7 @@ const gridStyle = computed(() => ({
           :file="parsedFile"
           :enabled-types="graphFilters"
           :schema-version="schemaVersion"
+          :highlighted-node-ids="highlightedNodeIds"
           @types-available="onTypesAvailable"
           @schema-updated="onSchemaChanged"
         />

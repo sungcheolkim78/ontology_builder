@@ -126,6 +126,14 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     assert "Ada Lovelace" in result["context"]
     assert "Analytical Engine" in result["context"]
     assert len(model.calls) == 2  # type analysis, then keyword extraction
+    # 1-hop expansion from Ada Lovelace also pulls in Charles Babbage, since
+    # he shares the Analytical Engine node via his own WORKED_ON edge.
+    assert {n["label"] for n in result["related_nodes"]} == {
+        "Ada Lovelace",
+        "Analytical Engine",
+        "Charles Babbage",
+    }
+    assert {e["type"] for e in result["related_edges"]} == {"WORKED_ON"}
 
 
 def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatch):
@@ -135,7 +143,13 @@ def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatc
 
     result = search_graph("completely unrelated question", SCHEMA, STEM, hops=1)
 
-    assert result == {"node_types": [], "edge_types": [], "context": None}
+    assert result == {
+        "node_types": [],
+        "edge_types": [],
+        "context": None,
+        "related_nodes": [],
+        "related_edges": [],
+    }
     assert len(model.calls) == 1
 
 

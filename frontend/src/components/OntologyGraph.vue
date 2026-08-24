@@ -8,6 +8,7 @@ const props = defineProps({
   file: { type: Object, default: null },
   enabledTypes: { type: Set, default: () => new Set() },
   schemaVersion: { type: Number, default: 0 },
+  highlightedNodeIds: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['types-available', 'schema-updated'])
 
@@ -122,6 +123,15 @@ const vngEdges = computed(() => {
 })
 
 const layouts = ref({ nodes: {} })
+const selectedNodes = ref([])
+
+watch(
+  () => props.highlightedNodeIds,
+  (ids) => {
+    selectedNodes.value = ids ?? []
+    focusOnNodes(selectedNodes.value)
+  }
+)
 
 watch(
   displayNodes,
@@ -177,6 +187,13 @@ const configs = computed(() => ({
       radius: 18,
       color: (node) => colorFor(node.type),
     },
+    selected: {
+      radius: 24,
+      color: (node) => colorFor(node.type),
+      strokeWidth: 4,
+      strokeColor: '#ffcc00',
+    },
+    selectable: true,
     label: {
       visible: true,
       text: 'name',
@@ -199,6 +216,27 @@ const graphRef = ref(null)
 
 function resetView() {
   graphRef.value?.fitToContents()
+}
+
+function focusOnNodes(ids) {
+  if (!graphRef.value || !ids || ids.length === 0) return
+  const positions = ids.map((id) => layouts.value.nodes[id]).filter(Boolean)
+  if (positions.length === 0) return
+
+  const centerX = positions.reduce((sum, p) => sum + p.x, 0) / positions.length
+  const centerY = positions.reduce((sum, p) => sum + p.y, 0) / positions.length
+
+  graphRef.value.transitionWhile(() => {
+    const box = graphRef.value.getViewBox()
+    const halfWidth = (box.right - box.left) / 2
+    const halfHeight = (box.bottom - box.top) / 2
+    graphRef.value.setViewBox({
+      left: centerX - halfWidth,
+      right: centerX + halfWidth,
+      top: centerY - halfHeight,
+      bottom: centerY + halfHeight,
+    })
+  })
 }
 
 async function fitSoon() {
@@ -231,6 +269,7 @@ async function loadGraph(file) {
   error.value = ''
   message.value = ''
   layouts.value = { nodes: {} }
+  selectedNodes.value = []
   if (!file) {
     status.value = 'empty'
     return
@@ -370,6 +409,7 @@ async function extract() {
     <div v-if="displayMode !== 'none'" class="graph-viewport">
       <v-network-graph
         ref="graphRef"
+        v-model:selected-nodes="selectedNodes"
         :nodes="vngNodes"
         :edges="vngEdges"
         :layouts="layouts"

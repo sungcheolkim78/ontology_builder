@@ -83,11 +83,7 @@ def _format_edge_line(nodes_by_id: dict, edge: dict) -> str:
     return line
 
 
-def _build_context_text(stem: str, seed_ids: set, hops: int) -> str | None:
-    if not seed_ids:
-        return None
-
-    nodes, edges = graphdb.expand_hops(stem, seed_ids, hops)
+def _build_context_text(nodes: list, edges: list) -> str | None:
     if not nodes:
         return None
 
@@ -106,14 +102,22 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
     document's own schema) are relevant to the question, then search actual
     node/edge instances of those types via LadybugDB, then expand `hops`
     from whatever matched. Returns the determined types (for a "here's what
-    I looked for" preview) alongside the resulting context text, or None if
-    nothing was found at any stage."""
+    I looked for" preview) and the matched nodes/edges themselves (so the
+    frontend can link the answer back to specific graph entities) alongside
+    the resulting context text, or None/empty if nothing was found at any
+    stage."""
     types = determine_relevant_types(question, schema)
     node_types = types["node_types"]
     edge_types = types["edge_types"]
 
     if not node_types and not edge_types:
-        return {"node_types": [], "edge_types": [], "context": None}
+        return {
+            "node_types": [],
+            "edge_types": [],
+            "context": None,
+            "related_nodes": [],
+            "related_edges": [],
+        }
 
     keywords = extract_keywords(question)
     matched_node_ids = set(graphdb.find_relevant_nodes(stem, keywords, node_types))
@@ -137,5 +141,12 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
                 matched_node_ids.add(edge["source"])
                 matched_node_ids.add(edge["target"])
 
-    context = _build_context_text(stem, matched_node_ids, hops)
-    return {"node_types": node_types, "edge_types": edge_types, "context": context}
+    related_nodes, related_edges = graphdb.expand_hops(stem, matched_node_ids, hops)
+    context = _build_context_text(related_nodes, related_edges)
+    return {
+        "node_types": node_types,
+        "edge_types": edge_types,
+        "context": context,
+        "related_nodes": related_nodes,
+        "related_edges": related_edges,
+    }

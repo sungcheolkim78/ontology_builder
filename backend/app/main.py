@@ -91,7 +91,12 @@ def chat(request: ChatRequest):
                     content = f"{preview}\n\n{response.content}"
                 else:
                     content = f"{preview}\n\n관련된 내용을 찾을 수 없습니다."
-                return {"role": "assistant", "content": content}
+                return {
+                    "role": "assistant",
+                    "content": content,
+                    "related_nodes": result["related_nodes"],
+                    "related_edges": result["related_edges"],
+                }
 
     model = get_chat_model()
     lc_messages = to_langchain_messages(messages)
