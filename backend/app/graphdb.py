@@ -243,7 +243,17 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         conn.execute("MERGE (d:_ExtractedDocument {stem: $stem})", {"stem": stem})
         conn.execute("COMMIT")
     except Exception:
-        conn.execute("ROLLBACK")
+        # Some engine-level errors (e.g. a constraint violation mid-query)
+        # already auto-abort the transaction before this except block runs,
+        # so an explicit ROLLBACK on top of that raises its own
+        # "No active transaction for ROLLBACK" RuntimeError and masks the
+        # real one. Swallow only that case and let the original exception
+        # propagate.
+        try:
+            conn.execute("ROLLBACK")
+        except RuntimeError as rollback_error:
+            if "No active transaction" not in str(rollback_error):
+                raise
         raise
 
 
