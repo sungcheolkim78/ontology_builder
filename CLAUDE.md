@@ -48,9 +48,14 @@ No committed venv. First time:
 
 ```bash
 cd backend
-python3 -m venv .venv && source .venv/bin/activate
+python3.14 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
+
+Use a python3.14 interpreter (e.g. Homebrew's
+`/opt/homebrew/opt/python@3.14/bin/python3.14`), not the macOS system
+`python3` (3.9.6) — `requirements.txt` pins `langchain-openai==1.6.0`,
+which has no distribution for 3.9 and fails to install.
 
 Then:
 
@@ -64,14 +69,33 @@ OPENROUTER_API_KEY=dummy python -m pytest tests/test_chat.py::test_chat_returns_
 mocks the LLM call rather than hitting OpenRouter. Tests run directly
 against the venv, not inside a container.
 
-**Do not run the backend test suite while `podman-compose` is up.**
-`test_graphdb.py` (and other test files, via their fixtures) delete and
-recreate the real project-path `backend/data/graph/graph.ladybugdb` —
-not a temp directory — before and after tests. If the backend
-container has that file open, deleting it out from under it can
-corrupt its state or leave it writing to a deleted inode. Run tests
-only with the stack down, or be prepared to
-`podman-compose down && podman-compose up --build -d` afterward.
+Tests never touch the real `backend/data` — `tests/conftest.py` points
+`ONTOLOGY_DATA_DIR` at a throwaway temp directory before any `app.*` module
+is imported, and `app/paths.py`'s `data_dir()` (used by `parser.DATA_DIR`,
+`ontology.GRAPH_DIR`, `graphdb.DB_PATH`) honors that override. This exists
+because `test_graphdb.py`/`test_ontology.py`/`test_files.py`'s fixtures
+delete and recreate `DATA_DIR`/`GRAPH_DIR`/`graphdb.DB_PATH` before and
+after every test — before this override existed, that meant deleting every
+real extracted document, schema, and the graph DB on every test run. Do not
+remove or bypass this isolation; if you need to inspect what a test
+actually wrote, read `os.environ["ONTOLOGY_DATA_DIR"]` inside the test
+process rather than pointing tests at the project path.
+
+### Backing up analyzed data
+
+`backend/data` (parsed markdown, `schema.json` files, `graph.ladybugdb`) is
+git-ignored and lives only on the host (podman's bind mount, not a volume),
+so nothing else backs it up. Snapshot it with:
+
+```bash
+./scripts/backup_data.sh          # writes backups/backend-data_<timestamp>.tar.gz
+./scripts/restore_data.sh <archive>  # refuses to overwrite an existing backend/data
+```
+
+Run `backup_data.sh` after any extraction you'd be upset to lose, and
+before anything risky (podman/volume changes, wiping `backend/data` to
+retest from scratch). `backups/` is git-ignored too — these are local
+snapshots, not committed history.
 
 ### Frontend
 

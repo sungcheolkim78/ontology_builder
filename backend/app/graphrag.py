@@ -6,10 +6,16 @@ from app.ontology import parse_json_response
 from app.telemetry import invoke_with_telemetry
 
 KEYWORD_PROMPT = """Extract the key entities, names, or specific terms mentioned in this \
-question that might refer to nodes in a knowledge graph.
+question that might refer to nodes in a knowledge graph, grouped by which of the given \
+node types each term is an instance of. Only use type names from the list below, and \
+only include a type if the question actually names a specific instance of it -- omit \
+types with no matching terms.
 
-Respond with ONLY a JSON array of strings, no other text. If there are no specific \
-entities, respond with [].
+Node types:
+{node_types}
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"TypeName": ["term1", "term2"], ...}}
 
 Question:
 {question}
@@ -31,15 +37,20 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 """
 
 
-def extract_keywords(question: str) -> list:
+def extract_keywords(question: str, node_types: list) -> dict:
+    """Returns keywords grouped by node type, e.g. {"Person": ["Ada Lovelace"]},
+    so find_relevant_nodes can match each term only against its own type
+    instead of every allowed type at once."""
     model = get_chat_model()
     response = invoke_with_telemetry(
-        "graphrag.extract_keywords", model, KEYWORD_PROMPT.format(question=question)
+        "graphrag.extract_keywords",
+        model,
+        KEYWORD_PROMPT.format(node_types=json.dumps(node_types), question=question),
     )
-    keywords = parse_json_response(response.content)
-    if not isinstance(keywords, list):
-        raise ValueError("keyword extraction did not return a JSON list")
-    return keywords
+    result = parse_json_response(response.content)
+    if not isinstance(result, dict):
+        raise ValueError("keyword extraction did not return a JSON object")
+    return {t: kws for t, kws in result.items() if t in node_types and isinstance(kws, list)}
 
 
 def determine_relevant_types(question: str, schema: dict) -> dict:
@@ -113,8 +124,23 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
             "related_edges": [],
         }
 
-    keywords = extract_keywords(question)
-    matched_node_ids = set(graphdb.find_relevant_nodes(stem, keywords, node_types))
+    matched_node_ids = set()
+    if node_types:
+        keywords = extract_keywords(question, node_types)
+        for node_type in node_types:
+            type_ids = graphdb.find_relevant_nodes(
+                stem, {node_type: keywords.get(node_type, [])}, [node_type]
+            )
+            if not type_ids:
+                # No keyword was extracted for this type, or the extracted
+                # keyword didn't match any instance -- either the question
+                # names nothing concrete (a category question like "what are
+                # the responsibilities?") or the question/document languages
+                # don't literally overlap. The type analysis step already
+                # established this type is relevant, so fall back to every
+                # instance of it rather than silently contributing nothing.
+                type_ids = graphdb.all_nodes_of_types(stem, [node_type])
+            matched_node_ids.update(type_ids)
 
     if edge_types:
         matched_edges = graphdb.find_matching_edges(stem, edge_types, matched_node_ids)
@@ -122,15 +148,11 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
             matched_node_ids.add(edge["source"])
             matched_node_ids.add(edge["target"])
 
-    if not matched_node_ids:
-        # Keyword matching found no specific instance -- either the question
-        # names nothing concrete (a category question like "what are the
-        # responsibilities?") or the question/document languages don't
-        # literally overlap. The type analysis step already established
-        # these types are relevant, so fall back to every instance of them
-        # rather than reporting "not found" when the graph actually has data.
-        matched_node_ids = set(graphdb.all_nodes_of_types(stem, node_types))
-        if edge_types:
+        if not matched_node_ids:
+            # No node was matched at all (node_types was empty, or every
+            # determined node type turned out to have zero real instances) --
+            # fall back to every edge of the determined type rather than
+            # reporting "not found" when the graph actually has data.
             for edge in graphdb.all_edges_of_types(stem, edge_types):
                 matched_node_ids.add(edge["source"])
                 matched_node_ids.add(edge["target"])

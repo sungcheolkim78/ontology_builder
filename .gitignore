@@ -10,6 +10,9 @@ node_modules/
 backend/data/*
 !backend/data/.gitkeep
 
+# Local backend/data snapshots (see scripts/backup_data.sh)
+backups/
+
 # C extensions
 *.so
 

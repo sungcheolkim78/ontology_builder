@@ -1,12 +1,12 @@
 import json
 import re
-from pathlib import Path
 
 from app.chat import get_chat_model
 from app.telemetry import invoke_with_telemetry
 from app import graphdb
+from app.paths import data_dir
 
-GRAPH_DIR = Path(__file__).parent.parent / "data" / "graph"
+GRAPH_DIR = data_dir() / "graph"
 
 DEFAULT_SCHEMA = {
     "node_types": [

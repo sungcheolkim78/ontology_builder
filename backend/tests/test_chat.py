@@ -70,7 +70,7 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
-            json.dumps(["Ada Lovelace"]),
+            json.dumps({"Person": ["Ada Lovelace"]}),
             "Ada Lovelace worked on the Analytical Engine.",
         ]
     )
@@ -157,7 +157,7 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Person"], "edge_types": []}),
-            json.dumps(["a stranger not in the graph"]),
+            json.dumps({"Person": ["a stranger not in the graph"]}),
             "Ada Lovelace is the person mentioned.",
         ]
     )
@@ -205,7 +205,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
     model = SequencedChatModel(
         [
             json.dumps({"node_types": ["Location"], "edge_types": []}),
-            json.dumps(["nonexistent keyword"]),
+            json.dumps({"Location": ["nonexistent keyword"]}),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)

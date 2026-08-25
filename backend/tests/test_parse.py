@@ -1,12 +1,10 @@
 import shutil
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-
-DATA_DIR = Path(__file__).parent.parent / "data"
+from app.parser import DATA_DIR
 
 
 @pytest.fixture(autouse=True)

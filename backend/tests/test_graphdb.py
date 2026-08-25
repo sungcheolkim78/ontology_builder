@@ -189,7 +189,7 @@ def test_load_graph_handles_document_with_no_edges_on_fresh_database():
 def test_find_relevant_nodes_matches_case_insensitively():
     graphdb.write_graph("doc_a", NODES, EDGES)
 
-    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Person"])
+    matched = graphdb.find_relevant_nodes("doc_a", {"Person": ["ada"]}, ["Person"])
 
     assert matched == ["n1"]
 
@@ -197,7 +197,7 @@ def test_find_relevant_nodes_matches_case_insensitively():
 def test_find_relevant_nodes_returns_empty_when_no_match():
     graphdb.write_graph("doc_a", NODES, EDGES)
 
-    matched = graphdb.find_relevant_nodes("doc_a", ["nonexistent"], ["Person"])
+    matched = graphdb.find_relevant_nodes("doc_a", {"Person": ["nonexistent"]}, ["Person"])
 
     assert matched == []
 
@@ -205,7 +205,21 @@ def test_find_relevant_nodes_returns_empty_when_no_match():
 def test_find_relevant_nodes_filters_by_allowed_types():
     graphdb.write_graph("doc_a", NODES, EDGES)
 
-    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Concept"])
+    matched = graphdb.find_relevant_nodes("doc_a", {"Person": ["ada"]}, ["Concept"])
+
+    assert matched == []
+
+
+def test_find_relevant_nodes_only_matches_keyword_against_its_own_type():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    # "ada" is keyed under Concept, not Person, so it must not match the
+    # Person node even though Person is an allowed type -- this is the whole
+    # point of grouping keywords by type instead of searching them flat
+    # across every allowed type.
+    matched = graphdb.find_relevant_nodes(
+        "doc_a", {"Concept": ["ada"]}, ["Person", "Concept"]
+    )
 
     assert matched == []
 
@@ -213,7 +227,7 @@ def test_find_relevant_nodes_filters_by_allowed_types():
 def test_find_relevant_nodes_empty_allowed_types_matches_nothing():
     graphdb.write_graph("doc_a", NODES, EDGES)
 
-    assert graphdb.find_relevant_nodes("doc_a", ["ada"], []) == []
+    assert graphdb.find_relevant_nodes("doc_a", {"Person": ["ada"]}, []) == []
 
 
 def test_find_relevant_nodes_scoped_to_document():
@@ -222,7 +236,7 @@ def test_find_relevant_nodes_scoped_to_document():
         "doc_b", [{"id": "n1", "label": "Ada Impersonator", "type": "Person"}], []
     )
 
-    matched = graphdb.find_relevant_nodes("doc_a", ["ada"], ["Person"])
+    matched = graphdb.find_relevant_nodes("doc_a", {"Person": ["ada"]}, ["Person"])
 
     assert matched == ["n1"]  # doc_a's n1, not doc_b's
 
@@ -389,7 +403,7 @@ def test_load_graph_handles_document_with_zero_nodes_on_fresh_database():
 def test_find_relevant_nodes_handles_zero_node_tables_on_fresh_database():
     graphdb.write_graph("doc_empty", [], [])
 
-    assert graphdb.find_relevant_nodes("doc_empty", ["ada"], ["Person"]) == []
+    assert graphdb.find_relevant_nodes("doc_empty", {"Person": ["ada"]}, ["Person"]) == []
 
 
 def test_all_nodes_of_types_handles_zero_node_tables_on_fresh_database():

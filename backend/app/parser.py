@@ -3,7 +3,9 @@ from pathlib import Path
 
 import anydoc
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+from app.paths import data_dir
+
+DATA_DIR = data_dir()
 
 
 def parse_to_markdown_file(filename: str, data: bytes) -> dict:

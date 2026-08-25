@@ -46,8 +46,10 @@ def _prompt_text(prompt) -> str:
 
 def invoke_with_telemetry(operation: str, model, prompt, max_retries: int = 2, retry_delay: float = 1.0):
     """Calls model.invoke(prompt), recording a span with model/prompt/response
-    metadata (not the prompt/response text itself). Span timing is captured
-    automatically by OpenTelemetry, so no manual duration tracking here.
+    metadata, including the full prompt/response text (for debugging in
+    Jaeger -- this is local dev only, never send real user data through a
+    collector you don't control). Span timing is captured automatically by
+    OpenTelemetry, so no manual duration tracking here.
 
     Transient network failures (langchain_core.exceptions.ModelConnectionError,
     the provider-agnostic base class every langchain chat model raises for
@@ -58,9 +60,11 @@ def invoke_with_telemetry(operation: str, model, prompt, max_retries: int = 2, r
     model_name = getattr(model, "model_name", None) or getattr(model, "model", "unknown")
 
     with _tracer.start_as_current_span(f"llm.{operation}") as span:
+        prompt_text = _prompt_text(prompt)
         span.set_attribute("gen_ai.operation.name", operation)
         span.set_attribute("gen_ai.request.model", str(model_name))
-        span.set_attribute("gen_ai.prompt.length", len(_prompt_text(prompt)))
+        span.set_attribute("gen_ai.prompt.length", len(prompt_text))
+        span.set_attribute("gen_ai.prompt", prompt_text)
 
         attempt = 0
         while True:
@@ -85,6 +89,7 @@ def invoke_with_telemetry(operation: str, model, prompt, max_retries: int = 2, r
         span.set_attribute("gen_ai.retry.count", attempt)
         span.set_attribute("gen_ai.call.success", True)
         span.set_attribute("gen_ai.response.length", len(response.content))
+        span.set_attribute("gen_ai.completion", response.content)
         usage = getattr(response, "usage_metadata", None)
         if usage:
             span.set_attribute("gen_ai.usage.input_tokens", usage.get("input_tokens", 0))

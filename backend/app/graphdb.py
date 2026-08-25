@@ -1,11 +1,12 @@
 import functools
 import re
 import threading
-from pathlib import Path
 
 from ladybug import Connection, Database
 
-DB_PATH = Path(__file__).parent.parent / "data" / "graph" / "graph.ladybugdb"
+from app.paths import data_dir
+
+DB_PATH = data_dir() / "graph" / "graph.ladybugdb"
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -289,19 +290,30 @@ def load_graph(stem: str) -> dict | None:
 
 
 @_synchronized
-def find_relevant_nodes(stem: str, keywords: list, allowed_types: list) -> list:
-    if not allowed_types or not keywords:
+def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list) -> list:
+    """type_keywords maps each node type to its own keyword list (e.g.
+    {"Person": ["Ada Lovelace"]}) so a term is only matched against nodes of
+    the type it was extracted for, not every allowed type at once."""
+    if not allowed_types or not type_keywords:
+        return []
+    pairs = [
+        {"type": t, "keywords": kws}
+        for t, kws in type_keywords.items()
+        if t in allowed_types and kws
+    ]
+    if not pairs:
         return []
     conn = _get_connection()
     # No NODE table exists at all -- see _has_table_of_kind.
     if not _has_table_of_kind(conn, "NODE"):
         return []
     result = conn.execute(
-        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
-        "AND ANY(kw IN $keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
+        "UNWIND $pairs AS tk "
+        "MATCH (n) WHERE label(n) = tk.type AND n.source_document = $stem "
+        "AND ANY(kw IN tk.keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
         "OR toLower(kw) CONTAINS toLower(n.label)) "
-        "RETURN n.id AS id",
-        {"types": allowed_types, "stem": stem, "keywords": keywords},
+        "RETURN DISTINCT n.id AS id",
+        {"pairs": pairs, "stem": stem},
     )
     return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
 
