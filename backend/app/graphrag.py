@@ -2,8 +2,14 @@ import json
 
 from app import graphdb
 from app.chat import get_chat_model
+from app.embeddings import get_embedding_model
 from app.ontology import parse_json_response
-from app.telemetry import invoke_with_telemetry
+from app.telemetry import invoke_with_telemetry, embed_with_telemetry
+
+# How many of a type's own nodes to keep when keyword matching finds none
+# and search falls back to embedding similarity -- a ranked cutoff instead
+# of dumping every instance of the type into the context.
+EMBEDDING_FALLBACK_TOP_K = 5
 
 KEYWORD_PROMPT = """Extract the key entities, names, or specific terms mentioned in this \
 question that might refer to nodes in a knowledge graph, grouped by which of the given \
@@ -51,6 +57,12 @@ def extract_keywords(question: str, node_types: list) -> dict:
     if not isinstance(result, dict):
         raise ValueError("keyword extraction did not return a JSON object")
     return {t: kws for t, kws in result.items() if t in node_types and isinstance(kws, list)}
+
+
+def embed_query(question: str) -> list:
+    model = get_embedding_model()
+    vectors = embed_with_telemetry("graphrag.embed_query", model, [question])
+    return vectors[0]
 
 
 def determine_relevant_types(question: str, schema: dict) -> dict:
@@ -127,6 +139,7 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
     matched_node_ids = set()
     if node_types:
         keywords = extract_keywords(question, node_types)
+        query_embedding = None
         for node_type in node_types:
             type_ids = graphdb.find_relevant_nodes(
                 stem, {node_type: keywords.get(node_type, [])}, [node_type]
@@ -137,8 +150,20 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
                 # names nothing concrete (a category question like "what are
                 # the responsibilities?") or the question/document languages
                 # don't literally overlap. The type analysis step already
-                # established this type is relevant, so fall back to every
-                # instance of it rather than silently contributing nothing.
+                # established this type is relevant, so rank that type's
+                # own nodes by embedding similarity to the question instead
+                # of dumping every instance of it into the context.
+                if query_embedding is None:
+                    query_embedding = embed_query(question)
+                type_ids = graphdb.find_similar_nodes(
+                    stem, node_type, query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K
+                )
+            if not type_ids:
+                # No embedding was stored for this type either -- most
+                # likely it was extracted before embeddings existed, so
+                # there's nothing to rank. Last resort: every instance of
+                # just this type, same fallback embeddings were meant to
+                # narrow (see EMBEDDING_FALLBACK_TOP_K above).
                 type_ids = graphdb.all_nodes_of_types(stem, [node_type])
             matched_node_ids.update(type_ids)
 

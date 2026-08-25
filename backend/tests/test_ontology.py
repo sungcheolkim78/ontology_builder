@@ -5,8 +5,9 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
+from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR
+from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR, embed_nodes
 from app.parser import DATA_DIR
 
 
@@ -16,6 +17,16 @@ class FakeChatModel:
 
     def invoke(self, messages):
         return type("FakeResponse", (), {"content": self.content})()
+
+
+class FakeEmbeddingModel:
+    def embed_documents(self, texts):
+        return [[0.0] * EMBEDDING_DIM for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +95,37 @@ def test_generate_schema_returns_404_when_document_missing(monkeypatch):
     response = client.post("/api/ontology/missing_raw.md/schema")
 
     assert response.status_code == 404
+
+
+def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
+    calls = []
+
+    class FakeEmbeddingModel:
+        def embed_documents(self, texts):
+            calls.append(texts)
+            return [[float(i)] * EMBEDDING_DIM for i in range(len(texts))]
+
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "detail": "Mathematician"},
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+    ]
+
+    embedded = embed_nodes(nodes)
+
+    assert calls == [["Ada Lovelace: Mathematician", "Analytical Engine"]]
+    assert [n["embedding"] for n in embedded] == [[0.0] * EMBEDDING_DIM, [1.0] * EMBEDDING_DIM]
+    # Original dicts (and the input list) must be left untouched.
+    assert "embedding" not in nodes[0]
+
+
+def test_embed_nodes_empty_list_skips_the_embedding_call(monkeypatch):
+    def fail():
+        raise AssertionError("should not be called for an empty node list")
+
+    monkeypatch.setattr("app.ontology.get_embedding_model", fail)
+
+    assert embed_nodes([]) == []
 
 
 def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):

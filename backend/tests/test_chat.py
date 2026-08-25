@@ -2,8 +2,10 @@ import json
 import os
 import shutil
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import GRAPH_DIR
 from app import graphdb
@@ -42,6 +44,16 @@ class SequencedChatModel:
         self.calls.append(messages)
         content = self.responses[len(self.calls) - 1]
         return type("FakeResponse", (), {"content": content})()
+
+
+class FakeEmbeddingModel:
+    def embed_documents(self, texts):
+        return [[0.0] * EMBEDDING_DIM for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):

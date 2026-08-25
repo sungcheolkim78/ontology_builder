@@ -117,6 +117,16 @@ business logic of its own beyond request/response shaping.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
+- `embeddings.py` — builds the `OpenAIEmbeddings` client (also OpenRouter,
+  `OPENROUTER_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`).
+  `EMBEDDING_DIM` (1536, matching that model's output) is a hard constraint
+  shared with `graphdb.py`'s node table DDL — changing embedding models to
+  one with a different dimension requires re-extracting every document,
+  since a Cypher `FLOAT[N]` column's width can't change after creation.
+  `node_embedding_text()` is the single source of truth for what text gets
+  embedded per node (`label` + `detail`), reused by both extraction
+  (`ontology.embed_nodes`) and query embedding (`graphrag.embed_query`) so
+  the two sides of a similarity comparison are computed consistently.
 - `graphdb.py` — owns the single LadybugDB connection
   (`backend/data/graph.ladybugdb`), opened lazily and cached at module
   level. There's one Cypher node table and one Cypher rel table per
@@ -137,7 +147,13 @@ business logic of its own beyond request/response shaping.
   either raises or silently returns nothing depending on the exact
   query shape, so `load_graph`, `find_matching_edges`,
   `all_edges_of_types`, and `expand_hops` all check table existence
-  first rather than relying on the query to fail safely.
+  first rather than relying on the query to fail safely. Every node
+  table also has an `embedding FLOAT[EMBEDDING_DIM]` column (`NULL` for
+  a node no embedding was ever computed for -- e.g. a document
+  extracted before this column existed); `find_similar_nodes()` ranks a
+  single type's own nodes by `array_cosine_similarity()` against a
+  query vector, filtering out `NULL` rows rather than sorting them
+  arbitrarily.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
@@ -152,21 +168,39 @@ business logic of its own beyond request/response shaping.
   Only the schema is still a JSON file, at
   `backend/data/graph/{stem}/schema.json`; nodes/edges are persisted in
   LadybugDB via `graphdb.write_graph`/`graphdb.load_graph`, not as
-  `nodes.json`/`edges.json`.
-- `graphrag.py` — the retrieval side of chat, a two-stage search rather
+  `nodes.json`/`edges.json`. `save_graph()` calls `embed_nodes()` first,
+  which embeds each node's `label`+`detail` text (batched into a single
+  `embed_documents()` call) and attaches the resulting vector as an
+  `embedding` field before handing nodes to `graphdb.write_graph` -- the
+  embedding call happens here, not in `graphdb.py`, since that module
+  owns storage only and never makes LLM/embedding calls itself.
+- `graphrag.py` — the retrieval side of chat, a schema-aware search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`
   sends the document's schema + the question to the LLM, asking which
   node/edge *types* (by exact schema name) are relevant; empty result on
   both short-circuits immediately with no further LLM calls. Stage 2:
-  `extract_keywords()` + `find_relevant_nodes()`/`find_matching_edges()`
-  search for specific instances of those types. If that finds nothing,
-  `all_nodes_of_types()`/`all_edges_of_types()` fall back to *every*
-  instance of the determined types rather than reporting nothing found —
-  this exists because keyword-substring matching only ever finds a
-  *specific named* instance, so category questions ("what are the
-  responsibilities?") or a question/document language mismatch would
-  otherwise always miss even when the type is genuinely relevant and the
-  graph clearly has matching data. The matched node set expands via
+  `extract_keywords()` returns terms grouped by node type (e.g.
+  `{"Person": ["Ada Lovelace"]}`, not a flat list), then for *each*
+  relevant node type independently, three tiers are tried in order until
+  one produces a match: (a) `find_relevant_nodes()` — that type's own
+  keywords against that type's node labels; (b) `find_similar_nodes()` —
+  if (a) found nothing, rank that type's own nodes by embedding
+  similarity (`embed_query()`, computed lazily at most once per
+  `search_graph()` call, reused across every type that needs it) against
+  the question, keeping the top `EMBEDDING_FALLBACK_TOP_K` (5); (c)
+  `all_nodes_of_types()` — if (b) also found nothing (most likely a
+  document extracted before embeddings existed, so its nodes have no
+  vector to rank by), every instance of just that type. This exists
+  because keyword-substring matching only ever finds a *specific named*
+  instance, so category questions ("what are the responsibilities?") or
+  a question/document language mismatch would otherwise always miss even
+  when the type is genuinely relevant and the graph clearly has matching
+  data -- embedding similarity (b) catches most of these by meaning
+  before falling all the way through to "every instance" (c). Edges
+  follow the same shape one level up: `find_matching_edges()` picks up
+  edges of the determined `edge_types` connected to an already-matched
+  node, falling back to `all_edges_of_types()` only if node matching
+  found nothing at all. The matched node set expands via
   `graphdb.expand_hops()` — an undirected, variable-length Cypher
   pattern match (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB —
   into an `Entities:`/`Relations:` context block (each line including the
@@ -185,29 +219,42 @@ business logic of its own beyond request/response shaping.
   model's general knowledge — a deliberate behavior change from typical
   RAG fallback; a genuine technical failure (unparseable LLM JSON) is
   different from a miss and still falls back to plain chat.
-- `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)`
-  wraps every LLM call site (all five: chat answer, schema generation,
-  graph extraction, type analysis, keyword extraction) in an
-  OpenTelemetry span recording model/prompt-length/response-length/
-  success metadata (never the prompt or response text). Only exports
-  anywhere if `OTEL_EXPORTER_OTLP_ENDPOINT` is set (podman-compose points
-  it at the bundled Jaeger service); otherwise the OpenTelemetry API's
-  no-op tracer is active, so this is always safe to call in tests. Also
-  retries up to `max_retries` (default 2) times, with a fixed delay,
-  on `langchain_core.exceptions.ModelConnectionError` — the
+- `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)` wraps
+  every chat-completion call site (chat answer, schema generation, graph
+  extraction, type analysis, keyword extraction) and
+  `embed_with_telemetry(operation, model, texts)` wraps both embedding
+  call sites
+  (`ontology.embed_nodes`, `graphrag.embed_query`) in an OpenTelemetry span.
+  Both record model name plus the full prompt/response (or embedding input
+  count/output count) as span attributes -- deliberately including the
+  actual text, for debugging in Jaeger; this is fine only because this is
+  local dev with no external collector. Both share a `_call_with_retry()`
+  helper that retries the call up to `max_retries` (default 2) times, with
+  a fixed delay, on `langchain_core.exceptions.ModelConnectionError` — the
   provider-agnostic base class langchain raises for connection-level
   failures — since transient OpenRouter connection errors are a real
   failure mode observed in this environment; any other exception is
-  raised immediately, not retried.
+  raised immediately, not retried. Telemetry only exports anywhere if
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set (podman-compose points it at the
+  bundled Jaeger service); otherwise the OpenTelemetry API's no-op tracer
+  is active, so both wrappers are always safe to call in tests.
 
-**Testing LLM calls:** `get_chat_model` is imported into each module's own
-namespace, so tests patch it per-module (`app.ontology.get_chat_model`,
-`app.graphrag.get_chat_model`, `app.main.get_chat_model`) rather than at
-its definition in `app.chat`. A single `/api/chat` request with `filename`
-set makes *two* LLM calls (keyword extraction, then the answer) — see
-`SequencedChatModel` in `test_chat.py` for the fake used to test that (a
-list of canned responses, one per `invoke()` call in order, with calls
-recorded for inspection).
+**Testing LLM calls:** `get_chat_model`/`get_embedding_model` are imported
+into each module's own namespace, so tests patch them per-module
+(`app.ontology.get_chat_model`, `app.graphrag.get_chat_model`,
+`app.main.get_chat_model`; `app.ontology.get_embedding_model`,
+`app.graphrag.get_embedding_model`) rather than at their definitions in
+`app.chat`/`app.embeddings`. Every test file whose code path can reach
+`embed_nodes()`/`embed_query()` has an autouse fixture stubbing
+`get_embedding_model` with a fake `embed_documents()`, so no test run ever
+makes a real OpenRouter embeddings call even for tests that don't
+specifically exercise the embedding fallback. A single `/api/chat` request
+with `filename` set makes up to *three* chat LLM calls (type analysis,
+keyword extraction, then the answer) — see `SequencedChatModel` in
+`test_chat.py` for the fake used to test that (a list of canned responses,
+one per `invoke()` call in order, with calls recorded for inspection) —
+plus one embedding call if any determined node type's keyword match comes
+up empty.
 
 ### Frontend (`frontend/src/`)
 

@@ -4,6 +4,7 @@ import threading
 
 from ladybug import Connection, Database
 
+from app.embeddings import EMBEDDING_DIM
 from app.paths import data_dir
 
 DB_PATH = data_dir() / "graph" / "graph.ladybugdb"
@@ -184,7 +185,7 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         if t not in existing:
             conn.execute(
                 f"CREATE NODE TABLE {t}(id STRING PRIMARY KEY, label STRING, "
-                f"detail STRING, source_document STRING)"
+                f"detail STRING, source_document STRING, embedding FLOAT[{EMBEDDING_DIM}])"
             )
             existing[t] = "NODE"
 
@@ -213,12 +214,13 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         for node in nodes:
             conn.execute(
                 f"CREATE (:{node['type']} {{id: $id, label: $label, "
-                f"detail: $detail, source_document: $stem}})",
+                f"detail: $detail, source_document: $stem, embedding: $embedding}})",
                 {
                     "id": f"{stem}::{node['id']}",
                     "label": node["label"],
                     "detail": node.get("detail") or "",
                     "stem": stem,
+                    "embedding": node.get("embedding"),
                 },
             )
 
@@ -316,6 +318,36 @@ def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list) -> 
         {"pairs": pairs, "stem": stem},
     )
     return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
+
+
+@_synchronized
+def find_similar_nodes(
+    stem: str, node_type: str, query_embedding: list, top_k: int, min_score: float = 0.0
+) -> list:
+    """Embedding fallback for a single type when find_relevant_nodes'
+    keyword matching comes up empty -- ranks that type's own nodes by
+    cosine similarity to query_embedding instead of returning every
+    instance of the type. Nodes written before embeddings existed (or any
+    node whose embedding call failed) have a NULL embedding column and are
+    excluded rather than sorted arbitrarily."""
+    _validate_identifier(node_type)
+    conn = _get_connection()
+    # No NODE table exists at all -- see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "NODE"):
+        return []
+    if node_type not in _existing_tables(conn):
+        return []
+    result = conn.execute(
+        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.embedding IS NOT NULL "
+        f"RETURN n.id AS id, array_cosine_similarity(n.embedding, $query_embedding) AS score "
+        f"ORDER BY score DESC LIMIT $top_k",
+        {"stem": stem, "query_embedding": query_embedding, "top_k": top_k},
+    )
+    return [
+        row["id"].split("::", 1)[1]
+        for row in result.rows_as_dict()
+        if row["score"] is not None and row["score"] >= min_score
+    ]
 
 
 @_synchronized

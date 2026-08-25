@@ -4,6 +4,7 @@ import time
 import pytest
 
 from app import graphdb
+from app.embeddings import EMBEDDING_DIM
 
 
 @pytest.fixture(autouse=True)
@@ -239,6 +240,88 @@ def test_find_relevant_nodes_scoped_to_document():
     matched = graphdb.find_relevant_nodes("doc_a", {"Person": ["ada"]}, ["Person"])
 
     assert matched == ["n1"]  # doc_a's n1, not doc_b's
+
+
+def _vec(dim, active_index):
+    v = [0.0] * dim
+    v[active_index] = 1.0
+    return v
+
+
+def test_find_similar_nodes_ranks_by_cosine_similarity():
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+        {"id": "n2", "label": "Charles Babbage", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 1)},
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    matched = graphdb.find_similar_nodes("doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=1)
+
+    assert matched == ["n1"]
+
+
+def test_find_similar_nodes_respects_top_k():
+    nodes = [
+        {"id": "n1", "label": "A", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+        {"id": "n2", "label": "B", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+        {"id": "n3", "label": "C", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    matched = graphdb.find_similar_nodes("doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=2)
+
+    assert len(matched) == 2
+
+
+def test_find_similar_nodes_excludes_nodes_without_an_embedding():
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+        {"id": "n2", "label": "Charles Babbage", "type": "Person"},  # no embedding -> NULL column
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    matched = graphdb.find_similar_nodes("doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=5)
+
+    assert matched == ["n1"]
+
+
+def test_find_similar_nodes_respects_min_score():
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+        {"id": "n2", "label": "Charles Babbage", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 1)},
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    matched = graphdb.find_similar_nodes(
+        "doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=5, min_score=0.5
+    )
+
+    assert matched == ["n1"]  # n2's orthogonal embedding scores 0.0, below the floor
+
+
+def test_find_similar_nodes_scoped_to_document():
+    graphdb.write_graph(
+        "doc_a", [{"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)}], []
+    )
+    graphdb.write_graph(
+        "doc_b", [{"id": "n1", "label": "Ada Impersonator", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)}], []
+    )
+
+    matched = graphdb.find_similar_nodes("doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=5)
+
+    assert matched == ["n1"]  # doc_a's n1, not doc_b's
+
+
+def test_find_similar_nodes_unknown_type_matches_nothing():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+
+    assert graphdb.find_similar_nodes("doc_a", "NoSuchType", _vec(EMBEDDING_DIM, 0), top_k=5) == []
+
+
+def test_find_similar_nodes_handles_zero_node_tables_on_fresh_database():
+    graphdb.write_graph("doc_empty", [], [])
+
+    assert graphdb.find_similar_nodes("doc_empty", "Person", _vec(EMBEDDING_DIM, 0), top_k=5) == []
 
 
 def test_all_nodes_of_types_returns_every_instance():

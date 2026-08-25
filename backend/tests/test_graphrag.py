@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from app import graphdb
+from app.embeddings import EMBEDDING_DIM
 from app.graphrag import (
     determine_relevant_types,
     extract_keywords,
@@ -40,6 +43,25 @@ class FakeChatModel:
 
     def invoke(self, messages):
         return type("FakeResponse", (), {"content": self.content})()
+
+
+class FakeEmbeddingModel:
+    """Returns the same fixed vector for every text -- good enough for
+    tests that only need embedding calls to not hit the network. Tests
+    that actually verify similarity ranking pass their own vector."""
+
+    def __init__(self, vector=None):
+        self.vector = vector if vector is not None else [0.0] * EMBEDDING_DIM
+        self.calls = []
+
+    def embed_documents(self, texts):
+        self.calls.append(texts)
+        return [self.vector for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 class SequencedChatModel:
@@ -177,6 +199,34 @@ def test_search_graph_falls_back_per_type_when_only_one_type_has_no_keyword_matc
 
     assert result["node_types"] == ["Person", "Concept"]
     assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace", "Analytical Engine"}
+
+
+def test_search_graph_prefers_embedding_match_over_all_instances_when_available(monkeypatch):
+    # Ada's embedding is set to exactly the (mocked) query vector; Charles's
+    # is orthogonal to it. With the embedding fallback's top_k capped at 1,
+    # only Ada should be selected. If embedding search weren't actually
+    # ranking -- e.g. if this silently fell through to the "all instances"
+    # tier -- Charles would show up too.
+    monkeypatch.setattr("app.graphrag.EMBEDDING_FALLBACK_TOP_K", 1)
+    query_vector = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
+    orthogonal_vector = [0.0, 1.0] + [0.0] * (EMBEDDING_DIM - 2)
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": query_vector},
+        {"id": "n3", "label": "Charles Babbage", "type": "Person", "embedding": orthogonal_vector},
+    ]
+    graphdb.write_graph(STEM, nodes, [])
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": []}),
+            json.dumps({}),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
+
+    result = search_graph("who is Ada?", SCHEMA, STEM, hops=0)
+
+    assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace"}
 
 
 def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monkeypatch):

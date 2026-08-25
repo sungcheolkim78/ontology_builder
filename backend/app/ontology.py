@@ -1,8 +1,10 @@
 import json
 import re
+from pathlib import Path 
 
 from app.chat import get_chat_model
-from app.telemetry import invoke_with_telemetry
+from app.embeddings import get_embedding_model, node_embedding_text
+from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 from app import graphdb
 from app.paths import data_dir
 
@@ -117,8 +119,22 @@ def load_schema(stem: str) -> dict | None:
     return json.loads(path.read_text())
 
 
+def embed_nodes(nodes: list) -> list:
+    """Attaches an "embedding" vector to each node (label + detail text),
+    so graphdb.find_similar_nodes has something to rank against later when
+    a question's keywords don't literally match any node's label. Returns
+    new dicts rather than mutating the input."""
+    if not nodes:
+        return []
+    model = get_embedding_model()
+    texts = [node_embedding_text(n) for n in nodes]
+    vectors = embed_with_telemetry("ontology.embed_nodes", model, texts)
+    return [{**node, "embedding": vector} for node, vector in zip(nodes, vectors)]
+
+
 def save_graph(stem: str, graph: dict) -> None:
-    graphdb.write_graph(stem, graph["nodes"], graph["edges"])
+    nodes = embed_nodes(graph["nodes"])
+    graphdb.write_graph(stem, nodes, graph["edges"])
 
 
 def list_schema_stems() -> list[str]:

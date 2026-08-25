@@ -121,7 +121,7 @@ Plain chat (no `filename`, or the
 document has no schema/graph yet) works exactly as it always has:
 messages go straight to `ChatOpenAI`. When `filename` names a document
 that has *both* a schema and an extracted graph, `graphrag.search_graph()`
-runs a schema-aware, two-stage search before the chat call:
+runs a schema-aware, three-step search before the chat call:
 
 1. **Type analysis** — `determine_relevant_types()` sends the whole
    schema plus the question to the LLM, asking which `node_types`/
@@ -130,36 +130,49 @@ runs a schema-aware, two-stage search before the chat call:
    (defends against hallucinated types). If *both* lists come back
    empty, the search stops here — no keyword extraction, no second LLM
    call.
-2. **Instance search** — `extract_keywords()` (unchanged from before:
-   a separate LLM call) pulls entities/terms out of the question, and
-   `find_relevant_nodes()` matches them against node labels
-   (case-insensitive substring), but now pre-filtered to only nodes
-   whose `type` is in the determined `node_types` — a node type the
-   analysis step didn't flag can't match, even if its label happens to
-   overlap a keyword. `find_matching_edges()` separately picks up
-   edges whose `type` is in the determined `edge_types` *and* that
-   connect to an already-matched node (edges have no text of their own
-   to keyword-match against). Matched edges contribute their other
-   endpoint back into the matched-node set.
-3. **Fallback to "all instances of the type"** — if instance search
-   comes up completely empty (no node matched, no edge matched) *but*
-   at least one type was determined relevant, `all_nodes_of_types()` /
-   `all_edges_of_types()` pull in every node/edge of the determined
-   types, unfiltered by keyword. This exists because keyword-substring
-   matching only ever finds a *specific named instance* — it has
-   nothing to match against category questions like "what are the
-   responsibilities?" (no keyword will ever appear inside long
-   descriptive Responsibility labels), or when the question and
-   document are in different languages (a Korean keyword won't
-   substring-match an English label even when the concept is
-   identical). Real bug report that motivated this: "어떤 학위가
-   필요한 잡인가요?" and "what responsibilies?" both correctly
-   identified their relevant types in stage 1 but got zero keyword
-   matches in stage 2, so every such question reported "not found"
-   despite the graph clearly having the answer. Only when a determined
-   type has *zero actual instances* in the graph does the search still
-   end empty after this fallback — a genuine miss.
-4. **Expansion** — the resulting node set (whichever stage produced
+2. **Instance search, per node type** — `extract_keywords()` (a
+   separate LLM call) returns terms grouped by which node type each
+   one is an instance of (e.g. `{"Person": ["Ada Lovelace"]}`), not a
+   flat list — so a term extracted for one type can never match a node
+   of a different type just because the label happens to overlap.
+   For each node type determined relevant in stage 1, the search tries,
+   in order, until one of them produces a match:
+   a. **Keyword match** — `find_relevant_nodes()` matches that type's
+      own keywords against that type's node labels (case-insensitive
+      substring, either direction).
+   b. **Embedding similarity** — if (a) found nothing (no keyword was
+      extracted for this type, or it matched no label), `find_similar_nodes()`
+      ranks that type's own nodes by cosine similarity between the
+      question's embedding and each node's embedding (`label` +
+      `detail` text, embedded once at extraction time via
+      `OPENROUTER_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`,
+      stored as a `FLOAT[1536]` column on each node row), keeping the
+      top `EMBEDDING_FALLBACK_TOP_K` (5). This is what lets a category
+      question ("what are the responsibilities?", no literal keyword to
+      extract) or a cross-language question ("어떤 학위가 필요한
+      잡인가요?" against an English-labeled node) find the right
+      instances by meaning instead of falling through to every instance
+      of the type.
+   c. **All instances of the type** — if (b) also found nothing (most
+      likely because this document was extracted before embeddings
+      existed, so its nodes have a `NULL` embedding column), every
+      instance of just this type is used, same as the original
+      keyword-only fallback.
+   `find_matching_edges()` separately picks up edges whose `type` is in
+   the determined `edge_types` *and* that connect to an already-matched
+   node (edges have no text of their own to embed or keyword-match
+   against). Matched edges contribute their other endpoint back into
+   the matched-node set; if edges were determined relevant but *no*
+   node was matched at all (e.g. `node_types` came back empty),
+   `all_edges_of_types()` pulls in every edge of the determined type
+   instead. Real bug report that motivated the original (b)/(c)
+   fallback: "어떤 학위가 필요한 잡인가요?" and "what responsibilies?"
+   both correctly identified their relevant types in stage 1 but got
+   zero keyword matches in stage 2, so every such question reported
+   "not found" despite the graph clearly having the answer. Only when a
+   determined type has *zero actual instances* in the graph does the
+   search still end empty after all three tiers — a genuine miss.
+3. **Expansion** — the resulting node set (whichever tier produced
    it) is expanded `hops` steps via `graphdb.expand_hops()`, an
    undirected, variable-length Cypher pattern match
    (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB, and the
@@ -309,14 +322,20 @@ Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 `test_config.py`, `test_files.py`, `test_graphdb.py`, `test_graphrag.py`,
 `test_ontology.py`, `test_parse.py`, `test_telemetry.py`.
 Chat/parse/ontology/graphrag tests mock the external calls
-(`get_chat_model`, `anydoc.to_markdown_bytes`); telemetry tests use a
-bare fake model (no OTel mocking needed — the default no-op tracer is
-already the behavior under test); file tests use the real filesystem.
-`test_chat.py`'s GraphRAG tests use a `SequencedChatModel` fake that
-returns a different canned response per `invoke()` call (in order) and
-records the messages it was called with, since one `/api/chat` request
-with `filename` set makes two LLM calls (keyword extraction, then the
-actual answer). `test_graphdb.py` (39 of the backend's 86 tests) runs
+(`get_chat_model`, `get_embedding_model`, `anydoc.to_markdown_bytes`);
+an autouse fixture stubs `get_embedding_model` in every test file whose
+code path can reach `embed_nodes()`/`embed_query()`, even when that
+particular test doesn't exercise the embedding fallback, so no test
+suite run ever makes a real OpenRouter embeddings call. Telemetry tests
+use a bare fake model (no OTel mocking needed — the default no-op
+tracer is already the behavior under test); file tests use the real
+filesystem. `test_chat.py`'s GraphRAG tests use a `SequencedChatModel`
+fake that returns a different canned response per `invoke()` call (in
+order) and records the messages it was called with, since one
+`/api/chat` request with `filename` set makes up to three LLM calls
+(type analysis, keyword extraction, then the actual answer) plus, when
+a determined type's keyword match comes up empty, one embedding call
+against a separately-mocked embedding model. `test_graphdb.py` runs
 directly against a real LadybugDB database on disk — no mocking — via
 an autouse fixture that deletes and recreates `graphdb.DB_PATH` before
 and after every test; see the "Backend tests" section of `CLAUDE.md`
@@ -627,15 +646,20 @@ transform cache, not the browser).
   a 400 — the user re-clicks the button.
 - **No document length/token limits.** The full document text is sent
   to the LLM for both schema generation and extraction.
-- **GraphRAG instance matching is a naive substring match**, not
-  embeddings or fuzzy matching — keywords the LLM extracts have to
-  substantially overlap with a node's `label` text to hit. The
-  all-instances-of-type fallback (see above) covers the case where
-  this finds nothing but the type is genuinely relevant; it does *not*
-  help when a question needs a *specific* instance the keyword
-  extraction simply mis-extracted (e.g. mangled a name) — that still
-  reads as "not found." A GraphRAG-augmented chat turn costs up to
-  three LLM calls (type analysis, keyword extraction, then the answer)
-  versus one for plain chat — the type-analysis step alone is enough
-  to short-circuit to "not found" without the other two if nothing in
-  the schema looked relevant.
+- **GraphRAG instance matching tries substring match, then embedding
+  similarity, then every instance of the type** (see the three-tier
+  fallback above) — it still cannot recover a question that needs a
+  *specific* instance the keyword extraction mis-extracted (e.g.
+  mangled a name) badly enough that neither the substring match nor
+  the embedding similarity ranks the right node highly; that still
+  reads as "not found" unless the type falls through to the
+  all-instances tier. A GraphRAG-augmented chat turn costs up to three
+  LLM calls (type analysis, keyword extraction, then the answer) plus
+  one embedding call per node type whose keyword match came up empty
+  (cached per question — one embedding call total no matter how many
+  types need it) — versus one LLM call for plain chat. The
+  type-analysis step alone is enough to short-circuit to "not found"
+  without any of the others if nothing in the schema looked relevant.
+  Documents extracted before this embedding fallback existed have no
+  vector stored per node (`NULL` column) and fall straight through to
+  the all-instances tier until re-extracted.

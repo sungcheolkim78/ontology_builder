@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import graphdb
+from app.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import GRAPH_DIR
 from app.parser import DATA_DIR
@@ -18,6 +19,16 @@ class FakeChatModel:
 
     def invoke(self, messages):
         return type("FakeResponse", (), {"content": self.content})()
+
+
+class FakeEmbeddingModel:
+    def embed_documents(self, texts):
+        return [[0.0] * EMBEDDING_DIM for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)

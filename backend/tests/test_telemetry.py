@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.exceptions import ModelConnectionError
 
-from app.telemetry import invoke_with_telemetry
+from app.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 
 class FakeResponse:
@@ -110,5 +110,83 @@ def test_invoke_with_telemetry_does_not_retry_non_connection_errors():
 
     with pytest.raises(ValueError, match="boom"):
         invoke_with_telemetry("test.operation", model, "prompt", max_retries=2, retry_delay=0)
+
+    assert model.call_count == 1
+
+
+class FakeEmbeddingModel:
+    model = "test-embedding-model"
+
+    def __init__(self, vectors=None, error=None):
+        self.vectors = vectors
+        self.error = error
+        self.received_texts = None
+
+    def embed_documents(self, texts):
+        self.received_texts = texts
+        if self.error:
+            raise self.error
+        return self.vectors
+
+
+class FlakyEmbeddingModel:
+    model = "test-embedding-model"
+
+    def __init__(self, fail_times, error, vectors):
+        self.fail_times = fail_times
+        self.error = error
+        self.vectors = vectors
+        self.call_count = 0
+
+    def embed_documents(self, texts):
+        self.call_count += 1
+        if self.call_count <= self.fail_times:
+            raise self.error
+        return self.vectors
+
+
+def test_embed_with_telemetry_returns_vectors():
+    model = FakeEmbeddingModel(vectors=[[1.0, 0.0], [0.0, 1.0]])
+
+    result = embed_with_telemetry("test.operation", model, ["a", "b"])
+
+    assert result == [[1.0, 0.0], [0.0, 1.0]]
+    assert model.received_texts == ["a", "b"]
+
+
+def test_embed_with_telemetry_reraises_on_error():
+    model = FakeEmbeddingModel(error=ValueError("boom"))
+
+    with pytest.raises(ValueError, match="boom"):
+        embed_with_telemetry("test.operation", model, ["a"])
+
+
+def test_embed_with_telemetry_retries_on_connection_error_then_succeeds():
+    model = FlakyEmbeddingModel(
+        fail_times=2, error=ModelConnectionError("transient"), vectors=[[1.0]]
+    )
+
+    result = embed_with_telemetry("test.operation", model, ["a"], max_retries=2, retry_delay=0)
+
+    assert result == [[1.0]]
+    assert model.call_count == 3
+
+
+def test_embed_with_telemetry_reraises_after_exhausting_retries():
+    model = FlakyEmbeddingModel(
+        fail_times=99, error=ModelConnectionError("still down"), vectors=[[1.0]]
+    )
+
+    with pytest.raises(ModelConnectionError, match="still down"):
+        embed_with_telemetry("test.operation", model, ["a"], max_retries=2, retry_delay=0)
+
+    assert model.call_count == 3
+
+
+def test_embed_with_telemetry_does_not_retry_non_connection_errors():
+    model = FlakyEmbeddingModel(fail_times=1, error=ValueError("boom"), vectors=[[1.0]])
+
+    with pytest.raises(ValueError, match="boom"):
+        embed_with_telemetry("test.operation", model, ["a"], max_retries=2, retry_delay=0)
 
     assert model.call_count == 1
