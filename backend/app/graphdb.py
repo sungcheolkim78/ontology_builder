@@ -1,5 +1,6 @@
 import functools
 import re
+import shutil
 import threading
 
 from ladybug import Connection, Database
@@ -58,10 +59,10 @@ def _get_connection() -> Connection:
 
 
 def reset_connection() -> None:
-    """Test-only: drop cached connection/database handles so a fresh one
-    opens next time. Needed because tests delete DB_PATH on disk between
-    runs -- the cached native handles would otherwise point at a
-    now-missing directory."""
+    """Drop cached connection/database handles so a fresh one opens next
+    time. Needed because tests delete DB_PATH on disk between runs -- the
+    cached native handles would otherwise point at a now-missing directory
+    -- and by reset_database() below, which deletes DB_PATH itself."""
     global _database, _connection
     if _connection is not None:
         _connection.close()
@@ -69,6 +70,26 @@ def reset_connection() -> None:
     if _database is not None:
         _database.close()
         _database = None
+
+
+@_synchronized
+def reset_database() -> None:
+    """Recovery path for a corrupted WAL file (observed to make every query
+    against the database fail): closes the cached connection, then deletes
+    DB_PATH and every sibling file sharing its name (the main file/dir plus
+    the `.wal` file, and any other file the engine may create alongside
+    them) so the next call to any public function in this module opens a
+    completely fresh, empty database. This wipes every document's
+    extracted graph, since they all live in the one shared database --
+    each document's `schema.json` is untouched, so re-extraction remains
+    possible."""
+    reset_connection()
+    if DB_PATH.parent.is_dir():
+        for path in DB_PATH.parent.glob(DB_PATH.name + "*"):
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
 
 
 @_synchronized

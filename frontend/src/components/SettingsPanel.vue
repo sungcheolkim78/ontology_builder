@@ -16,6 +16,7 @@ const emit = defineEmits([
   'schema-used',
   'hops-changed',
   'markdown-changed',
+  'database-reset',
 ])
 
 const model = ref('로딩 중...')
@@ -25,6 +26,8 @@ const files = ref([])
 const schemas = ref([])
 const isUsingSchema = ref(false)
 const schemaUseError = ref('')
+const isResettingDb = ref(false)
+const resetDbError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
 const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
@@ -171,6 +174,29 @@ async function handleFileChange(event) {
   }
 }
 
+async function resetDatabase() {
+  const confirmed = window.confirm(
+    '그래프 데이터베이스를 초기화하면 지금까지 추출된 모든 문서의 그래프(노드/엣지)가 삭제됩니다. ' +
+      '문서와 스키마는 남아있어 재추출은 가능합니다. 계속하시겠습니까?'
+  )
+  if (!confirmed) return
+
+  isResettingDb.value = true
+  resetDbError.value = ''
+  try {
+    const res = await fetch('/api/ontology/reset-database', { method: 'POST' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    emit('database-reset')
+  } catch (err) {
+    resetDbError.value = '초기화 실패: ' + err.message
+  } finally {
+    isResettingDb.value = false
+  }
+}
+
 function toggleType(type) {
   const next = new Set(enabledTypes.value)
   if (next.has(type)) {
@@ -269,6 +295,20 @@ function toggleEdgeType(type) {
           class="hops-input"
         />
       </label>
+    </section>
+
+    <section>
+      <h3>데이터베이스 관리</h3>
+      <button
+        type="button"
+        class="danger-button"
+        :disabled="isResettingDb"
+        @click="resetDatabase"
+      >
+        {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
+      </button>
+      <p class="hint">WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.</p>
+      <p v-if="resetDbError" class="error">{{ resetDbError }}</p>
     </section>
 
     <section>
@@ -382,6 +422,27 @@ function toggleEdgeType(type) {
 .placeholder {
   color: #888;
   font-size: 0.9rem;
+}
+.hint {
+  color: #888;
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+.danger-button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #c0392b;
+  border-radius: 4px;
+  background: #fff;
+  color: #c0392b;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.danger-button:hover:not(:disabled) {
+  background: #fdecea;
+}
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .file-list {
   list-style: none;

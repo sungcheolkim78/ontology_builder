@@ -204,6 +204,18 @@ def test_get_ontology_returns_404_when_not_extracted():
     assert response.status_code == 404
 
 
+def test_reset_database_endpoint_clears_extracted_graphs():
+    from app import graphdb
+    graphdb.write_graph("doc_raw", [{"id": "n1", "label": "Alice", "type": "Person"}], [])
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/reset-database")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert graphdb.has_graph("doc_raw") is False
+
+
 def test_list_schemas_returns_empty_when_none():
     client = TestClient(app)
 

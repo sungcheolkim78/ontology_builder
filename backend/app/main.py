@@ -149,6 +149,12 @@ def list_schemas():
     return {"schemas": [{"stem": stem} for stem in list_schema_stems()]}
 
 
+@app.post("/api/ontology/reset-database")
+def reset_database():
+    graphdb.reset_database()
+    return {"status": "ok"}
+
+
 @app.post("/api/ontology/{filename}/schema")
 def create_schema(filename: str):
     doc_path = _document_path(filename)

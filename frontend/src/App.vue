@@ -132,6 +132,7 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
       @filters-changed="onFiltersChanged"
       @edge-filters-changed="onEdgeFiltersChanged"
       @schema-used="onSchemaChanged"
+      @database-reset="onSchemaChanged"
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
     />

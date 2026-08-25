@@ -66,6 +66,31 @@ def test_load_graph_returns_none_for_unextracted_document():
     assert graphdb.load_graph("never_extracted") is None
 
 
+def test_reset_database_clears_all_documents_and_deletes_files_on_disk():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    graphdb.write_graph(
+        "doc_b", [{"id": "n1", "label": "Charles Babbage", "type": "Person"}], []
+    )
+
+    graphdb.reset_database()
+
+    assert not graphdb.DB_PATH.exists()
+    wal_path = graphdb.DB_PATH.parent / (graphdb.DB_PATH.name + ".wal")
+    assert not wal_path.exists()
+    assert graphdb.has_graph("doc_a") is False
+    assert graphdb.has_graph("doc_b") is False
+
+
+def test_reset_database_leaves_a_usable_database_behind():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    graphdb.reset_database()
+
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    loaded = graphdb.load_graph("doc_a")
+    assert graphdb.has_graph("doc_a") is True
+    assert sorted(loaded["nodes"], key=lambda n: n["id"]) == sorted(NODES, key=lambda n: n["id"])
+
+
 def test_write_graph_scopes_by_document():
     graphdb.write_graph("doc_a", NODES, EDGES)
     graphdb.write_graph(
