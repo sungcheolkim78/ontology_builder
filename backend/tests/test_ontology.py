@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR, embed_nodes
+from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR, embed_graph, embed_nodes
 from app.parser import DATA_DIR
 
 
@@ -126,6 +126,47 @@ def test_embed_nodes_empty_list_skips_the_embedding_call(monkeypatch):
     monkeypatch.setattr("app.ontology.get_embedding_model", fail)
 
     assert embed_nodes([]) == []
+
+
+def test_embed_graph_computes_and_stores_embeddings():
+    from app import graphdb
+
+    graphdb.write_graph(
+        "doc_raw", [{"id": "n1", "label": "Alice", "type": "Person", "detail": "engineer"}], []
+    )
+
+    count = embed_graph("doc_raw")
+
+    assert count == 1
+    matched = graphdb.find_similar_nodes("doc_raw", "Person", [0.0] * EMBEDDING_DIM, top_k=1)
+    assert matched == ["n1"]
+
+
+def test_embed_graph_returns_zero_when_no_graph_extracted():
+    assert embed_graph("doc_raw") == 0
+
+
+def test_embed_endpoint_embeds_the_extracted_graph(monkeypatch):
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+    )
+    client = TestClient(app)
+    client.post("/api/ontology/doc_raw.md/extract")
+
+    response = client.post("/api/ontology/doc_raw.md/embed")
+
+    assert response.status_code == 200
+    assert response.json() == {"embedded": 1}
+
+
+def test_embed_endpoint_returns_404_when_not_extracted():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/embed")
+
+    assert response.status_code == 404
 
 
 def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):

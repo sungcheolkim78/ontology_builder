@@ -12,6 +12,7 @@ from app.chat import get_chat_model, get_model_name, to_langchain_messages
 from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
+    embed_graph,
     extract_graph,
     generate_schema,
     list_schema_stems,
@@ -232,6 +233,15 @@ def create_extraction(filename: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return graph
+
+
+@app.post("/api/ontology/{filename}/embed")
+def create_embeddings(filename: str):
+    stem = _stem(filename)
+    if not graphdb.has_graph(stem):
+        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    embedded = embed_graph(stem)
+    return {"embedded": embedded}
 
 
 @app.get("/api/ontology/{filename}")

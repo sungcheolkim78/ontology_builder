@@ -324,6 +324,35 @@ def test_find_similar_nodes_respects_min_score():
     assert matched == ["n1"]  # n2's orthogonal embedding scores 0.0, below the floor
 
 
+def test_update_node_embeddings_sets_embedding_on_existing_nodes():
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+        {"id": "n2", "label": "Charles Babbage", "type": "Person"},
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    graphdb.update_node_embeddings(
+        "doc_a",
+        [
+            {"id": "n1", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)},
+            {"id": "n2", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 1)},
+        ],
+    )
+
+    matched = graphdb.find_similar_nodes("doc_a", "Person", _vec(EMBEDDING_DIM, 0), top_k=1)
+    assert matched == ["n1"]
+
+
+def test_update_node_embeddings_empty_list_is_a_noop():
+    graphdb.write_graph("doc_a", [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}], [])
+
+    graphdb.update_node_embeddings("doc_a", [])  # must not raise
+
+    assert graphdb.load_graph("doc_a")["nodes"] == [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person"}
+    ]
+
+
 def test_find_similar_nodes_scoped_to_document():
     graphdb.write_graph(
         "doc_a", [{"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": _vec(EMBEDDING_DIM, 0)}], []

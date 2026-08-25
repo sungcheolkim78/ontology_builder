@@ -152,8 +152,23 @@ def embed_nodes(nodes: list) -> list:
 
 
 def save_graph(stem: str, graph: dict) -> None:
+    graphdb.write_graph(stem, graph["nodes"], graph["edges"])
+
+
+def embed_graph(stem: str) -> int:
+    """Embeds this document's already-extracted nodes in a separate pass
+    from extraction, so a large document's LLM extraction call doesn't also
+    pay for the embedding call before anything is visible. Reads the nodes
+    graphdb already has (written by save_graph with no embedding), computes
+    vectors, and updates them in place via graphdb.update_node_embeddings --
+    rerunning this is safe and simply recomputes/overwrites every node's
+    embedding."""
+    graph = graphdb.load_graph(stem)
+    if graph is None or not graph["nodes"]:
+        return 0
     nodes = embed_nodes(graph["nodes"])
-    graphdb.write_graph(stem, nodes, graph["edges"])
+    graphdb.update_node_embeddings(stem, nodes)
+    return len(nodes)
 
 
 def list_schema_stems() -> list[str]:

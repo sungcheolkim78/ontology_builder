@@ -21,6 +21,7 @@ const error = ref('')
 const message = ref('')
 const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
+const isEmbedding = ref(false)
 const elapsedSeconds = ref(0)
 let elapsedTimer = null
 
@@ -39,6 +40,7 @@ function stopElapsedTimer() {
 const progressMessage = computed(() => {
   if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
   if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
+  if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
   return ''
 })
 
@@ -346,6 +348,30 @@ async function extract() {
     stopElapsedTimer()
   }
 }
+
+async function embed() {
+  if (!props.file) return
+  isEmbedding.value = true
+  error.value = ''
+  message.value = ''
+  startElapsedTimer()
+  try {
+    const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/embed`, {
+      method: 'POST',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const result = await res.json()
+    message.value = `임베딩 생성 완료 (노드 ${result.embedded}개)`
+  } catch (err) {
+    error.value = '임베딩 생성 실패: ' + err.message
+  } finally {
+    isEmbedding.value = false
+    stopElapsedTimer()
+  }
+}
 </script>
 
 <template>
@@ -362,6 +388,9 @@ async function extract() {
           </button>
           <button :disabled="isExtracting" @click="extract">
             {{ isExtracting ? '추출 중...' : '그래프 추출' }}
+          </button>
+          <button :disabled="isEmbedding || status !== 'ready'" @click="embed">
+            {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
           </button>
           <button v-if="displayMode !== 'none'" @click="resetView">리셋</button>
         </div>

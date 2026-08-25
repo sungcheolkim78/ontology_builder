@@ -279,6 +279,39 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
 
 
 @_synchronized
+def update_node_embeddings(stem: str, nodes: list) -> None:
+    """Sets the embedding column on nodes write_graph already created for
+    this document, without touching labels/details/edges or the
+    delete-and-recreate dance write_graph does. Each node dict must carry
+    its own `id`, `type` (to route to the right node table), and
+    `embedding`. Safe to rerun -- each call simply overwrites the targeted
+    nodes' embedding with whatever vector is passed in."""
+    if not nodes:
+        return
+    conn = _get_connection()
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        for node in nodes:
+            node_type = _validate_identifier(node["type"])
+            conn.execute(
+                f"MATCH (n:{node_type} {{id: $id}}) SET n.embedding = $embedding",
+                {"id": f"{stem}::{node['id']}", "embedding": node.get("embedding")},
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        # See write_graph's identical rationale: some engine-level errors
+        # already auto-abort the transaction before this block runs, so an
+        # explicit ROLLBACK on top of that raises its own "No active
+        # transaction for ROLLBACK" RuntimeError and masks the real one.
+        try:
+            conn.execute("ROLLBACK")
+        except RuntimeError as rollback_error:
+            if "No active transaction" not in str(rollback_error):
+                raise
+        raise
+
+
+@_synchronized
 def load_graph(stem: str) -> dict | None:
     if not has_graph(stem):
         return None
