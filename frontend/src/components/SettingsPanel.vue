@@ -97,6 +97,16 @@ async function loadSchemas() {
   }
 }
 
+async function loadDocuments() {
+  try {
+    const res = await fetch('/api/documents')
+    const data = await res.json()
+    files.value = data.documents
+  } catch (err) {
+    // document list is best-effort; leave as-is on failure
+  }
+}
+
 onMounted(async () => {
   try {
     const res = await fetch('/api/config')
@@ -106,18 +116,14 @@ onMounted(async () => {
     model.value = '알 수 없음'
   }
 
-  try {
-    const res = await fetch('/api/files')
-    const data = await res.json()
-    files.value = data.files
-  } catch (err) {
-    // file list is best-effort; leave empty on failure
-  }
-
+  await loadDocuments()
   await loadSchemas()
 })
 
-watch(() => props.schemaVersion, loadSchemas)
+watch(() => props.schemaVersion, () => {
+  loadSchemas()
+  loadDocuments()
+})
 
 function selectFile(filename) {
   emit('file-selected', { filename, path: `data/${filename}` })
@@ -161,10 +167,7 @@ async function handleFileChange(event) {
     const res = await fetch('/api/parse', { method: 'POST', body: formData })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
-    files.value = [
-      { filename: data.filename },
-      ...files.value.filter((f) => f.filename !== data.filename),
-    ]
+    await loadDocuments()
     emit('file-selected', data)
   } catch (err) {
     uploadError.value = '업로드 실패: ' + err.message
@@ -247,7 +250,18 @@ function toggleEdgeType(type) {
           :class="{ selected: f.filename === selectedFilename }"
           @click="selectFile(f.filename)"
         >
-          {{ f.filename }}
+          <div class="file-item-name">{{ f.original_filename }}</div>
+          <div class="file-item-meta">
+            <span
+              class="status-badge"
+              :class="{ on: f.has_schema }"
+            >스키마</span>
+            <span
+              class="status-badge"
+              :class="{ on: f.has_graph }"
+              :title="f.has_graph ? `그래프DB: ${f.graphdb_name}` : ''"
+            >그래프</span>
+          </div>
         </li>
       </ul>
     </section>
@@ -466,6 +480,25 @@ function toggleEdgeType(type) {
 .file-item.disabled {
   pointer-events: none;
   opacity: 0.5;
+}
+.file-item-name {
+  overflow-wrap: anywhere;
+}
+.file-item-meta {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+.status-badge {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  background: #eee;
+  color: #999;
+}
+.status-badge.on {
+  background: #dff0d8;
+  color: #3c763d;
 }
 .hops-label {
   display: flex;

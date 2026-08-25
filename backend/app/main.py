@@ -15,8 +15,10 @@ from app.ontology import (
     extract_graph,
     generate_schema,
     list_schema_stems,
+    load_document_manifest,
     load_graph,
     load_schema,
+    save_document_manifest,
     save_graph,
     save_schema,
 )
@@ -109,9 +111,11 @@ def chat(request: ChatRequest):
 async def parse(file: UploadFile = File(...)):
     data = await file.read()
     try:
-        return parse_to_markdown_file(file.filename, data)
+        result = parse_to_markdown_file(file.filename, data)
     except (anydoc.ConvertError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+    save_document_manifest(_stem(result["filename"]), file.filename)
+    return result
 
 
 @app.get("/api/files")
@@ -134,6 +138,29 @@ def get_file(filename: str):
     if not safe_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return safe_path.read_text()
+
+
+@app.get("/api/documents")
+def list_documents():
+    if not DATA_DIR.is_dir():
+        return {"documents": []}
+    paths = sorted(DATA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    documents = []
+    for p in paths:
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        stem = p.stem
+        manifest = load_document_manifest(stem)
+        documents.append(
+            {
+                "filename": p.name,
+                "original_filename": (manifest or {}).get("original_filename", p.name),
+                "has_schema": load_schema(stem) is not None,
+                "has_graph": graphdb.has_graph(stem),
+                "graphdb_name": graphdb.DB_PATH.name,
+            }
+        )
+    return {"documents": documents}
 
 
 def _document_path(filename: str) -> Path:

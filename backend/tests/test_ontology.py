@@ -244,6 +244,20 @@ def test_list_schemas_returns_stems_with_a_saved_schema():
     ]
 
 
+def test_save_and_load_document_manifest_round_trips():
+    from app.ontology import load_document_manifest, save_document_manifest
+
+    save_document_manifest("doc_raw", "report.docx")
+
+    assert load_document_manifest("doc_raw") == {"original_filename": "report.docx"}
+
+
+def test_load_document_manifest_returns_none_when_missing():
+    from app.ontology import load_document_manifest
+
+    assert load_document_manifest("never_uploaded") is None
+
+
 def test_get_schema_returns_saved_schema():
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     d = GRAPH_DIR / "doc_raw"

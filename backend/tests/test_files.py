@@ -80,6 +80,56 @@ def test_list_files_returns_empty_list_when_no_data_dir():
     assert response.json() == {"files": []}
 
 
+def test_list_documents_reports_original_filename_and_schema_and_graph_status():
+    from app.ontology import save_document_manifest
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "report_raw.md").write_text("content")
+    save_document_manifest("report_raw", "report.docx")
+    schema_dir = GRAPH_DIR / "report_raw"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+    (schema_dir / "schema.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "documents": [
+            {
+                "filename": "report_raw.md",
+                "original_filename": "report.docx",
+                "has_schema": True,
+                "has_graph": False,
+                "graphdb_name": graphdb.DB_PATH.name,
+            }
+        ]
+    }
+
+
+def test_list_documents_falls_back_to_derived_filename_without_manifest():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "report_raw.md").write_text("content")
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    doc = response.json()["documents"][0]
+    assert doc["original_filename"] == "report_raw.md"
+    assert doc["has_schema"] is False
+    assert doc["has_graph"] is False
+
+
+def test_list_documents_returns_empty_list_when_no_data_dir():
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert response.json() == {"documents": []}
+
+
 def test_get_file_returns_saved_markdown_content():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "report_raw.md").write_text("# hello")

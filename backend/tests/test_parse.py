@@ -33,6 +33,22 @@ def test_parse_saves_markdown_and_returns_path(monkeypatch):
     assert saved.read_text() == "# hello"
 
 
+def test_parse_saves_original_filename_to_document_manifest(monkeypatch):
+    from app.ontology import load_document_manifest
+
+    monkeypatch.setattr(
+        "app.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+    )
+    client = TestClient(app)
+
+    client.post(
+        "/api/parse",
+        files={"file": ("report.docx", b"fake docx bytes", "application/octet-stream")},
+    )
+
+    assert load_document_manifest("report_raw") == {"original_filename": "report.docx"}
+
+
 def test_parse_returns_400_on_unsupported_format(monkeypatch):
     from app.parser import anydoc as anydoc_module
 

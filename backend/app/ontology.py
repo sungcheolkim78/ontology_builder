@@ -119,6 +119,25 @@ def load_schema(stem: str) -> dict | None:
     return json.loads(path.read_text())
 
 
+def save_document_manifest(stem: str, original_filename: str) -> None:
+    """Records the one piece of per-document info the rest of this module's
+    stem-based file layout loses: the filename as originally uploaded (e.g.
+    "report.docx"), before parser.py renames it to "{stem}_raw.md". Schema
+    and graph presence are deliberately NOT duplicated here -- load_schema
+    and graphdb.has_graph already answer those live, so there's nothing to
+    keep in sync."""
+    d = graph_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text(json.dumps({"original_filename": original_filename}))
+
+
+def load_document_manifest(stem: str) -> dict | None:
+    path = graph_dir_for(stem) / "manifest.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
+
+
 def embed_nodes(nodes: list) -> list:
     """Attaches an "embedding" vector to each node (label + detail text),
     so graphdb.find_similar_nodes has something to rank against later when
