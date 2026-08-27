@@ -2,7 +2,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force'
+import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -143,6 +143,9 @@ function onNodePointerOut() {
 const eventHandlers = {
   'node:pointerover': onNodePointerOver,
   'node:pointerout': onNodePointerOut,
+  'node:dragstart': onNodeDragStart,
+  'node:pointermove': onNodeDragMove,
+  'node:dragend': onNodeDragEnd,
 }
 
 watch(
@@ -170,9 +173,30 @@ watch(
 )
 
 // --- d3-force layout ---
+// Force priority (strongest to weakest pull): linked nodes > same-type nodes >
+// gravity toward the center. Charge is a separate, independent repulsion that
+// pushes every node away from every other node as hard as tolerable given the
+// above -- it is not "weaker" than the others, it opposes them.
 const CENTER = 200
-const CLUSTER_STRENGTH = 0.15
+const LINK_DISTANCE = 140
+const LINK_STRENGTH = 1
+const CLUSTER_STRENGTH = 0.2
+const CHARGE_STRENGTH = -900
+// Much weaker than link/cluster, so it only matters for nodes those forces
+// don't already pull somewhere -- i.e. it reels in isolated nodes that would
+// otherwise drift away under pure charge repulsion, without fighting the
+// clustering/linking of connected nodes.
+const GRAVITY_STRENGTH = 0.03
 let simulation = null
+// Keyed by node id, same object instances as the live simulation's nodes --
+// used by the drag handlers below to pin/release a node's fixed position
+// (fx/fy) without waiting for the next visibleNodes/visibleEdges watcher run.
+let simNodesById = new Map()
+// The 'end' event fires both after the initial layout settles and after any
+// later alphaTarget reheat (e.g. from a drag) cools back down. Only the
+// initial settle should trigger fitToContents -- re-fitting after a manual
+// drag would yank back the zoom/pan the user just set up.
+let suppressNextSimulationEnd = false
 
 // Pulls nodes of the same `type` toward that type's current centroid each
 // tick, so same-type nodes visually cluster together instead of spreading
@@ -217,14 +241,17 @@ watch(
         : { id: node.id, type: node.type }
     })
     const simLinks = edgeList.map((e) => ({ source: e.source, target: e.target }))
+    simNodesById = new Map(simNodes.map((n) => [n.id, n]))
 
     simulation?.stop()
+    suppressNextSimulationEnd = false
     simulation = forceSimulation(simNodes)
-      .force('charge', forceManyBody().strength(-500))
-      .force('link', forceLink(simLinks).id((d) => d.id).distance(180))
-      .force('center', forceCenter(CENTER, CENTER))
-      .force('collide', forceCollide(40))
+      .force('link', forceLink(simLinks).id((d) => d.id).distance(LINK_DISTANCE).strength(LINK_STRENGTH))
       .force('cluster', forceCluster(CLUSTER_STRENGTH))
+      .force('charge', forceManyBody().strength(CHARGE_STRENGTH))
+      .force('x', forceX(CENTER).strength(GRAVITY_STRENGTH))
+      .force('y', forceY(CENTER).strength(GRAVITY_STRENGTH))
+      .force('collide', forceCollide(40))
       .on('tick', () => {
         const positions = {}
         simNodes.forEach((n) => {
@@ -232,10 +259,54 @@ watch(
         })
         layouts.value = { nodes: positions }
       })
-      .on('end', fitSoon)
+      .on('end', () => {
+        if (suppressNextSimulationEnd) {
+          suppressNextSimulationEnd = false
+          return
+        }
+        fitSoon()
+      })
   },
   { immediate: true }
 )
+
+// Pins the dragged node(s) at the pointer position (d3-force convention: an
+// fx/fy on a node overrides the simulation for that axis) and reheats the
+// simulation so the 'link'/'cluster'/'charge' forces above keep recomputing
+// every other node's position in real time -- this is what makes edge-linked
+// neighbors follow the dragged node instead of staying put.
+function onNodeDragStart(positions) {
+  if (!simulation) return
+  for (const [id, pos] of Object.entries(positions)) {
+    const n = simNodesById.get(id)
+    if (!n) continue
+    n.fx = pos.x
+    n.fy = pos.y
+  }
+  simulation.alphaTarget(0.3).restart()
+}
+
+function onNodeDragMove(positions) {
+  if (!simulation) return
+  for (const [id, pos] of Object.entries(positions)) {
+    const n = simNodesById.get(id)
+    if (!n) continue
+    n.fx = pos.x
+    n.fy = pos.y
+  }
+}
+
+function onNodeDragEnd(positions) {
+  if (!simulation) return
+  for (const id of Object.keys(positions)) {
+    const n = simNodesById.get(id)
+    if (!n) continue
+    n.fx = null
+    n.fy = null
+  }
+  suppressNextSimulationEnd = true
+  simulation.alphaTarget(0)
+}
 
 onUnmounted(() => {
   simulation?.stop()
