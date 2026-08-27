@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Ontology Builder — 구조와 개념 설명</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{
+    --bg: #0b0f14;
+    --bg-panel: #111823;
+    --bg-card: #151f2c;
+    --border: #263447;
+    --text: #e7edf5;
+    --text-dim: #93a4bb;
+    --accent: #5ec3ff;
+    --accent2: #7ee8c0;
+    --accent3: #f2b866;
+    --accent4: #d98cff;
+    --danger: #ff8a8a;
+    --mono: "SF Mono", "Menlo", "Consolas", monospace;
+    --sans: -apple-system, "Segoe UI", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  }
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); scroll-behavior:smooth; }
+  body{ line-height:1.62; }
+
+  /* progress dots */
+  #nav{
+    position:fixed; right:14px; top:50%; transform:translateY(-50%);
+    display:flex; flex-direction:column; gap:10px; z-index:50;
+  }
+  #nav a{
+    width:9px; height:9px; border-radius:50%; background:var(--border);
+    display:block; transition:background .2s, transform .2s;
+  }
+  #nav a.active{ background:var(--accent); transform:scale(1.35); }
+
+  /* prev/next controls */
+  #slide-controls{
+    position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+    display:flex; gap:10px; z-index:50;
+  }
+  #slide-controls button{
+    font-family:var(--mono); font-size:.85rem; color:var(--text);
+    background:rgba(17,24,35,.85); border:1px solid var(--border); border-radius:24px;
+    padding:.55rem 1.1rem; cursor:pointer; display:flex; align-items:center; gap:.4rem;
+    backdrop-filter:blur(6px); transition:background .15s, border-color .15s, opacity .15s;
+  }
+  #slide-controls button:hover{ background:var(--bg-card); border-color:var(--accent); }
+  #slide-controls button:disabled{ opacity:.35; cursor:default; }
+  #slide-controls button:disabled:hover{ background:rgba(17,24,35,.85); border-color:var(--border); }
+
+  section.slide{
+    min-height:100vh; padding:8vh 8vw 10vh; display:flex; flex-direction:column;
+    justify-content:center; border-bottom:1px solid var(--border); position:relative;
+  }
+  section.slide .kicker{
+    font-family:var(--mono); font-size:.8rem; letter-spacing:.12em; color:var(--accent);
+    text-transform:uppercase; margin-bottom:.6rem;
+  }
+  section.slide h1{ font-size:2.5rem; margin:0 0 .3rem; }
+  section.slide h2{ font-size:1.9rem; margin:0 0 1.1rem; }
+  section.slide .lead{ font-size:1.15rem; color:var(--text-dim); max-width:52em; }
+  .slide-no{
+    position:absolute; bottom:6vh; left:8vw; font-family:var(--mono); color:var(--text-dim); font-size:.85rem;
+  }
+
+  .grid2{ display:grid; grid-template-columns:1.1fr 1fr; gap:2.5rem; align-items:center; }
+  .grid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:1.4rem; }
+  @media (max-width: 900px){ .grid2, .grid3{ grid-template-columns:1fr; } }
+
+  .card{
+    background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:1.3rem 1.4rem;
+  }
+  .card h3{ margin:0 0 .5rem; font-size:1.05rem; color:var(--accent2); }
+  .card p{ margin:0; color:var(--text-dim); font-size:.95rem; }
+
+  code, pre{ font-family:var(--mono); }
+  pre{
+    background:#0a1017; border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem;
+    overflow-x:auto; font-size:.86rem; line-height:1.55; color:#cde3f0;
+  }
+  code.inline{ background:#0a1017; padding:.1rem .35rem; border-radius:5px; color:var(--accent3); }
+  .tag{
+    display:inline-block; font-family:var(--mono); font-size:.72rem; padding:.15rem .5rem;
+    border-radius:20px; border:1px solid var(--border); color:var(--text-dim); margin-right:.4rem;
+  }
+  ul.plain{ margin:0; padding-left:1.1em; color:var(--text-dim); }
+  ul.plain li{ margin-bottom:.4em; }
+  ul.plain b{ color:var(--text); }
+
+  svg{ width:100%; height:auto; display:block; }
+  .diagram-box{ background:var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:1.2rem; }
+
+  table.spec{ width:100%; border-collapse:collapse; font-size:.88rem; }
+  table.spec th, table.spec td{ text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--border); }
+  table.spec th{ color:var(--accent); font-family:var(--mono); font-size:.78rem; text-transform:uppercase; }
+  table.spec td{ color:var(--text-dim); }
+  table.spec td code{ color:var(--text); }
+
+  .cover{ justify-content:center; align-items:flex-start; }
+  .cover h1{ font-size:3.2rem; background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .cover .badges{ margin-top:1.6rem; display:flex; gap:.5rem; flex-wrap:wrap; }
+  .footnote{ margin-top:1.4rem; font-size:.85rem; color:var(--text-dim); }
+
+  .divider{ align-items:center; text-align:center; }
+  .divider .kicker{ font-size:1.05rem; letter-spacing:.2em; }
+  .divider h1{ font-size:2.9rem; margin:.2rem 0 1rem; background:linear-gradient(90deg,var(--accent4),var(--accent3)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .divider .lead{ margin:0 auto; }
+  .fwd{ color:var(--accent2); }
+  .arrow-label{ font-family:var(--mono); font-size:11px; fill:var(--text-dim); }
+</style>
+</head>
+<body>
+
+<nav id="nav" aria-hidden="true"></nav>
+
+<div id="slide-controls">
+  <button id="btn-prev" type="button" aria-label="이전 슬라이드">← 이전</button>
+  <button id="btn-next" type="button" aria-label="다음 슬라이드">다음 →</button>
+</div>
+
+<section class="slide cover" id="s-cover">
+  <div class="kicker">Ontology Builder · 기술 설명</div>
+  <h1>온톨로지 + GraphRAG로<br/>더 정확하게 답하는 챗봇</h1>
+  <p class="lead">
+    문서를 업로드하면 LLM이 그 문서에 맞는 <b>온톨로지 스키마</b>(노드/엣지 타입)를 제안하고,
+    스키마에 따라 실제 <b>지식 그래프</b>를 추출해 그래프DB(LadybugDB)에 저장합니다.
+    챗봇은 질문마다 이 그래프에서 관련된 부분만 찾아(GraphRAG) 답변에 근거로 활용합니다.
+  </p>
+  <div class="badges">
+    <span class="tag">FastAPI</span><span class="tag">Vue 3 + Vite</span>
+    <span class="tag">LadybugDB (Cypher)</span><span class="tag">OpenRouter / langchain</span>
+    <span class="tag">OpenTelemetry + Jaeger</span><span class="tag">podman-compose</span>
+  </div>
+  <p class="footnote">스크롤해서 다음 섹션으로 이동하세요. 개발자 대상, 기술 세부사항 포함.</p>
+</section>
+
+<section class="slide divider" id="s-part1">
+  <div class="kicker">PART 1</div>
+  <h1>무엇을 만들었나<br/>온톨로지 + GraphRAG 챗봇</h1>
+  <p class="lead">
+    문서를 그래프로 구조화하고, 질문마다 그 그래프에서 근거를 찾아 답하는 챗봇의
+    개념과 동작 원리를 먼저 살펴봅니다.
+  </p>
+</section>
+
+<section class="slide" id="s-problem">
+  <div class="kicker">1부 · 01 · 문제 정의</div>
+  <h2>왜 그냥 RAG로는 부족한가</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>일반적인 RAG (청크 검색)</h3>
+      <p>
+        문서를 문단 단위로 잘라 임베딩하고, 질문과 가장 비슷한 청크 몇 개를 그대로 프롬프트에 붙여넣습니다.
+        "이 문서의 책임(responsibility)이 뭐야?"처럼 <b style="color:var(--text)">카테고리형 질문</b>이나,
+        질문과 문서의 언어가 다른 경우 관련 청크를 놓치기 쉽고, 왜 그 답이 나왔는지 추적하기 어렵습니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>이 프로젝트의 접근: 온톨로지 + GraphRAG</h3>
+      <p>
+        문서를 <b style="color:var(--text)">엔티티(노드)와 관계(엣지)</b>로 미리 구조화해두면,
+        질문에 대해 "어떤 타입이 관련 있는지 → 그 타입의 어떤 인스턴스인지 → 몇 홉 떨어진 관련 정보까지"를
+        단계적으로 좁혀갈 수 있습니다. 답변에는 실제로 사용된 노드/엣지가 그대로 딸려 나와 근거를 확인할 수 있습니다.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s-ontology">
+  <div class="kicker">1부 · 02 · 핵심 개념</div>
+  <h2>온톨로지(Ontology)란?</h2>
+  <div class="grid2">
+    <div>
+      <p class="lead">
+        온톨로지는 "이 문서 안에 어떤 <b>종류</b>의 사물(노드 타입)이 있고, 그것들이 어떤 <b>종류</b>의
+        관계(엣지 타입)로 연결되는가"를 정의한 스키마입니다. 회사 조직도를 예로 들면,
+        노드 타입은 <code class="inline">Person</code>, <code class="inline">Team</code>,
+        엣지 타입은 <code class="inline">MANAGES</code>, <code class="inline">BELONGS_TO</code> 같은 것입니다.
+      </p>
+      <p class="lead">
+        이 프로젝트는 두 단계로 나눠서 처리합니다 (<code class="inline">app/ontology.py</code>):
+      </p>
+      <ul class="plain">
+        <li><b>① 스키마 생성</b> — LLM이 문서를 읽고 그 문서에 맞는 <code class="inline">node_types</code> /
+          <code class="inline">edge_types</code>를 제안 (다른 문서의 스키마를 재사용도 가능)</li>
+        <li><b>② 그래프 추출</b> — 그 스키마를 기준으로 실제 <code class="inline">nodes</code> /
+          <code class="inline">edges</code> 인스턴스를 문서에서 뽑아냄</li>
+      </ul>
+    </div>
+    <pre>// schema.json — ① 스키마 생성 결과
+{
+  "node_types": [
+    { "name": "Person", "description": "..." },
+    { "name": "Requirement", "description": "..." }
+  ],
+  "edge_types": [
+    { "name": "REQUIRES", "description": "...",
+      "source": "Person", "target": "Requirement" }
+  ]
+}
+
+// ② 추출된 노드/엣지 (LadybugDB에 저장)
+{ "id": "p1", "label": "지원자", "type": "Person",
+  "detail": "3년 이상 백엔드 경력 우대" }
+{ "source": "p1", "target": "r1", "type": "REQUIRES",
+  "detail": "동등한 업계 경력이 있으면 예외 인정" }</pre>
+  </div>
+</section>
+
+<section class="slide" id="s-detail">
+  <div class="kicker">1부 · 02 · 핵심 개념</div>
+  <h2>label만으로는 잃어버리는 정보 — <code class="inline" style="font-size:1.2rem">detail</code></h2>
+  <div class="grid2">
+    <div>
+      <p class="lead">
+        노드/엣지의 <code class="inline">label</code>과 <code class="inline">type</code>만으로는
+        "예외 조건이 있다", "정확한 수치는 이거다" 같은 문서 고유의 뉘앙스가 사라집니다.
+        그래서 추출 시 LLM에게 한두 문장의 <code class="inline">detail</code> 필드를 함께 채우도록 합니다.
+      </p>
+      <p class="lead">
+        예: <code class="inline">Requirement</code> 노드의 label은 "학위: PhD" 뿐이지만,
+        detail에는 "동등한 업계 경력이 있는 경우 예외적으로 고려될 수 있음"이 들어갑니다.
+        이 한 줄이 없으면 "PhD 없이도 지원 가능한가요?" 같은 질문에 챗봇이 절대 답할 수 없습니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>GraphRAG 컨텍스트로 조립될 때</h3>
+      <pre>Entities:
+- 지원자 (Person)
+- 학위: PhD (Requirement): 동등한 업계 경력이 있는
+  경우 예외적으로 고려될 수 있습니다
+
+Relations:
+- 지원자 -[REQUIRES]-> 학위: PhD: (조건부)</pre>
+      <p>이 텍스트 블록이 system 메시지로 주입되어, 모델이 근거를 갖고 답합니다.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s-graphdb">
+  <div class="kicker">1부 · 03 · 핵심 개념</div>
+  <h2>왜 그래프DB인가 — LadybugDB</h2>
+  <div class="grid2">
+    <div>
+      <p class="lead">
+        관계형 DB로 "이 사람과 2단계 이내로 연결된 모든 것"을 구하려면 재귀적인 JOIN이 필요해 복잡해집니다.
+        그래프DB는 <b>노드-관계</b>가 1차 시민이라, "N홉 이내의 모든 이웃"을 Cypher 한 줄로 표현할 수 있습니다.
+      </p>
+      <p class="lead">
+        <code class="inline">app/graphdb.py</code>가 <code class="inline">backend/data/graph/graph.ladybugdb</code>
+        연결을 단독으로 소유합니다 (지연 생성, 모듈 레벨 캐시). 설계상 특징:
+      </p>
+      <ul class="plain">
+        <li>노드/엣지 <b>타입 이름마다</b> Cypher 테이블 1개 — 모든 문서가 <b>공유</b>, 각 행은
+          <code class="inline">source_document</code>로 문서를 구분</li>
+        <li>노드 id는 내부적으로 <code class="inline">{stem}::{id}</code>로 저장 (문서 간 충돌 방지),
+          반환 시 원래 id로 벗겨서 돌려줌</li>
+        <li>타입 이름은 LLM 출력이므로 DDL/Cypher에 넣기 전 <code class="inline">_validate_identifier()</code>로
+          <code class="inline">[A-Za-z_][A-Za-z0-9_]*</code> 검증 (인젝션/구문오류 방지)</li>
+        <li>REL 테이블이 하나도 없는 상태(빈 DB)를 모든 그래프 함수가 별도로 처리 — 안 그러면 쿼리가
+          그냥 죽거나 조용히 빈 결과를 냄</li>
+      </ul>
+    </div>
+    <pre>-- expand_hops()가 실행하는 형태의 Cypher
+MATCH (n)-[*0..2]-(m)
+WHERE n.id IN $matched_ids
+  AND n.source_document = $doc
+RETURN DISTINCT n, m
+
+-- 노드 테이블 DDL (타입마다 생성)
+CREATE NODE TABLE Person(
+  id STRING, label STRING, detail STRING,
+  source_document STRING,
+  embedding FLOAT[1536],
+  PRIMARY KEY(id)
+)</pre>
+  </div>
+</section>
+
+<section class="slide" id="s-embedding">
+  <div class="kicker">1부 · 04 · 핵심 개념</div>
+  <h2>키워드로 못 찾으면 — 임베딩 유사도 폴백</h2>
+  <p class="lead" style="margin-bottom:1.4rem">
+    "책임이 뭐야?"처럼 문자 그대로 추출할 키워드가 없는 질문, 또는 질문과 노드 label의 언어가 다른 경우
+    단순 문자열 매칭은 항상 실패합니다. 그래서 노드 타입별로 3단계 폴백을 순서대로 시도합니다.
+  </p>
+  <div class="diagram-box">
+    <svg viewBox="0 0 1000 220" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b82"/>
+        </marker>
+      </defs>
+      <g font-family="SF Mono, Menlo, monospace" font-size="13">
+        <rect x="20" y="70" width="230" height="90" rx="10" fill="#151f2c" stroke="#5ec3ff"/>
+        <text x="135" y="100" fill="#5ec3ff" text-anchor="middle" font-weight="600">a. 키워드 매칭</text>
+        <text x="135" y="122" fill="#93a4bb" text-anchor="middle" font-size="11">find_relevant_nodes()</text>
+        <text x="135" y="140" fill="#93a4bb" text-anchor="middle" font-size="11">부분 문자열, 대소문자 무시</text>
+
+        <line x1="250" y1="115" x2="330" y2="115" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow1)"/>
+        <text x="290" y="105" class="arrow-label" text-anchor="middle">0건일 때</text>
+
+        <rect x="340" y="70" width="230" height="90" rx="10" fill="#151f2c" stroke="#7ee8c0"/>
+        <text x="455" y="100" fill="#7ee8c0" text-anchor="middle" font-weight="600">b. 임베딩 유사도</text>
+        <text x="455" y="122" fill="#93a4bb" text-anchor="middle" font-size="11">find_similar_nodes()</text>
+        <text x="455" y="140" fill="#93a4bb" text-anchor="middle" font-size="11">cosine, top 5, FLOAT[1536]</text>
+
+        <line x1="570" y1="115" x2="650" y2="115" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow1)"/>
+        <text x="610" y="105" class="arrow-label" text-anchor="middle">0건일 때</text>
+
+        <rect x="660" y="70" width="230" height="90" rx="10" fill="#151f2c" stroke="#f2b866"/>
+        <text x="775" y="100" fill="#f2b866" text-anchor="middle" font-weight="600">c. 타입 전체</text>
+        <text x="775" y="122" fill="#93a4bb" text-anchor="middle" font-size="11">all_nodes_of_types()</text>
+        <text x="775" y="140" fill="#93a4bb" text-anchor="middle" font-size="11">임베딩 없는 구(舊) 문서용</text>
+      </g>
+    </svg>
+  </div>
+  <ul class="plain" style="margin-top:1.2rem">
+    <li><code class="inline">node_embedding_text()</code>가 <code class="inline">label + detail</code>을
+      임베딩 대상 텍스트로 정의 — 추출 시점(<code class="inline">embed_nodes</code>)과 질문 임베딩
+      (<code class="inline">embed_query</code>) 양쪽이 <b style="color:var(--text)">동일한 함수</b>를 써서
+      두 벡터가 같은 기준으로 계산됨을 보장</li>
+    <li>임베딩 모델은 <code class="inline">OPENROUTER_EMBEDDING_MODEL</code> (기본
+      <code class="inline">openai/text-embedding-3-small</code>, 1536차원) — 차원이 바뀌면 전체 재추출 필요
+      (Cypher <code class="inline">FLOAT[N]</code> 컬럼은 생성 후 너비를 못 바꿈)</li>
+  </ul>
+</section>
+
+<section class="slide" id="s-graphrag-flow">
+  <div class="kicker">1부 · 05 · 핵심 흐름</div>
+  <h2>GraphRAG 3단계 검색 (한 번의 질문마다)</h2>
+  <div class="diagram-box">
+    <svg viewBox="0 0 1000 340" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b82"/>
+        </marker>
+      </defs>
+      <g font-family="SF Mono, Menlo, monospace" font-size="12">
+        <!-- lane labels -->
+        <text x="20" y="30" fill="#93a4bb" font-size="12">질문</text>
+
+        <rect x="20" y="45" width="190" height="80" rx="10" fill="#151f2c" stroke="#5ec3ff"/>
+        <text x="115" y="70" fill="#5ec3ff" text-anchor="middle" font-weight="600">① 타입 분석</text>
+        <text x="115" y="90" fill="#93a4bb" text-anchor="middle" font-size="10.5">determine_relevant_types()</text>
+        <text x="115" y="106" fill="#93a4bb" text-anchor="middle" font-size="10.5">스키마 + 질문 → LLM 1회</text>
+
+        <line x1="210" y1="85" x2="270" y2="85" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow2)"/>
+        <text x="240" y="75" class="arrow-label" text-anchor="middle">타입 있음</text>
+
+        <rect x="280" y="45" width="230" height="80" rx="10" fill="#151f2c" stroke="#7ee8c0"/>
+        <text x="395" y="66" fill="#7ee8c0" text-anchor="middle" font-weight="600">② 인스턴스 검색</text>
+        <text x="395" y="85" fill="#93a4bb" text-anchor="middle" font-size="10.5">extract_keywords() +</text>
+        <text x="395" y="100" fill="#93a4bb" text-anchor="middle" font-size="10.5">키워드→임베딩→전체 폴백</text>
+        <text x="395" y="115" fill="#93a4bb" text-anchor="middle" font-size="10.5">(타입별로 독립 수행)</text>
+
+        <line x1="510" y1="85" x2="570" y2="85" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow2)"/>
+
+        <rect x="580" y="45" width="200" height="80" rx="10" fill="#151f2c" stroke="#f2b866"/>
+        <text x="680" y="70" fill="#f2b866" text-anchor="middle" font-weight="600">③ N홉 확장</text>
+        <text x="680" y="90" fill="#93a4bb" text-anchor="middle" font-size="10.5">graphdb.expand_hops()</text>
+        <text x="680" y="106" fill="#93a4bb" text-anchor="middle" font-size="10.5">Cypher 가변 길이 패턴</text>
+
+        <line x1="780" y1="85" x2="840" y2="85" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow2)"/>
+
+        <rect x="850" y="45" width="130" height="80" rx="10" fill="#151f2c" stroke="#d98cff"/>
+        <text x="915" y="75" fill="#d98cff" text-anchor="middle" font-weight="600">답변 생성</text>
+        <text x="915" y="95" fill="#93a4bb" text-anchor="middle" font-size="10.5">system 메시지 주입</text>
+
+        <!-- short circuit path -->
+        <path d="M115 125 L115 220 L920 220 L920 130" fill="none" stroke="#ff8a8a" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow2)"/>
+        <text x="500" y="240" fill="#ff8a8a" text-anchor="middle" font-size="12">
+          타입도 없음 → 즉시 "관련된 내용을 찾을 수 없습니다." (LLM 호출 없이 종료)
+        </text>
+
+        <text x="20" y="290" fill="#93a4bb" font-size="12">
+          비용: 최악의 경우 채팅 1턴당 LLM 호출 최대 3회(①②최종답변) + 임베딩 호출 최대 1회(질문당 캐시)
+        </text>
+        <text x="20" y="312" fill="#93a4bb" font-size="12">
+          비교: 그래프/스키마가 없는 일반 채팅은 LLM 호출 1회
+        </text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section class="slide divider" id="s-part2">
+  <div class="kicker">PART 2</div>
+  <h1>어떻게 만들었나<br/>Vibe Coding과 아키텍처</h1>
+  <p class="lead">
+    1부의 챗봇을 AI와 대화하며 반복적으로 설계·구현한 과정, 그리고 그 반복이 끊기지 않도록
+    만들어주는 아키텍처 조각들을 살펴봅니다.
+  </p>
+</section>
+
+<section class="slide" id="s-vibe-concept">
+  <div class="kicker">2부 · 01 · 바이브 코딩이란?</div>
+  <h2>AI와 대화하며 반복해서 만드는 개발 방식</h2>
+  <div class="grid2">
+    <div>
+      <p class="lead">
+        미리 완벽한 설계도를 그리고 한 번에 구현하는 대신, "이런 기능이 필요해" →
+        나온 결과를 바로 보고 → "이 부분은 이렇게 고쳐줘"를 짧게 반복하며 코드를 키워가는 방식입니다.
+        이 리포 자체도 실제로 이렇게, 기능 하나당 커밋 하나씩 쌓으며 만들어졌습니다
+        (증거는 이 파트 끝의 <span class="fwd">2부 · 07</span>에서).
+      </p>
+      <p class="lead">
+        이 방식이 끊기지 않고 잘 굴러가려면 아래 세 가지가 뒷받침돼야 합니다 — 다음 슬라이드들은
+        이 프로젝트의 아키텍처가 정확히 이 세 가지를 어떻게 채워주는지 순서대로 보여줍니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>반복 루프 한 번</h3>
+      <p>"온톨로지 그래프에서 이 노드가 선택되면 하이라이트도 해줘"<br/>
+        → 코드 수정 → 브라우저에서 바로 확인<br/>
+        → "패닝은 부드럽게, 줌은 유지해줘"<br/>
+        → 재수정 → 확인 → 다음 요청 …</p>
+    </div>
+  </div>
+  <div class="grid3" style="margin-top:1.2rem">
+    <div class="card">
+      <h3>① 즉각적인 피드백</h3>
+      <p>바꾼 게 바로 눈에 보여야 다음 요청으로 이어갈 수 있음<br/>
+        → Vue + Vite 핫리로드 (<span class="fwd">2부 · 04</span>)</p>
+    </div>
+    <div class="card">
+      <h3>② 안전하고 예측 가능한 경계</h3>
+      <p>AI가 생성한 코드도 어디에 무엇이 있는지 예측 가능하고, 매 변경을 즉시 검증할 수 있어야 함<br/>
+        → FastAPI 얇은 라우트 + pytest (<span class="fwd">2부 · 03</span>)</p>
+    </div>
+    <div class="card">
+      <h3>③ 보이지 않는 것의 관측</h3>
+      <p>"왜 느리지?", "정말 몇 번 호출됐지?"를 로그를 뒤지지 않고 답할 수 있어야 함<br/>
+        → Jaeger 추적 (<span class="fwd">2부 · 05</span>)</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s-arch">
+  <div class="kicker">2부 · 02 · 시스템 아키텍처</div>
+  <h2>Frontend ↔ Backend ↔ 저장/관측</h2>
+  <div class="diagram-box">
+    <svg viewBox="0 0 1000 380" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b82"/>
+        </marker>
+      </defs>
+      <g font-family="SF Mono, Menlo, monospace" font-size="12">
+        <rect x="30" y="40" width="230" height="90" rx="10" fill="#151f2c" stroke="#5ec3ff" stroke-width="2"/>
+        <text x="145" y="68" fill="#5ec3ff" text-anchor="middle" font-weight="700" font-size="14">Vue 3 + Vite</text>
+        <text x="145" y="88" fill="#93a4bb" text-anchor="middle" font-size="10.5">:5173, App.vue가 상태 허브</text>
+        <text x="145" y="104" fill="#93a4bb" text-anchor="middle" font-size="10.5">5개 컴포넌트 (props/emit)</text>
+
+        <line x1="260" y1="85" x2="360" y2="85" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow3)"/>
+        <line x1="360" y1="100" x2="260" y2="100" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow3)"/>
+        <text x="310" y="70" class="arrow-label" text-anchor="middle">HTTP /api/*</text>
+
+        <rect x="370" y="30" width="250" height="110" rx="10" fill="#151f2c" stroke="#7ee8c0" stroke-width="2"/>
+        <text x="495" y="58" fill="#7ee8c0" text-anchor="middle" font-weight="700" font-size="14">FastAPI</text>
+        <text x="495" y="78" fill="#93a4bb" text-anchor="middle" font-size="10.5">:8000, uvicorn --reload</text>
+        <text x="495" y="96" fill="#93a4bb" text-anchor="middle" font-size="10.5">chat / ontology / graphrag</text>
+        <text x="495" y="114" fill="#93a4bb" text-anchor="middle" font-size="10.5">/ graphdb / telemetry</text>
+
+        <!-- fanout -->
+        <line x1="495" y1="140" x2="495" y2="180" stroke="#5b6b82" stroke-width="2"/>
+        <line x1="495" y1="180" x2="150" y2="180" stroke="#5b6b82" stroke-width="2"/>
+        <line x1="495" y1="180" x2="495" y2="180" stroke="#5b6b82" stroke-width="2"/>
+        <line x1="495" y1="180" x2="840" y2="180" stroke="#5b6b82" stroke-width="2"/>
+
+        <line x1="150" y1="180" x2="150" y2="220" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow3)"/>
+        <line x1="495" y1="180" x2="495" y2="220" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow3)"/>
+        <line x1="840" y1="180" x2="840" y2="220" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow3)"/>
+
+        <rect x="40" y="230" width="220" height="80" rx="10" fill="#151f2c" stroke="#f2b866"/>
+        <text x="150" y="258" fill="#f2b866" text-anchor="middle" font-weight="600">OpenRouter API</text>
+        <text x="150" y="278" fill="#93a4bb" text-anchor="middle" font-size="10.5">langchain 경유</text>
+        <text x="150" y="294" fill="#93a4bb" text-anchor="middle" font-size="10.5">채팅 · 스키마/추출 · 임베딩</text>
+
+        <rect x="385" y="230" width="220" height="80" rx="10" fill="#151f2c" stroke="#d98cff"/>
+        <text x="495" y="258" fill="#d98cff" text-anchor="middle" font-weight="600">backend/data/</text>
+        <text x="495" y="278" fill="#93a4bb" text-anchor="middle" font-size="10.5">*_raw.md, schema.json,</text>
+        <text x="495" y="294" fill="#93a4bb" text-anchor="middle" font-size="10.5">graph.ladybugdb (노드/엣지)</text>
+
+        <rect x="730" y="230" width="220" height="80" rx="10" fill="#151f2c" stroke="#ff8a8a"/>
+        <text x="840" y="258" fill="#ff8a8a" text-anchor="middle" font-weight="600">Jaeger</text>
+        <text x="840" y="278" fill="#93a4bb" text-anchor="middle" font-size="10.5">:16686, OTLP HTTP exporter</text>
+        <text x="840" y="294" fill="#93a4bb" text-anchor="middle" font-size="10.5">모든 LLM 호출 span 시각화</text>
+
+        <text x="30" y="345" fill="#93a4bb" font-size="11.5">
+          두 서비스 모두 podman-compose로 별도 컨테이너 실행, 소스는 볼륨 마운트되어 핫리로드
+        </text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section class="slide" id="s-backend-modules">
+  <div class="kicker">2부 · 03 · 백엔드 구조</div>
+  <h2>모듈 지도 (<code class="inline" style="font-size:1.3rem">backend/app/</code>)</h2>
+  <table class="spec">
+    <tr><th>모듈</th><th>역할</th></tr>
+    <tr><td><code>main.py</code></td><td>모든 라우트 — 비즈니스 로직 없이 다른 모듈을 엮기만 함</td></tr>
+    <tr><td><code>parser.py</code></td><td><code>anydoc</code>으로 업로드 문서 → 마크다운 변환</td></tr>
+    <tr><td><code>chat.py</code></td><td><code>ChatOpenAI</code>(OpenRouter) 클라이언트 생성, 메시지 변환 — LLM이 필요한 모든 모듈이 여기서 import</td></tr>
+    <tr><td><code>embeddings.py</code></td><td><code>OpenAIEmbeddings</code> 클라이언트, <code>EMBEDDING_DIM</code>(1536), <code>node_embedding_text()</code> 단일 정의</td></tr>
+    <tr><td><code>graphdb.py</code></td><td>LadybugDB 연결 소유, Cypher DDL/쿼리, 식별자 검증, 홉 확장</td></tr>
+    <tr><td><code>ontology.py</code></td><td>스키마 생성 + 그래프 추출 (LLM 2단계), 임베딩 부착 후 저장</td></tr>
+    <tr><td><code>graphrag.py</code></td><td>타입 판단 → 키워드/임베딩 검색 → 홉 확장 → 컨텍스트 조립</td></tr>
+    <tr><td><code>telemetry.py</code></td><td>모든 LLM/임베딩 호출을 OTel span으로 감싸고 재시도 처리</td></tr>
+  </table>
+  <p class="lead" style="margin-top:1rem">
+    <span class="fwd">왜 "안전한 경계"인가</span> — 라우트에 로직이 없으니 AI가 생성한 코드도 어디에 무엇이
+    있는지 예측 가능하고, 매 변경을 <code class="inline">pytest</code>로 즉시 검증할 수 있습니다
+    (LLM 호출은 항상 mock — 실제 API를 두드리지 않고도 회귀를 바로 잡아냄).
+  </p>
+</section>
+
+<section class="slide" id="s-frontend">
+  <div class="kicker">2부 · 04 · 프론트엔드 구조</div>
+  <h2>App.vue = 상태 허브, 컴포넌트는 순수 props/emit</h2>
+  <div class="diagram-box">
+    <svg viewBox="0 0 1000 320" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b82"/>
+        </marker>
+      </defs>
+      <g font-family="SF Mono, Menlo, monospace" font-size="12">
+        <rect x="400" y="130" width="200" height="70" rx="10" fill="#151f2c" stroke="#d98cff" stroke-width="2"/>
+        <text x="500" y="160" fill="#d98cff" text-anchor="middle" font-weight="700">App.vue</text>
+        <text x="500" y="180" fill="#93a4bb" text-anchor="middle" font-size="10.5">state hub (no store lib)</text>
+
+        <!-- 4 spokes -->
+        <rect x="30" y="20" width="180" height="70" rx="10" fill="#151f2c" stroke="#5ec3ff"/>
+        <text x="120" y="48" fill="#5ec3ff" text-anchor="middle" font-weight="600" font-size="11.5">SettingsPanel</text>
+        <text x="120" y="66" fill="#93a4bb" text-anchor="middle" font-size="10">업로드/필터/스키마/hops</text>
+
+        <rect x="30" y="230" width="180" height="70" rx="10" fill="#151f2c" stroke="#7ee8c0"/>
+        <text x="120" y="258" fill="#7ee8c0" text-anchor="middle" font-weight="600" font-size="11.5">ChatPanel</text>
+        <text x="120" y="276" fill="#93a4bb" text-anchor="middle" font-size="10">/api/chat, 타입/노드 칩</text>
+
+        <rect x="790" y="20" width="180" height="70" rx="10" fill="#151f2c" stroke="#f2b866"/>
+        <text x="880" y="48" fill="#f2b866" text-anchor="middle" font-weight="600" font-size="11.5">OntologyGraph</text>
+        <text x="880" y="66" fill="#93a4bb" text-anchor="middle" font-size="10">v-network-graph + d3-force</text>
+
+        <rect x="790" y="230" width="180" height="70" rx="10" fill="#151f2c" stroke="#ff8a8a"/>
+        <text x="880" y="258" fill="#ff8a8a" text-anchor="middle" font-weight="600" font-size="11.5">DocumentPreview /</text>
+        <text x="880" y="276" fill="#93a4bb" text-anchor="middle" font-size="10">SchemaGraphPreview</text>
+
+        <line x1="210" y1="55" x2="400" y2="140" stroke="#5b6b82" stroke-width="1.6"/>
+        <line x1="210" y1="265" x2="400" y2="185" stroke="#5b6b82" stroke-width="1.6"/>
+        <line x1="600" y1="140" x2="790" y2="55" stroke="#5b6b82" stroke-width="1.6"/>
+        <line x1="600" y1="185" x2="790" y2="265" stroke="#5b6b82" stroke-width="1.6"/>
+
+        <text x="500" y="60" fill="#93a4bb" text-anchor="middle" font-size="10.5">
+          예: ChatPanel의 "노드 칩" 클릭 → toggle-type emit → App.vue가 새 객체로 감싸 →
+        </text>
+        <text x="500" y="105" fill="#93a4bb" text-anchor="middle" font-size="10.5">
+          SettingsPanel의 필터 Set을 갱신 → enabledTypes prop이 OntologyGraph까지 전파
+        </text>
+      </g>
+    </svg>
+  </div>
+  <p class="lead" style="margin-top:1rem">
+    상태는 전부 <code class="inline">App.vue</code>에 있습니다: 선택된 문서, 노드/엣지 타입 필터,
+    GraphRAG hop 수, 하이라이트된 노드 id 등. 컴포넌트 간 통신은 항상 <code class="inline">App.vue</code>를
+    한 번 거치는 "props 아래로, emit 위로" 패턴 — 별도 상태관리 라이브러리 없이도 다섯 컴포넌트가 정확히 동기화됩니다.
+  </p>
+  <p class="lead">
+    <span class="fwd">왜 "즉각적 피드백"인가</span> — Vite 핫리로드 덕분에 코드를 고치는 순간 브라우저가
+    갱신되므로, "이렇게 보였으면 좋겠다"는 요청을 바로 눈으로 확인하고 다음 요청으로 이어갈 수 있습니다.
+  </p>
+</section>
+
+<section class="slide" id="s-observability">
+  <div class="kicker">2부 · 05 · 관측성</div>
+  <h2>모든 LLM 호출을 Jaeger로 추적</h2>
+  <div class="grid2">
+    <div>
+      <p class="lead">
+        LLM 호출은 느리고, 가끔 커넥션이 끊기고, 비용이 듭니다. <code class="inline">telemetry.py</code>의
+        <code class="inline">invoke_with_telemetry()</code>가 5개 호출 지점
+        (채팅 답변, 스키마 생성, 그래프 추출, 타입 분석, 키워드 추출)을 전부 감싸서
+        <code class="inline">llm.{operation}</code> span으로 기록합니다.
+      </p>
+      <ul class="plain">
+        <li>모델명, 프롬프트/응답 <b style="color:var(--text)">길이</b>, 성공 여부, 토큰 사용량을 span 속성으로 기록</li>
+        <li>실제 프롬프트/응답 <b style="color:var(--text)">텍스트</b>는 기록하지 않음 — 로컬 개발 환경 디버깅용 metadata만</li>
+        <li><code class="inline">ModelConnectionError</code>(커넥션 끊김) 발생 시 고정 지연으로 최대 2회 재시도, 다른 예외는 즉시 전파</li>
+        <li><code class="inline">OTEL_EXPORTER_OTLP_ENDPOINT</code>가 없으면(테스트 실행 등) no-op 트레이서로 자동 전환 — 항상 안전하게 호출 가능</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>왜 필요했나</h3>
+      <p>
+        실제로 OpenRouter 커넥션이 끊기는 문제를 겪은 뒤 추가됨. Jaeger UI(<code class="inline">localhost:16686</code>)에서
+        한 번의 채팅 요청이 실제로 몇 번의 LLM 호출로 구성되는지(최대 3회), 어디서 느려지는지, 재시도가
+        발생했는지를 그대로 확인할 수 있습니다.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s-services">
+  <div class="kicker">2부 · 06 · 외부 서비스</div>
+  <h2>이 프로젝트가 기대는 세 가지 서비스</h2>
+  <p class="lead" style="margin-bottom:1.2rem">
+    코드는 로컬(podman-compose)에서도 돌아가지만, 그 코드를 <b>보관/협업</b>하는 곳,
+    LLM을 실제로 <b>호출</b>하는 곳, 그리고 나중에 인터넷에 <b>배포/서빙</b>할 곳은 서로 다른
+    세 가지 외부 서비스입니다.
+  </p>
+  <div class="grid3">
+    <div class="card">
+      <h3>GitHub — 코드 보관소</h3>
+      <p>
+        소스 코드와 커밋 이력이 저장되는 곳 (<code class="inline">github.com/sungcheolkim78/ontology_builder</code>).
+        "누가 언제 무엇을 왜 바꿨는지"가 커밋으로 남고, 브랜치/PR로 작업을 나눠 진행할 수 있습니다.
+        이 프로젝트를 Claude Code와 함께 만들 때도 매 기능이 커밋 단위로 GitHub에 쌓입니다 — 로컬 컴퓨터가
+        사라져도 코드는 안전하게 남는 백업 역할도 합니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>OpenRouter — LLM 게이트웨이</h3>
+      <p>
+        여러 회사의 LLM(OpenAI, Anthropic 등)과 임베딩 모델을 <b style="color:var(--text)">하나의 API 키/엔드포인트</b>로
+        호출할 수 있게 해주는 중개 서비스. <code class="inline">chat.py</code> / <code class="inline">embeddings.py</code>가
+        실제로 요청을 보내는 곳입니다. 모델을 바꾸고 싶으면 코드를 고칠 필요 없이
+        <code class="inline">backend/.env</code>의 모델 이름만 바꾸면 됩니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Render — (예정) 배포/호스팅</h3>
+      <p>
+        지금은 내 컴퓨터의 podman-compose로만 실행되어 외부에서 접근할 수 없습니다. Render는
+        <b style="color:var(--text)">코드를 인터넷 상의 서버에 올려 누구나 접속 가능한 URL로 서빙</b>해주는
+        클라우드 호스팅(PaaS) 서비스로, 앞으로 FastAPI 백엔드와 Vue 프론트엔드를 여기에 배포할 계획입니다.
+        보통 GitHub 저장소를 연결해두면 <code class="inline">git push</code>만으로 자동 재배포됩니다.
+      </p>
+    </div>
+  </div>
+  <div class="diagram-box" style="margin-top:1.4rem">
+    <svg viewBox="0 0 1000 190" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#5b6b82"/>
+        </marker>
+      </defs>
+      <g font-family="SF Mono, Menlo, monospace" font-size="12">
+        <rect x="20" y="30" width="180" height="70" rx="10" fill="#151f2c" stroke="#d98cff" stroke-width="2"/>
+        <text x="110" y="58" fill="#d98cff" text-anchor="middle" font-weight="600">개발자 (로컬)</text>
+        <text x="110" y="78" fill="#93a4bb" text-anchor="middle" font-size="10.5">podman-compose up</text>
+
+        <line x1="200" y1="65" x2="270" y2="65" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow5)"/>
+        <text x="235" y="55" class="arrow-label" text-anchor="middle">git push</text>
+
+        <rect x="280" y="30" width="180" height="70" rx="10" fill="#151f2c" stroke="#5ec3ff" stroke-width="2"/>
+        <text x="370" y="58" fill="#5ec3ff" text-anchor="middle" font-weight="600">GitHub</text>
+        <text x="370" y="78" fill="#93a4bb" text-anchor="middle" font-size="10.5">코드 저장 · 이력 · 협업</text>
+
+        <line x1="460" y1="65" x2="530" y2="65" stroke="#5b6b82" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow5)"/>
+        <text x="495" y="55" class="arrow-label" text-anchor="middle">(예정)</text>
+
+        <rect x="540" y="30" width="180" height="70" rx="10" fill="#151f2c" stroke="#f2b866" stroke-width="2"/>
+        <text x="630" y="58" fill="#f2b866" text-anchor="middle" font-weight="600">Render</text>
+        <text x="630" y="78" fill="#93a4bb" text-anchor="middle" font-size="10.5">자동 배포 · 공개 URL로 서빙</text>
+
+        <line x1="720" y1="65" x2="790" y2="65" stroke="#5b6b82" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow5)"/>
+
+        <rect x="800" y="30" width="180" height="70" rx="10" fill="#151f2c" stroke="#7ee8c0" stroke-width="2"/>
+        <text x="890" y="58" fill="#7ee8c0" text-anchor="middle" font-weight="600">사용자 브라우저</text>
+        <text x="890" y="78" fill="#93a4bb" text-anchor="middle" font-size="10.5">누구나 URL로 접속</text>
+
+        <line x1="110" y1="100" x2="110" y2="150" stroke="#5b6b82" stroke-width="2" marker-end="url(#arrow5)"/>
+        <line x1="630" y1="100" x2="630" y2="150" stroke="#5b6b82" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow5)"/>
+        <rect x="370" y="150" width="220" height="30" rx="8" fill="#151f2c" stroke="#ff8a8a"/>
+        <text x="480" y="170" fill="#ff8a8a" text-anchor="middle" font-size="11">OpenRouter API (LLM 호출) — 로컬/배포 모두 동일하게 사용</text>
+        <line x1="590" y1="165" x2="740" y2="165" stroke="#5b6b82" stroke-width="0" />
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section class="slide" id="s-vibe">
+  <div class="kicker">2부 · 07 · 실전: 반복 개발의 증거</div>
+  <h2>커밋 로그로 보는 "바이브 코딩" 한 사이클</h2>
+  <p class="lead" style="margin-bottom:1.2rem">
+    <span class="fwd">2부 · 01</span>에서 말한 세 가지(즉각 피드백 / 안전한 경계 / 관측)가 실제로 어떻게
+    맞물려 돌아갔는지, 이 리포의 실제 커밋 로그가 그대로 보여줍니다. 커밋 하나하나가
+    "요청 → 구현 → 확인"의 흔적입니다.
+  </p>
+  <pre>256d387 Redesign ontology graph controls and left panel layout
+7f74c05 Harden extraction and improve chat/DB efficiency
+e3e5677 Add per-document manifest for original filename + status lookup
+ed16814 Add LadybugDB reset button for WAL corruption recovery
+469670b Add embedding-based similarity fallback for GraphRAG node matching
+2761099 Add LLM call tracing, schema-aware keyword search, and test data isolation
+   ...  기능 단위 커밋이 쌓여 지금의 구조가 됨</pre>
+  <p class="lead" style="margin-top:1.2rem">
+    예를 들어 <code class="inline">ed16814</code>("LadybugDB 리셋 버튼 추가")는 실제로 WAL 손상으로 그래프
+    쿼리가 전부 실패하는 상황을 겪은 뒤, 화면에서 바로 재현/확인(Vue) → 원인 격리 후
+    <code class="inline">graphdb.reset_database()</code> 추가·pytest로 검증(FastAPI) → 배포까지
+    한 번의 대화 안에서 끝난 사례입니다.
+  </p>
+</section>
+
+<section class="slide" id="s-limits">
+  <div class="kicker">2부 · 08 · 한계</div>
+  <h2>알고 있는 한계 (일부)</h2>
+  <div class="grid2">
+    <ul class="plain">
+      <li><b>영속성</b> — 모든 데이터가 <code class="inline">backend/data/</code>에만 존재, 서버형 DB 없음, 사용자/세션 구분 없음</li>
+      <li><b>DDL 미청소</b> — 스키마를 바꿔 재추출하면 옛 타입의 테이블이 0행 상태로 영구히 남음</li>
+      <li><b>인증 없음</b> — 로컬 개발 전용, 모든 엔드포인트가 열려 있음</li>
+      <li><b>스트리밍 없음</b> — 채팅 응답은 한 번에 반환</li>
+    </ul>
+    <ul class="plain">
+      <li><b>스키마/그래프 검증 없음</b> — LLM 출력의 키/리스트 구조만 확인, 타입 값이 스키마와 실제로 일치하는지는 확인 안 함</li>
+      <li><b>구(舊) 문서의 임베딩 없음</b> — 임베딩 기능 이전에 추출된 문서는 벡터가 없어 (c) 전체-인스턴스 폴백만 가능</li>
+      <li><b>프론트엔드 자동 테스트 없음</b> — 수동 또는 Playwright로 확인</li>
+    </ul>
+  </div>
+  <p class="footnote">전체 목록은 <code class="inline">docs/SPEC.md</code>의 "Known limitations" 참고.</p>
+</section>
+
+<section class="slide" id="s-end">
+  <div class="kicker">더 알아보기</div>
+  <h2>참고 문서</h2>
+  <ul class="plain" style="font-size:1.05rem">
+    <li><code class="inline">README.md</code> — 설치/실행/사용법</li>
+    <li><code class="inline">docs/SPEC.md</code> — 전체 아키텍처, API 엔드포인트, 컴포넌트 상세 스펙</li>
+    <li><code class="inline">CLAUDE.md</code> — 개발 커맨드, podman/virtiofs 트러블슈팅</li>
+  </ul>
+  <p class="footnote">Ontology Builder · 이 문서는 리포 상태 기준으로 작성되었습니다.</p>
+</section>
+
+<script>
+  var ids = Array.from(document.querySelectorAll('section.slide')).map(function(s){ return s.id; });
+  var nav = document.getElementById('nav');
+  ids.forEach(function(id, i){
+    var a = document.createElement('a');
+    a.href = '#' + id;
+    a.setAttribute('data-idx', i);
+    nav.appendChild(a);
+  });
+  ids.forEach(function(id, i){
+    var el = document.getElementById(id);
+    var no = document.createElement('div');
+    no.className = 'slide-no';
+    no.textContent = (i === 0 ? '' : String(i).padStart(2,'0') + ' / ' + String(ids.length - 1).padStart(2,'0'));
+    el.appendChild(no);
+  });
+  var links = Array.from(nav.querySelectorAll('a'));
+  var currentIdx = 0;
+  var btnPrev = document.getElementById('btn-prev');
+  var btnNext = document.getElementById('btn-next');
+
+  function updateControls(){
+    btnPrev.disabled = currentIdx <= 0;
+    btnNext.disabled = currentIdx >= ids.length - 1;
+  }
+
+  function goTo(idx){
+    idx = Math.max(0, Math.min(ids.length - 1, idx));
+    document.getElementById(ids[idx]).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  btnPrev.addEventListener('click', function(){ goTo(currentIdx - 1); });
+  btnNext.addEventListener('click', function(){ goTo(currentIdx + 1); });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goTo(currentIdx + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goTo(currentIdx - 1); }
+  });
+
+  var observer = new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      if (entry.isIntersecting) {
+        var idx = ids.indexOf(entry.target.id);
+        currentIdx = idx;
+        links.forEach(function(l){ l.classList.remove('active'); });
+        if (links[idx]) links[idx].classList.add('active');
+        updateControls();
+      }
+    });
+  }, { threshold: 0.5 });
+  ids.forEach(function(id){ observer.observe(document.getElementById(id)); });
+  updateControls();
+</script>
+
+</body>
+</html>
