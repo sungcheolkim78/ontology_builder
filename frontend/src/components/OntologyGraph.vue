@@ -343,10 +343,17 @@ const configs = computed(() => ({
       color: (edge) => edgeColorFor(edge.label),
       width: 1.5,
     },
+    marker: {
+      target: {
+        type: 'arrow',
+        width: 4,
+        height: 4,
+      },
+    },
     type: 'curve',
     gap: 12,
     label: {
-      fontSize: () => 9 / zoomLevel.value,
+      fontSize: () => 11 / zoomLevel.value,
       color: '#555',
     },
   },
