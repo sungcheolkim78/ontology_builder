@@ -20,6 +20,7 @@ const status = ref('empty') // empty | loading | no-graph | ready | error
 const error = ref('')
 const message = ref('')
 const isGeneratingSchema = ref(false)
+const schemaDocumentType = ref('general')
 const isExtracting = ref(false)
 const isEmbedding = ref(false)
 const elapsedSeconds = ref(0)
@@ -377,6 +378,8 @@ async function generateSchema() {
   try {
     const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document_type: schemaDocumentType.value }),
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -454,6 +457,10 @@ async function embed() {
 
       <template v-else-if="status === 'no-graph' || status === 'ready'">
         <div class="actions">
+          <select v-model="schemaDocumentType" :disabled="isGeneratingSchema" class="schema-type-select">
+            <option value="general">일반 문서</option>
+            <option value="legal">법률·보험 문서</option>
+          </select>
           <button :disabled="isGeneratingSchema" @click="generateSchema">
             {{ isGeneratingSchema ? '생성 중...' : '스키마 생성' }}
           </button>

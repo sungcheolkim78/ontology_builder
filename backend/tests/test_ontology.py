@@ -97,6 +97,45 @@ def test_generate_schema_returns_404_when_document_missing(monkeypatch):
     assert response.status_code == 404
 
 
+class RecordingChatModel:
+    def __init__(self, content):
+        self.content = content
+        self.prompts = []
+
+    def invoke(self, prompt):
+        self.prompts.append(prompt)
+        return type("FakeResponse", (), {"content": self.content})()
+
+
+def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/schema", json={"document_type": "legal"}
+    )
+
+    assert response.status_code == 200
+    assert "defined terms" in fake_model.prompts[0]
+
+
+def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
+    write_document()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("{}")
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/schema", json={"document_type": "nonsense"}
+    )
+
+    assert response.status_code == 400
+
+
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
     calls = []
 

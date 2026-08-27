@@ -14,14 +14,16 @@ GRAPH_DIR = data_dir() / "graph"
 
 logger = logging.getLogger(__name__)
 
-# ~4 chars/token is a conservative rule of thumb; the default model
-# (gpt-4o-mini, 128k-token context) leaves plenty of headroom below this for
-# the schema/prompt wrapper and the JSON response. Configurable since
-# OPENROUTER_MODEL can point at a model with a different context window.
-# Guards against silently blowing the context window or getting back
-# truncated/malformed JSON (e.g. an edge referencing a node that got cut off
-# mid-response) instead of a clear, immediate error.
-MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 200_000))
+# ~4 chars/token is a conservative rule of thumb. 200_000 was originally sized
+# for the default model (gpt-4o-mini, 128k-token context); real OPENROUTER_MODEL
+# choices in practice (e.g. Gemini models) commonly have ~1M-token context, and
+# real legal/insurance documents routinely exceed 200k chars, so the limit is
+# raised 1.5x rather than tuned per-model. Configurable since OPENROUTER_MODEL
+# can point at a model with a different context window. Guards against silently
+# blowing the context window or getting back truncated/malformed JSON (e.g. an
+# edge referencing a node that got cut off mid-response) instead of a clear,
+# immediate error.
+MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 300_000))
 
 
 def _check_document_length(document_text: str) -> None:
@@ -45,10 +47,9 @@ DEFAULT_SCHEMA = {
     ],
 }
 
-SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
-extracting entities and relationships from it.
-
-Every "name" value (for both node_types and edge_types) MUST be a valid \
+# Shared by every schema-generation prompt variant below -- the identifier rule
+# and output shape are policy, not something that should vary per document type.
+_SCHEMA_OUTPUT_INSTRUCTIONS = """Every "name" value (for both node_types and edge_types) MUST be a valid \
 identifier: letters, digits, and underscores only, no spaces or other \
 characters, and it must start with a letter or underscore (e.g. "JobTitle" \
 or "Job_Title", not "Job Title"). This applies even if the document is not \
@@ -62,6 +63,41 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 Document:
 {document}
 """
+
+SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
+extracting entities and relationships from it.
+
+""" + _SCHEMA_OUTPUT_INSTRUCTIONS
+
+# For statutes, contracts, and insurance policies/terms: documents built from a
+# formal internal structure (chapters/articles/paragraphs/items, e.g. 장/절/조/항/호)
+# and explicitly defined terms reused throughout. The generic SCHEMA_PROMPT above
+# tends to propose only surface-level named entities and misses definitions,
+# obligations/conditions/exclusions, and cross-references between provisions --
+# this variant asks the LLM to look for those specifically, without forcing any of
+# them into a schema that doesn't actually have them.
+LEGAL_SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
+extracting entities and relationships from it.
+
+This document is a legal or insurance-style document (e.g. statute, contract, \
+insurance policy/terms) with a formal internal structure (chapters/articles/\
+paragraphs/items, e.g. 장/절/조/항/호) and defined terms reused throughout. When \
+proposing node_types and edge_types, look specifically for: defined terms from a \
+definitions clause (kept separate from the entities that later use them); parties \
+and roles (e.g. insurer/policyholder/insured/beneficiary); obligations, rights, \
+and benefits each party has; conditions and exclusions that trigger or bar them \
+(e.g. waiting periods, 면책사유); cross-references between the document's own \
+provisions (e.g. "제15조에 따라", "전항에도 불구하고"); and, only if worth \
+navigating on its own, the document's structural units themselves (e.g. \
+"Article"). Only propose types the document actually supports, using its own \
+terminology rather than generic labels wholesale.
+
+""" + _SCHEMA_OUTPUT_INSTRUCTIONS
+
+SCHEMA_PROMPTS = {
+    "general": SCHEMA_PROMPT,
+    "legal": LEGAL_SCHEMA_PROMPT,
+}
 
 EXTRACT_PROMPT = """Using this ontology schema:
 {schema}
@@ -96,11 +132,14 @@ def parse_json_response(text: str) -> dict:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 
 
-def generate_schema(document_text: str) -> dict:
+def generate_schema(document_text: str, document_type: str = "general") -> dict:
     _check_document_length(document_text)
+    prompt_template = SCHEMA_PROMPTS.get(document_type)
+    if prompt_template is None:
+        raise ValueError(f"unknown document_type: {document_type!r}")
     model = get_chat_model()
     response = invoke_with_telemetry(
-        "ontology.generate_schema", model, SCHEMA_PROMPT.format(document=document_text)
+        "ontology.generate_schema", model, prompt_template.format(document=document_text)
     )
     schema = parse_json_response(response.content)
     if not isinstance(schema.get("node_types"), list) or not isinstance(

@@ -183,13 +183,18 @@ def reset_database():
     return {"status": "ok"}
 
 
+class CreateSchemaRequest(BaseModel):
+    document_type: str = "general"
+
+
 @app.post("/api/ontology/{filename}/schema")
-def create_schema(filename: str):
+def create_schema(filename: str, request: CreateSchemaRequest | None = None):
     doc_path = _document_path(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
+    document_type = request.document_type if request else "general"
     try:
-        schema = generate_schema(doc_path.read_text())
+        schema = generate_schema(doc_path.read_text(), document_type=document_type)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     save_schema(_stem(filename), schema)
