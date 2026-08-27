@@ -1,6 +1,7 @@
 <script setup>
 import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -75,7 +76,7 @@ watch(
     rawText.value = ''
     if (!file) return
     try {
-      const res = await fetch(`/api/files/${encodeURIComponent(file.filename)}`)
+      const res = await apiFetch(`/api/files/${encodeURIComponent(file.filename)}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const text = await res.text()
       rawText.value = text

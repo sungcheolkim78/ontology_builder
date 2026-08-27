@@ -4,6 +4,7 @@ import markedKatex from 'marked-katex-extension'
 import 'katex/dist/katex.min.css'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { colorForNodeType } from '../utils/nodeColors.js'
+import { apiFetch } from '../utils/api.js'
 
 marked.use(markedKatex({ throwOnError: false }))
 
@@ -62,7 +63,7 @@ async function sendMessage() {
   abortController = new AbortController()
 
   try {
-    const res = await fetch('/api/chat', {
+    const res = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

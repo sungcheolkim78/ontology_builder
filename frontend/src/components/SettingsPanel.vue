@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
+import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
   selectedFilename: { type: String, default: null },
@@ -90,7 +91,7 @@ watch(
 
 async function loadSchemas() {
   try {
-    const res = await fetch('/api/ontology/schemas')
+    const res = await apiFetch('/api/ontology/schemas')
     const data = await res.json()
     schemas.value = data.schemas
   } catch (err) {
@@ -100,7 +101,7 @@ async function loadSchemas() {
 
 async function loadDocuments() {
   try {
-    const res = await fetch('/api/documents')
+    const res = await apiFetch('/api/documents')
     const data = await res.json()
     files.value = data.documents
   } catch (err) {
@@ -110,7 +111,7 @@ async function loadDocuments() {
 
 onMounted(async () => {
   try {
-    const res = await fetch('/api/config')
+    const res = await apiFetch('/api/config')
     const data = await res.json()
     model.value = data.model
   } catch (err) {
@@ -135,7 +136,7 @@ async function useSchema(sourceStem) {
   isUsingSchema.value = true
   schemaUseError.value = ''
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema/use`,
       {
         method: 'POST',
@@ -165,7 +166,7 @@ async function handleFileChange(event) {
   try {
     const formData = new FormData()
     formData.append('file', file)
-    const res = await fetch('/api/parse', { method: 'POST', body: formData })
+    const res = await apiFetch('/api/parse', { method: 'POST', body: formData })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     await loadDocuments()
@@ -188,7 +189,7 @@ async function resetDatabase() {
   isResettingDb.value = true
   resetDbError.value = ''
   try {
-    const res = await fetch('/api/ontology/reset-database', { method: 'POST' })
+    const res = await apiFetch('/api/ontology/reset-database', { method: 'POST' })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `HTTP ${res.status}`)

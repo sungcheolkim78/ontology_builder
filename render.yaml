@@ -1,0 +1,44 @@
+services:
+  # FastAPI backend. Built from the same Dockerfile used for local
+  # podman-compose dev, but dockerCommand overrides the Dockerfile's CMD to
+  # drop --reload (dev-only, pointless without a bind-mounted source tree)
+  # and bind the port Render assigns via $PORT instead of the hardcoded 8000.
+  - type: web
+    name: ontology-builder-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    plan: starter # disks (below) require a paid plan; Free cannot attach one
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false # set the real value in the Render dashboard, not here
+      - key: OPENROUTER_MODEL
+        value: google/gemini-3.7-flash
+      - key: CORS_ALLOWED_ORIGINS
+        # Must be the frontend service's actual public URL (see below) --
+        # update this if Render assigns a different subdomain than expected
+        # (e.g. because "ontology-builder-frontend" was already taken).
+        value: https://ontology-builder-frontend.onrender.com
+    disk:
+      name: ontology-builder-data
+      mountPath: /app/data
+      sizeGB: 1
+
+  # Vue frontend, built as a static site (no Node server needed in
+  # production). VITE_API_BASE_URL is inlined into the build by Vite, so the
+  # same relative /api/* calls that rely on vite.config.js's dev-only proxy
+  # locally instead hit the backend's absolute URL directly in production
+  # (see frontend/src/utils/api.js).
+  - type: web
+    name: ontology-builder-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        # Must be the backend service's actual public URL -- same caveat as
+        # CORS_ALLOWED_ORIGINS above.
+        value: https://ontology-builder-backend.onrender.com

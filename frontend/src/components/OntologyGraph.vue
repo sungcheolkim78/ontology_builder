@@ -4,6 +4,7 @@ import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 import { colorForNodeType } from '../utils/nodeColors.js'
+import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -393,7 +394,7 @@ async function loadSchemaStatus(file) {
     return
   }
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}/schema`)
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(file.filename)}/schema`)
     if (res.status === 404) {
       schema.value = null
       return
@@ -419,7 +420,7 @@ async function loadGraph(file) {
   status.value = 'loading'
   await loadSchemaStatus(file)
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}`)
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(file.filename)}`)
     if (res.status === 404) {
       status.value = 'no-graph'
       return
@@ -446,7 +447,7 @@ async function generateSchema() {
   message.value = ''
   startElapsedTimer()
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ document_type: schemaDocumentType.value }),
@@ -475,7 +476,7 @@ async function extract() {
   message.value = ''
   startElapsedTimer()
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
       method: 'POST',
     })
     if (!res.ok) {
@@ -500,7 +501,7 @@ async function embed() {
   message.value = ''
   startElapsedTimer()
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/embed`, {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/embed`, {
       method: 'POST',
     })
     if (!res.ok) {

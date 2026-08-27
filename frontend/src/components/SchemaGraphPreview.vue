@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -16,14 +17,14 @@ async function load(file) {
   if (!file) return
 
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}/schema`)
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(file.filename)}/schema`)
     if (res.ok) schema.value = await res.json()
   } catch (err) {
     // best-effort; tab just shows "no data" on failure
   }
 
   try {
-    const res = await fetch(`/api/ontology/${encodeURIComponent(file.filename)}`)
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(file.filename)}`)
     if (res.ok) graph.value = await res.json()
   } catch (err) {
     // best-effort

@@ -30,9 +30,19 @@ configure_telemetry()
 
 app = FastAPI()
 
+# Comma-separated so a production deploy (e.g. Render, where frontend and
+# backend are separate services on different origins) can list its actual
+# frontend URL without touching code -- defaults to the local podman-compose
+# frontend origin.
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
