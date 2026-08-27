@@ -49,7 +49,16 @@ DEFAULT_SCHEMA = {
 
 # Shared by every schema-generation prompt variant below -- the identifier rule
 # and output shape are policy, not something that should vary per document type.
-_SCHEMA_OUTPUT_INSTRUCTIONS = """Every "name" value (for both node_types and edge_types) MUST be a valid \
+_SCHEMA_OUTPUT_INSTRUCTIONS = """Before finalizing edge_types, check each one against the document: you \
+must be able to point to at least one concrete pair of entities already in the \
+text that the relationship actually connects. Drop any edge_type you can't \
+ground in a specific instance like this, even if it seems like a relationship \
+this kind of document would generally have. Also collapse edge_types that \
+describe the same underlying relationship into one (e.g. don't propose both \
+"WRITTEN_BY" and "AUTHORED_BY") -- near-duplicates split usage between them and \
+extraction ends up favoring one, leaving the other unused.
+
+Every "name" value (for both node_types and edge_types) MUST be a valid \
 identifier: letters, digits, and underscores only, no spaces or other \
 characters, and it must start with a letter or underscore (e.g. "JobTitle" \
 or "Job_Title", not "Job Title"). This applies even if the document is not \
@@ -66,6 +75,25 @@ Document:
 
 SCHEMA_PROMPT = """Given the following document, propose an ontology schema for \
 extracting entities and relationships from it.
+
+This document is a general-purpose text (e.g. report, article, manual, memo, \
+meeting notes) rather than a formally structured legal/insurance document. When \
+proposing node_types, look for the categories of thing the document actually \
+returns to more than once: people and organizations (and their roles, e.g. \
+author, customer, department); named concepts, topics, products, or systems that \
+are defined or discussed repeatedly; places; and events, dates, or time periods \
+that matter to the content. When proposing edge_types, look for how those \
+categories actually connect: structural or hierarchical relationships (part of, \
+belongs to, contains), attribution (authored by, owns, responsible for), causal \
+or sequential relationships (causes, leads to, precedes, follows), and plain \
+association where the document doesn't specify anything more precise. Favor a \
+small number of types that each cover many instances in the document over a \
+large number of narrow, one-off types; use the document's own terminology for \
+names rather than generic labels like "Entity" or "RelatedTo" wherever the \
+document supports something more specific, and fall back to a generic type only \
+for content that genuinely doesn't fit anything narrower. Only propose types the \
+document actually supports -- do not invent categories the text never actually \
+uses.
 
 """ + _SCHEMA_OUTPUT_INSTRUCTIONS
 
