@@ -10,6 +10,12 @@ from app.paths import data_dir
 
 DB_PATH = data_dir() / "graph" / "graph.ladybugdb"
 
+# Defensive upper bound on expand_hops' variable-length pattern match --
+# main.py already clamps the value it passes in, but this guards any other
+# caller against an unbounded `MATCH (n)-[*0..hops]-(m)` traversal on a
+# dense graph.
+MAX_EXPAND_HOPS = 5
+
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 _database = None
@@ -232,32 +238,53 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
                     {"stem": stem},
                 )
 
+        # Batched one UNWIND per distinct node type / edge spec rather than
+        # one CREATE per node/edge -- a document with hundreds of nodes was
+        # previously hundreds of round-trips to the DB engine.
+        nodes_by_type = {}
         for node in nodes:
+            nodes_by_type.setdefault(node["type"], []).append(node)
+        for node_type, type_nodes in nodes_by_type.items():
             conn.execute(
-                f"CREATE (:{node['type']} {{id: $id, label: $label, "
-                f"detail: $detail, source_document: $stem, embedding: $embedding}})",
+                f"UNWIND $rows AS row "
+                f"CREATE (:{node_type} {{id: row.id, label: row.label, "
+                f"detail: row.detail, source_document: row.stem, embedding: row.embedding}})",
                 {
-                    "id": f"{stem}::{node['id']}",
-                    "label": node["label"],
-                    "detail": node.get("detail") or "",
-                    "stem": stem,
-                    "embedding": node.get("embedding"),
+                    "rows": [
+                        {
+                            "id": f"{stem}::{node['id']}",
+                            "label": node["label"],
+                            "detail": node.get("detail") or "",
+                            "stem": stem,
+                            "embedding": node.get("embedding"),
+                        }
+                        for node in type_nodes
+                    ]
                 },
             )
 
+        edges_by_spec = {}
         for edge in edges:
             src_type = nodes_by_id[edge["source"]]["type"]
             dst_type = nodes_by_id[edge["target"]]["type"]
+            edges_by_spec.setdefault((edge["type"], src_type, dst_type), []).append(edge)
+        for (etype, src_type, dst_type), spec_edges in edges_by_spec.items():
             conn.execute(
-                f"MATCH (a:{src_type} {{id: $src}}), (b:{dst_type} {{id: $dst}}) "
-                f"CREATE (a)-[:{edge['type']} {{type: $type, detail: $detail, "
-                f"source_document: $stem}}]->(b)",
+                f"UNWIND $rows AS row "
+                f"MATCH (a:{src_type} {{id: row.src}}), (b:{dst_type} {{id: row.dst}}) "
+                f"CREATE (a)-[:{etype} {{type: row.type, detail: row.detail, "
+                f"source_document: row.stem}}]->(b)",
                 {
-                    "src": f"{stem}::{edge['source']}",
-                    "dst": f"{stem}::{edge['target']}",
-                    "type": edge["type"],
-                    "detail": edge.get("detail") or "",
-                    "stem": stem,
+                    "rows": [
+                        {
+                            "src": f"{stem}::{edge['source']}",
+                            "dst": f"{stem}::{edge['target']}",
+                            "type": edge["type"],
+                            "detail": edge.get("detail") or "",
+                            "stem": stem,
+                        }
+                        for edge in spec_edges
+                    ]
                 },
             )
 
@@ -469,7 +496,7 @@ def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
         return [], []
     conn = _get_connection()
     prefixed_seeds = [f"{stem}::{sid}" for sid in seed_ids]
-    hops = max(hops, 0)
+    hops = max(min(hops, MAX_EXPAND_HOPS), 0)
 
     # No NODE table exists at all -- see _has_table_of_kind. Nothing can
     # possibly match (there are no nodes in the whole database), and both

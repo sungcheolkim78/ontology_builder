@@ -5,8 +5,7 @@ import pytest
 from app import graphdb
 from app.embeddings import EMBEDDING_DIM
 from app.graphrag import (
-    determine_relevant_types,
-    extract_keywords,
+    analyze_question,
     search_graph,
 )
 
@@ -95,24 +94,34 @@ def teardown_function():
     _remove_db_path()
 
 
-def test_determine_relevant_types_parses_and_filters_hallucinated_types(monkeypatch):
+def test_analyze_question_parses_and_filters_hallucinated_types(monkeypatch):
     monkeypatch.setattr(
         "app.graphrag.get_chat_model",
         lambda: FakeChatModel(
-            json.dumps({"node_types": ["Person", "NotARealType"], "edge_types": ["WORKED_ON"]})
+            json.dumps(
+                {
+                    "node_types": ["Person", "NotARealType"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"], "NotARealType": ["x"]},
+                }
+            )
         ),
     )
 
-    result = determine_relevant_types("What did Ada Lovelace work on?", SCHEMA)
+    result = analyze_question("What did Ada Lovelace work on?", SCHEMA)
 
-    assert result == {"node_types": ["Person"], "edge_types": ["WORKED_ON"]}
+    assert result == {
+        "node_types": ["Person"],
+        "edge_types": ["WORKED_ON"],
+        "keywords": {"Person": ["Ada Lovelace"]},
+    }
 
 
-def test_determine_relevant_types_raises_on_invalid_json(monkeypatch):
+def test_analyze_question_raises_on_invalid_json(monkeypatch):
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: FakeChatModel("not json"))
 
     try:
-        determine_relevant_types("some question", SCHEMA)
+        analyze_question("some question", SCHEMA)
         assert False, "expected ValueError"
     except ValueError:
         pass
@@ -122,8 +131,13 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
-            json.dumps({"Person": ["Ada Lovelace"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -135,7 +149,7 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     assert result["context"] is not None
     assert "Ada Lovelace" in result["context"]
     assert "Analytical Engine" in result["context"]
-    assert len(model.calls) == 2  # type analysis, then keyword extraction
+    assert len(model.calls) == 1  # single combined analysis call
     # 1-hop expansion from Ada Lovelace also pulls in Charles Babbage, since
     # he shares the Analytical Engine node via his own WORKED_ON edge.
     assert {n["label"] for n in result["related_nodes"]} == {
@@ -148,7 +162,9 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
 
 def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel([json.dumps({"node_types": [], "edge_types": []})])
+    model = SequencedChatModel(
+        [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
+    )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
     result = search_graph("completely unrelated question", SCHEMA, STEM, hops=1)
@@ -167,8 +183,13 @@ def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypa
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": []}),
-            json.dumps({"Person": ["someone who does not exist in the graph"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": [],
+                    "keywords": {"Person": ["someone who does not exist in the graph"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -189,8 +210,13 @@ def test_search_graph_falls_back_per_type_when_only_one_type_has_no_keyword_matc
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person", "Concept"], "edge_types": []}),
-            json.dumps({"Person": ["Ada Lovelace"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person", "Concept"],
+                    "edge_types": [],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -216,10 +242,7 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
     ]
     graphdb.write_graph(STEM, nodes, [])
     model = SequencedChatModel(
-        [
-            json.dumps({"node_types": ["Person"], "edge_types": []}),
-            json.dumps({}),
-        ]
+        [json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
@@ -232,9 +255,7 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
 def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
-        [
-            json.dumps({"node_types": [], "edge_types": ["MEMBER_OF"]}),
-        ]
+        [json.dumps({"node_types": [], "edge_types": ["MEMBER_OF"], "keywords": {}})]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
 
@@ -252,8 +273,13 @@ def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeyp
     graphdb.write_graph(STEM, nodes_without_organizations, edges_without_organizations)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Organization"], "edge_types": []}),
-            json.dumps({"Organization": ["nonexistent keyword"]}),
+            json.dumps(
+                {
+                    "node_types": ["Organization"],
+                    "edge_types": [],
+                    "keywords": {"Organization": ["nonexistent keyword"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -285,8 +311,13 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
     graphdb.write_graph(STEM, nodes_with_detail, edges_with_detail)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
-            json.dumps({"Person": ["Ada Lovelace"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -301,8 +332,13 @@ def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
-            json.dumps({"Person": ["Ada Lovelace"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)

@@ -84,15 +84,21 @@ const visibleEdges = computed(() => {
   )
 })
 
+// Memoized once per displayNodes/displayEdges change instead of being
+// recomputed from scratch on every colorFor/edgeColorFor call -- v-network-
+// graph calls these once per node/edge on every render (including every
+// force-simulation tick), so recomputing the sorted type list inline made
+// rendering O(n^2)/O(n*m) instead of O(n).
+const nodeTypeOrder = computed(() => [...new Set(displayNodes.value.map((n) => n.type))].sort())
+const edgeTypeOrder = computed(() => [...new Set(displayEdges.value.map((e) => e.type))].sort())
+
 function colorFor(type) {
-  const types = [...new Set(displayNodes.value.map((n) => n.type))].sort()
-  const index = types.indexOf(type)
+  const index = nodeTypeOrder.value.indexOf(type)
   return TYPE_COLORS[index % TYPE_COLORS.length]
 }
 
 function edgeColorFor(type) {
-  const types = [...new Set(displayEdges.value.map((e) => e.type))].sort()
-  const index = types.indexOf(type)
+  const index = edgeTypeOrder.value.indexOf(type)
   return EDGE_TYPE_COLORS[index % EDGE_TYPE_COLORS.length]
 }
 

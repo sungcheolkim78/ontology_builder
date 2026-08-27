@@ -1,6 +1,8 @@
 import json
+import logging
+import os
 import re
-from pathlib import Path 
+from pathlib import Path
 
 from app.chat import get_chat_model
 from app.embeddings import get_embedding_model, node_embedding_text
@@ -9,6 +11,25 @@ from app import graphdb
 from app.paths import data_dir
 
 GRAPH_DIR = data_dir() / "graph"
+
+logger = logging.getLogger(__name__)
+
+# ~4 chars/token is a conservative rule of thumb; the default model
+# (gpt-4o-mini, 128k-token context) leaves plenty of headroom below this for
+# the schema/prompt wrapper and the JSON response. Configurable since
+# OPENROUTER_MODEL can point at a model with a different context window.
+# Guards against silently blowing the context window or getting back
+# truncated/malformed JSON (e.g. an edge referencing a node that got cut off
+# mid-response) instead of a clear, immediate error.
+MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 200_000))
+
+
+def _check_document_length(document_text: str) -> None:
+    if len(document_text) > MAX_DOCUMENT_CHARS:
+        raise ValueError(
+            f"document is too long ({len(document_text)} chars, "
+            f"max {MAX_DOCUMENT_CHARS}) to send to the LLM in one call"
+        )
 
 DEFAULT_SCHEMA = {
     "node_types": [
@@ -76,6 +97,7 @@ def parse_json_response(text: str) -> dict:
 
 
 def generate_schema(document_text: str) -> dict:
+    _check_document_length(document_text)
     model = get_chat_model()
     response = invoke_with_telemetry(
         "ontology.generate_schema", model, SCHEMA_PROMPT.format(document=document_text)
@@ -99,6 +121,24 @@ def extract_graph(document_text: str, schema: dict) -> dict:
         graph.get("edges"), list
     ):
         raise ValueError("extraction JSON missing nodes/edges lists")
+
+    # The LLM occasionally hallucinates an edge endpoint that isn't among
+    # its own extracted nodes (e.g. an implied node it never fully emitted,
+    # or output truncated mid-list). graphdb.write_graph would reject the
+    # whole extraction over one bad edge, so drop just the offending edges
+    # here and keep the rest of the graph.
+    node_ids = {n["id"] for n in graph["nodes"]}
+    valid_edges = []
+    for edge in graph["edges"]:
+        if edge["source"] not in node_ids or edge["target"] not in node_ids:
+            logger.warning(
+                "dropping edge with unknown endpoint: %r -> %r (type=%r)",
+                edge.get("source"), edge.get("target"), edge.get("type"),
+            )
+            continue
+        valid_edges.append(edge)
+    graph["edges"] = valid_edges
+
     return graph
 
 

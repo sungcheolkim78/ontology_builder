@@ -81,8 +81,13 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
     write_graph_dir()
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": ["WORKED_ON"]}),
-            json.dumps({"Person": ["Ada Lovelace"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
             "Ada Lovelace worked on the Analytical Engine.",
         ]
     )
@@ -106,8 +111,8 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
         assert body["content"] == "Ada Lovelace worked on the Analytical Engine."
         assert body["node_types"] == ["Person"]
         assert body["edge_types"] == ["WORKED_ON"]
-        assert len(model.calls) == 3
-        final_messages = model.calls[2]
+        assert len(model.calls) == 2
+        final_messages = model.calls[1]
         assert final_messages[0].content.startswith("다음은")
         assert "Analytical Engine" in final_messages[0].content
         assert {n["label"] for n in body["related_nodes"]} == {
@@ -128,7 +133,9 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
 
 def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
     write_graph_dir()
-    model = SequencedChatModel([json.dumps({"node_types": [], "edge_types": []})])
+    model = SequencedChatModel(
+        [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
+    )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
@@ -168,8 +175,13 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
     write_graph_dir()
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Person"], "edge_types": []}),
-            json.dumps({"Person": ["a stranger not in the graph"]}),
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": [],
+                    "keywords": {"Person": ["a stranger not in the graph"]},
+                }
+            ),
             "Ada Lovelace is the person mentioned.",
         ]
     )
@@ -190,8 +202,8 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
         body = response.json()
         assert body["node_types"] == ["Person"]
         assert body["content"] == "Ada Lovelace is the person mentioned."
-        assert len(model.calls) == 3
-        final_messages = model.calls[2]
+        assert len(model.calls) == 2
+        final_messages = model.calls[1]
         assert "Ada Lovelace" in final_messages[0].content
     finally:
         graphdb.reset_connection()
@@ -216,8 +228,13 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
     write_graph_dir(schema=schema_with_unused_type)
     model = SequencedChatModel(
         [
-            json.dumps({"node_types": ["Location"], "edge_types": []}),
-            json.dumps({"Location": ["nonexistent keyword"]}),
+            json.dumps(
+                {
+                    "node_types": ["Location"],
+                    "edge_types": [],
+                    "keywords": {"Location": ["nonexistent keyword"]},
+                }
+            ),
         ]
     )
     monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
@@ -237,7 +254,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
         body = response.json()
         assert body["node_types"] == ["Location"]
         assert body["content"] == "관련된 내용을 찾을 수 없습니다."
-        assert len(model.calls) == 2
+        assert len(model.calls) == 1
     finally:
         graphdb.reset_connection()
         if GRAPH_DIR.exists():

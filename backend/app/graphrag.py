@@ -11,26 +11,16 @@ from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 # of dumping every instance of the type into the context.
 EMBEDDING_FALLBACK_TOP_K = 5
 
-KEYWORD_PROMPT = """Extract the key entities, names, or specific terms mentioned in this \
-question that might refer to nodes in a knowledge graph, grouped by which of the given \
-node types each term is an instance of. Only use type names from the list below, and \
-only include a type if the question actually names a specific instance of it -- omit \
+ANALYSIS_PROMPT = """Given this ontology schema and a user's question, do two things:
+
+1. Decide which node types and edge types (using their exact names from the schema) are \
+relevant to answering the question. Only use type names that appear in the schema below. \
+If nothing in the schema seems relevant, return empty lists.
+
+2. For each relevant node type, extract the key entities, names, or specific terms \
+mentioned in the question that might refer to an instance of that node type. Only include \
+a type in "keywords" if the question actually names a specific instance of it -- omit \
 types with no matching terms.
-
-Node types:
-{node_types}
-
-Respond with ONLY valid JSON in this exact shape, no other text:
-{{"TypeName": ["term1", "term2"], ...}}
-
-Question:
-{question}
-"""
-
-TYPE_ANALYSIS_PROMPT = """Given this ontology schema and a user's question, decide which \
-node types and edge types (using their exact names from the schema) are relevant to \
-answering the question. Only use type names that appear in the schema below. If nothing \
-in the schema seems relevant, return empty lists.
 
 Schema:
 {schema}
@@ -39,24 +29,8 @@ Question:
 {question}
 
 Respond with ONLY valid JSON in this exact shape, no other text:
-{{"node_types": ["..."], "edge_types": ["..."]}}
+{{"node_types": ["..."], "edge_types": ["..."], "keywords": {{"TypeName": ["term1", "term2"]}}}}
 """
-
-
-def extract_keywords(question: str, node_types: list) -> dict:
-    """Returns keywords grouped by node type, e.g. {"Person": ["Ada Lovelace"]},
-    so find_relevant_nodes can match each term only against its own type
-    instead of every allowed type at once."""
-    model = get_chat_model()
-    response = invoke_with_telemetry(
-        "graphrag.extract_keywords",
-        model,
-        KEYWORD_PROMPT.format(node_types=json.dumps(node_types), question=question),
-    )
-    result = parse_json_response(response.content)
-    if not isinstance(result, dict):
-        raise ValueError("keyword extraction did not return a JSON object")
-    return {t: kws for t, kws in result.items() if t in node_types and isinstance(kws, list)}
 
 
 def embed_query(question: str) -> list:
@@ -65,25 +39,40 @@ def embed_query(question: str) -> list:
     return vectors[0]
 
 
-def determine_relevant_types(question: str, schema: dict) -> dict:
+def analyze_question(question: str, schema: dict) -> dict:
+    """Single combined LLM call replacing what used to be two sequential
+    calls (type analysis, then keyword extraction) -- both only need the
+    schema + question as input, so one round-trip determines relevant
+    node/edge types and, for each relevant node type, any keywords naming a
+    specific instance of it (e.g. {"Person": ["Ada Lovelace"]}), so
+    find_relevant_nodes can match each term only against its own type."""
     model = get_chat_model()
     response = invoke_with_telemetry(
-        "graphrag.determine_types",
+        "graphrag.analyze_question",
         model,
-        TYPE_ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question),
+        ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question),
     )
     result = parse_json_response(response.content)
     if not isinstance(result.get("node_types"), list) or not isinstance(
         result.get("edge_types"), list
     ):
-        raise ValueError("type analysis did not return node_types/edge_types lists")
+        raise ValueError("question analysis did not return node_types/edge_types lists")
 
     valid_node_types = {nt["name"] for nt in schema.get("node_types", [])}
     valid_edge_types = {et["name"] for et in schema.get("edge_types", [])}
-    return {
-        "node_types": [t for t in result["node_types"] if t in valid_node_types],
-        "edge_types": [t for t in result["edge_types"] if t in valid_edge_types],
-    }
+    node_types = [t for t in result["node_types"] if t in valid_node_types]
+    edge_types = [t for t in result["edge_types"] if t in valid_edge_types]
+
+    keywords_raw = result.get("keywords")
+    keywords = {}
+    if isinstance(keywords_raw, dict):
+        keywords = {
+            t: kws
+            for t, kws in keywords_raw.items()
+            if t in node_types and isinstance(kws, list)
+        }
+
+    return {"node_types": node_types, "edge_types": edge_types, "keywords": keywords}
 
 
 def _format_node_line(node: dict) -> str:
@@ -123,9 +112,10 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
     frontend can link the answer back to specific graph entities) alongside
     the resulting context text, or None/empty if nothing was found at any
     stage."""
-    types = determine_relevant_types(question, schema)
-    node_types = types["node_types"]
-    edge_types = types["edge_types"]
+    analysis = analyze_question(question, schema)
+    node_types = analysis["node_types"]
+    edge_types = analysis["edge_types"]
+    keywords = analysis["keywords"]
 
     if not node_types and not edge_types:
         return {
@@ -138,7 +128,6 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
 
     matched_node_ids = set()
     if node_types:
-        keywords = extract_keywords(question, node_types)
         query_embedding = None
         for node_type in node_types:
             type_ids = graphdb.find_relevant_nodes(

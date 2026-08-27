@@ -224,6 +224,30 @@ def test_extract_returns_400_on_invalid_json(monkeypatch):
     assert response.status_code == 400
 
 
+def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
+    write_document()
+    schema_dir = GRAPH_DIR / "doc_raw"
+    schema_dir.mkdir(parents=True)
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    (schema_dir / "schema.json").write_text(json.dumps(schema))
+
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Person"}],
+        "edges": [
+            {"source": "n1", "target": "does_not_exist", "type": "KNOWS"},
+        ],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/extract")
+
+    assert response.status_code == 200
+    assert response.json()["edges"] == []
+
+
 def test_get_ontology_returns_saved_graph():
     from app import graphdb
     nodes = [{"id": "n1", "label": "Alice", "type": "Person"}]
