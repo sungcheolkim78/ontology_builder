@@ -47,8 +47,6 @@ const progressMessage = computed(() => {
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
-const schemaTypeCount = computed(() => (schema.value ? schema.value.node_types.length : 0))
-
 const displayMode = computed(() => {
   if (status.value === 'ready') return 'graph'
   if (schema.value && schema.value.node_types.length > 0) return 'schema'
@@ -106,7 +104,7 @@ function edgeColorFor(type) {
 const vngNodes = computed(() => {
   const result = {}
   for (const n of visibleNodes.value) {
-    result[n.id] = { name: n.label, type: n.type }
+    result[n.id] = { name: n.label, type: n.type, detail: n.detail }
   }
   return result
 })
@@ -121,6 +119,30 @@ const vngEdges = computed(() => {
 
 const layouts = ref({ nodes: {} })
 const selectedNodes = ref([])
+
+// --- node hover tooltip ---
+const hoveredNode = ref(null)
+const tooltipPos = ref({ x: 0, y: 0 })
+
+function onNodePointerOver({ node, event }) {
+  hoveredNode.value = vngNodes.value[node] ?? null
+  tooltipPos.value = { x: event.clientX, y: event.clientY }
+}
+
+function onNodePointerMove(event) {
+  if (hoveredNode.value) {
+    tooltipPos.value = { x: event.clientX, y: event.clientY }
+  }
+}
+
+function onNodePointerOut() {
+  hoveredNode.value = null
+}
+
+const eventHandlers = {
+  'node:pointerover': onNodePointerOver,
+  'node:pointerout': onNodePointerOut,
+}
 
 watch(
   () => props.highlightedNodeIds,
@@ -148,23 +170,60 @@ watch(
 
 // --- d3-force layout ---
 const CENTER = 200
+const CLUSTER_STRENGTH = 0.15
 let simulation = null
+
+// Pulls nodes of the same `type` toward that type's current centroid each
+// tick, so same-type nodes visually cluster together instead of spreading
+// out purely by link/charge forces.
+function forceCluster(strength) {
+  let nodes = []
+  function force(alpha) {
+    const centers = new Map()
+    for (const n of nodes) {
+      let c = centers.get(n.type)
+      if (!c) {
+        c = { x: 0, y: 0, count: 0 }
+        centers.set(n.type, c)
+      }
+      c.x += n.x
+      c.y += n.y
+      c.count += 1
+    }
+    for (const c of centers.values()) {
+      c.x /= c.count
+      c.y /= c.count
+    }
+    for (const n of nodes) {
+      const c = centers.get(n.type)
+      n.vx -= (n.x - c.x) * strength * alpha
+      n.vy -= (n.y - c.y) * strength * alpha
+    }
+  }
+  force.initialize = (_nodes) => {
+    nodes = _nodes
+  }
+  return force
+}
 
 watch(
   [visibleNodes, visibleEdges],
   ([nodeList, edgeList]) => {
     const simNodes = nodeList.map((node) => {
       const existing = layouts.value.nodes[node.id]
-      return existing ? { id: node.id, x: existing.x, y: existing.y } : { id: node.id }
+      return existing
+        ? { id: node.id, type: node.type, x: existing.x, y: existing.y }
+        : { id: node.id, type: node.type }
     })
     const simLinks = edgeList.map((e) => ({ source: e.source, target: e.target }))
 
     simulation?.stop()
     simulation = forceSimulation(simNodes)
-      .force('charge', forceManyBody().strength(-300))
-      .force('link', forceLink(simLinks).id((d) => d.id).distance(120))
+      .force('charge', forceManyBody().strength(-500))
+      .force('link', forceLink(simLinks).id((d) => d.id).distance(180))
       .force('center', forceCenter(CENTER, CENTER))
-      .force('collide', forceCollide(30))
+      .force('collide', forceCollide(40))
+      .force('cluster', forceCluster(CLUSTER_STRENGTH))
       .on('tick', () => {
         const positions = {}
         simNodes.forEach((n) => {
@@ -186,6 +245,7 @@ const configs = computed(() => ({
   view: {
     autoPanAndZoomOnLoad: 'fit-content',
     fitContentMargin: '10%',
+    scalingObjects: true,
   },
   node: {
     normal: {
@@ -201,9 +261,9 @@ const configs = computed(() => ({
     },
     selectable: true,
     label: {
-      visible: true,
+      visible: showNodeLabels.value,
       text: 'name',
-      fontSize: 10,
+      fontSize: () => 10 / zoomLevel.value,
     },
   },
   edge: {
@@ -211,14 +271,19 @@ const configs = computed(() => ({
       color: (edge) => edgeColorFor(edge.label),
       width: 1.5,
     },
+    type: 'curve',
+    gap: 12,
     label: {
-      fontSize: 9,
+      fontSize: () => 9 / zoomLevel.value,
       color: '#555',
     },
   },
 }))
 
 const graphRef = ref(null)
+const zoomLevel = ref(1)
+const showNodeLabels = ref(true)
+const showEdgeLabels = ref(true)
 
 function resetView() {
   graphRef.value?.fitToContents()
@@ -399,15 +464,18 @@ async function embed() {
             {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
           </button>
           <button v-if="displayMode !== 'none'" @click="resetView">리셋</button>
+          <label class="label-toggle">
+            <input type="checkbox" v-model="showNodeLabels" />
+            Node Label
+          </label>
+          <label class="label-toggle">
+            <input type="checkbox" v-model="showEdgeLabels" />
+            Edge Label
+          </label>
         </div>
-        <p class="schema-status">
-          <template v-if="schemaTypeCount === 0">활성 스키마 없음 (추출 시 기본 스키마 사용)</template>
-          <template v-else>활성 스키마: 노드 타입 {{ schemaTypeCount }}개</template>
-        </p>
         <p v-if="progressMessage" class="progress">{{ progressMessage }}</p>
         <p v-if="message" class="success">{{ message }}</p>
         <p v-if="error" class="error">{{ error }}</p>
-        <p v-if="displayMode === 'schema'" class="placeholder">스키마 미리보기 (아직 추출 전)</p>
         <p v-if="displayMode === 'none' && !error" class="placeholder">
           스키마를 생성하거나 라이브러리에서 선택하세요
         </p>
@@ -415,19 +483,31 @@ async function embed() {
 
       <p v-else-if="status === 'error'" class="error">{{ error }}</p>
 
-      <div v-if="displayMode !== 'none'" class="graph-viewport">
+      <div v-if="displayMode !== 'none'" class="graph-viewport" @mousemove="onNodePointerMove">
         <v-network-graph
           ref="graphRef"
           v-model:selected-nodes="selectedNodes"
+          v-model:zoom-level="zoomLevel"
           :nodes="vngNodes"
           :edges="vngEdges"
           :layouts="layouts"
           :configs="configs"
+          :event-handlers="eventHandlers"
         >
           <template #edge-label="{ edge, ...slotProps }">
-            <v-edge-label :text="edge.label" align="center" vertical-align="above" v-bind="slotProps" />
+            <v-edge-label v-if="showEdgeLabels" :text="edge.label" align="center" vertical-align="above" v-bind="slotProps" />
           </template>
         </v-network-graph>
+
+        <div
+          v-if="hoveredNode"
+          class="node-tooltip"
+          :style="{ left: tooltipPos.x + 12 + 'px', top: tooltipPos.y + 12 + 'px' }"
+        >
+          <div class="node-tooltip-type">{{ hoveredNode.type }}</div>
+          <div class="node-tooltip-label">{{ hoveredNode.name }}</div>
+          <div v-if="hoveredNode.detail" class="node-tooltip-detail">{{ hoveredNode.detail }}</div>
+        </div>
       </div>
     </div>
   </section>
@@ -456,17 +536,22 @@ async function embed() {
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
   flex-shrink: 0;
 }
+.label-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #555;
+  margin-left: 0.25rem;
+  cursor: pointer;
+}
 .placeholder {
   color: #888;
-  flex-shrink: 0;
-}
-.schema-status {
-  color: #555;
-  font-size: 0.85rem;
   flex-shrink: 0;
 }
 .progress {
@@ -486,5 +571,35 @@ async function embed() {
   flex: 1;
   min-height: 0;
   width: 100%;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.12);
+  position: relative;
+}
+.node-tooltip {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+  max-width: 260px;
+  background: #1f2937;
+  color: #fff;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.node-tooltip-type {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #9ca3af;
+  margin-bottom: 0.15rem;
+}
+.node-tooltip-label {
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+.node-tooltip-detail {
+  color: #d1d5db;
 }
 </style>
