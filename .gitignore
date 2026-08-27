@@ -13,6 +13,9 @@ backend/data/*
 # Local backend/data snapshots (see scripts/backup_data.sh)
 backups/
 
+# Playwright MCP tool output (ad-hoc test screenshots/snapshots)
+.playwright-mcp/
+
 # C extensions
 *.so
 
