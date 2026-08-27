@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { VEdgeLabel, VNetworkGraph } from 'v-network-graph'
 import 'v-network-graph/lib/style.css'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
+import { colorForNodeType } from '../utils/nodeColors.js'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -45,7 +46,6 @@ const progressMessage = computed(() => {
   return ''
 })
 
-const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const displayMode = computed(() => {
@@ -92,8 +92,7 @@ const nodeTypeOrder = computed(() => [...new Set(displayNodes.value.map((n) => n
 const edgeTypeOrder = computed(() => [...new Set(displayEdges.value.map((e) => e.type))].sort())
 
 function colorFor(type) {
-  const index = nodeTypeOrder.value.indexOf(type)
-  return TYPE_COLORS[index % TYPE_COLORS.length]
+  return colorForNodeType(type, nodeTypeOrder.value)
 }
 
 function edgeColorFor(type) {

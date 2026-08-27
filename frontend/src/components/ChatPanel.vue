@@ -3,6 +3,7 @@ import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
 import 'katex/dist/katex.min.css'
 import { onMounted, onUnmounted, ref } from 'vue'
+import { colorForNodeType } from '../utils/nodeColors.js'
 
 marked.use(markedKatex({ throwOnError: false }))
 
@@ -12,7 +13,25 @@ const props = defineProps({
   renderMarkdown: { type: Boolean, default: true },
   enabledTypes: { type: Set, default: () => new Set() },
   enabledEdgeTypes: { type: Set, default: () => new Set() },
+  // Same sorted type list OntologyGraph.vue uses for its own node colors
+  // (see nodeColors.js) -- needed here so a related-node chip's color
+  // matches that node's color in the graph view.
+  availableTypes: { type: Array, default: () => [] },
 })
+
+// related_nodes already comes back relevance-ordered from the backend
+// (query-matched nodes before hop-expanded neighbors -- see
+// graphrag.search_graph); this only reorders by whether the node's type is
+// one the question was actually determined to be about, keeping that
+// backend order as the tie-break within each tier (Array#sort is stable).
+function sortRelatedNodes(relatedNodes, nodeTypes) {
+  const relevantTypes = new Set(nodeTypes ?? [])
+  return [...relatedNodes].sort((a, b) => {
+    const aRank = relevantTypes.has(a.type) ? 0 : 1
+    const bRank = relevantTypes.has(b.type) ? 0 : 1
+    return aRank - bRank
+  })
+}
 
 const emit = defineEmits(['highlight-nodes', 'toggle-type'])
 
@@ -60,7 +79,7 @@ async function sendMessage() {
       content: data.content,
       nodeTypes: data.node_types ?? [],
       edgeTypes: data.edge_types ?? [],
-      relatedNodes: data.related_nodes ?? [],
+      relatedNodes: sortRelatedNodes(data.related_nodes ?? [], data.node_types),
     })
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -134,6 +153,7 @@ async function sendMessage() {
               :key="node.id"
               type="button"
               class="node-chip"
+              :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
               @click="emit('highlight-nodes', [node.id])"
             >
               {{ node.label }}
@@ -274,13 +294,13 @@ async function sendMessage() {
   font-size: 0.75rem;
   padding: 0.15rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid #4f8ef7;
+  border: 1px solid var(--chip-color, #4f8ef7);
   background: white;
-  color: #4f8ef7;
+  color: var(--chip-color, #4f8ef7);
   cursor: pointer;
 }
 .node-chip:hover {
-  background: #4f8ef7;
+  background: var(--chip-color, #4f8ef7);
   color: white;
 }
 .error {

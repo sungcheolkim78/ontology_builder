@@ -144,6 +144,7 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           :render-markdown="renderMarkdown"
           :enabled-types="graphFilters"
           :enabled-edge-types="edgeGraphFilters"
+          :available-types="availableTypes"
           @highlight-nodes="onHighlightNodes"
           @toggle-type="onToggleType"
         />

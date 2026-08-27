@@ -126,7 +126,18 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
             "related_edges": [],
         }
 
-    matched_node_ids = set()
+    # Ordered (not just a set) so the relevance signal each match tier
+    # already carries -- keyword hits, then embedding-similarity rank for
+    # the fallback case -- survives into related_nodes' order below, instead
+    # of being discarded by a plain set's undefined iteration order.
+    matched_node_ids = []
+    matched_node_id_set = set()
+
+    def _add_matched(node_id):
+        if node_id not in matched_node_id_set:
+            matched_node_id_set.add(node_id)
+            matched_node_ids.append(node_id)
+
     if node_types:
         query_embedding = None
         for node_type in node_types:
@@ -154,13 +165,14 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
                 # just this type, same fallback embeddings were meant to
                 # narrow (see EMBEDDING_FALLBACK_TOP_K above).
                 type_ids = graphdb.all_nodes_of_types(stem, [node_type])
-            matched_node_ids.update(type_ids)
+            for node_id in type_ids:
+                _add_matched(node_id)
 
     if edge_types:
-        matched_edges = graphdb.find_matching_edges(stem, edge_types, matched_node_ids)
+        matched_edges = graphdb.find_matching_edges(stem, edge_types, matched_node_id_set)
         for edge in matched_edges:
-            matched_node_ids.add(edge["source"])
-            matched_node_ids.add(edge["target"])
+            _add_matched(edge["source"])
+            _add_matched(edge["target"])
 
         if not matched_node_ids:
             # No node was matched at all (node_types was empty, or every
@@ -168,10 +180,15 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
             # fall back to every edge of the determined type rather than
             # reporting "not found" when the graph actually has data.
             for edge in graphdb.all_edges_of_types(stem, edge_types):
-                matched_node_ids.add(edge["source"])
-                matched_node_ids.add(edge["target"])
+                _add_matched(edge["source"])
+                _add_matched(edge["target"])
 
-    related_nodes, related_edges = graphdb.expand_hops(stem, matched_node_ids, hops)
+    related_nodes, related_edges = graphdb.expand_hops(stem, matched_node_id_set, hops)
+    # Put directly-matched nodes first, in the relevance order they were
+    # matched in above; nodes only pulled in by hop expansion (never
+    # directly matched) sort after, in whatever order the DB returned them.
+    match_rank = {node_id: rank for rank, node_id in enumerate(matched_node_ids)}
+    related_nodes.sort(key=lambda n: match_rank.get(n["id"], len(match_rank)))
     context = _build_context_text(related_nodes, related_edges)
     return {
         "node_types": node_types,
