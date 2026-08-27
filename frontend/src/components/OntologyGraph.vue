@@ -12,6 +12,7 @@ const props = defineProps({
   enabledEdgeTypes: { type: Set, default: () => new Set() },
   schemaVersion: { type: Number, default: 0 },
   highlightedNodeIds: { type: Array, default: () => [] },
+  maxSchemaChars: { type: Number, default: 300000 },
 })
 const emit = defineEmits(['types-available', 'edge-types-available', 'schema-updated'])
 
@@ -25,6 +26,12 @@ const isGeneratingSchema = ref(false)
 const schemaDocumentType = ref('general')
 const isExtracting = ref(false)
 const isEmbedding = ref(false)
+// True right after a fresh schema generation, so the graph view shows the
+// schema's own node/edge types instead of the previously extracted graph --
+// otherwise a re-generated schema would be invisible until re-extraction.
+// Reset on file change (defaults back to the extracted LadybugDB graph) and
+// after a successful extraction (which produces a graph worth showing again).
+const showSchemaPreview = ref(false)
 const elapsedSeconds = ref(0)
 let elapsedTimer = null
 
@@ -50,6 +57,7 @@ const progressMessage = computed(() => {
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const displayMode = computed(() => {
+  if (showSchemaPreview.value && schema.value && schema.value.node_types.length > 0) return 'schema'
   if (status.value === 'ready') return 'graph'
   if (schema.value && schema.value.node_types.length > 0) return 'schema'
   return 'none'
@@ -420,6 +428,7 @@ async function loadGraph(file) {
   message.value = ''
   layouts.value = { nodes: {} }
   selectedNodes.value = []
+  showSchemaPreview.value = false
   if (!file) {
     status.value = 'empty'
     return
@@ -457,13 +466,17 @@ async function generateSchema() {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ document_type: schemaDocumentType.value }),
+      body: JSON.stringify({
+        document_type: schemaDocumentType.value,
+        max_chars: props.maxSchemaChars,
+      }),
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
     schema.value = await res.json()
+    showSchemaPreview.value = true
     layouts.value = { nodes: {} }
     message.value = `스키마 생성 완료 (노드 타입 ${schema.value.node_types.length}개, 엣지 타입 ${schema.value.edge_types.length}개)`
     emit('schema-updated')
@@ -547,6 +560,12 @@ async function embed() {
           </button>
           <button :disabled="isEmbedding || status !== 'ready'" @click="embed">
             {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
+          </button>
+          <button
+            v-if="status === 'ready' && schema && schema.node_types.length > 0"
+            @click="showSchemaPreview = !showSchemaPreview"
+          >
+            {{ showSchemaPreview ? '추출된 그래프 보기' : '스키마 미리보기' }}
           </button>
           <button v-if="displayMode !== 'none'" @click="resetView">리셋</button>
           <label class="label-toggle">

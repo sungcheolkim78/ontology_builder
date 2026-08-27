@@ -18,6 +18,7 @@ const emit = defineEmits([
   'hops-changed',
   'markdown-changed',
   'database-reset',
+  'max-schema-chars-changed',
 ])
 
 const model = ref('로딩 중...')
@@ -32,6 +33,7 @@ const resetDbError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
 const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
+const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
 
@@ -52,6 +54,12 @@ function onHopsInput(event) {
   const value = Math.max(1, Math.min(5, Number(event.target.value) || 1))
   graphRagHops.value = value
   emit('hops-changed', value)
+}
+
+function onMaxSchemaCharsInput(event) {
+  const value = Math.max(1, Number(event.target.value) || 300000)
+  maxSchemaChars.value = value
+  emit('max-schema-chars-changed', value)
 }
 
 function onMarkdownToggle(event) {
@@ -230,10 +238,10 @@ function toggleEdgeType(type) {
     <h1 class="panel-title">Ontology Builder</h1>
     <div class="panel-body">
     <div class="settings-group">
-      <h2 class="group-title">파일 설정</h2>
+      <h2 class="group-title">워크플로우</h2>
       <section>
         <button type="button" class="explorer-button" @click="showFileExplorer = true">
-          파일 설정
+          원본 파일 선택
         </button>
         <p class="hint">문서를 업로드하고, 업로드된 문서를 선택하거나 스키마 라이브러리를 적용할 수 있습니다.</p>
       </section>
@@ -271,6 +279,22 @@ function toggleEdgeType(type) {
             class="hops-input"
           />
         </label>
+      </section>
+
+      <section>
+        <h3>스키마 생성 설정</h3>
+        <label class="hops-label">
+          최고 문자수
+          <input
+            type="number"
+            min="1"
+            step="1000"
+            :value="maxSchemaChars"
+            @change="onMaxSchemaCharsInput"
+            class="hops-input max-chars-input"
+          />
+        </label>
+        <p class="hint">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
       </section>
 
       <section>
@@ -560,6 +584,9 @@ function toggleEdgeType(type) {
 .hops-input {
   width: 4rem;
   padding: 0.25rem;
+}
+.max-chars-input {
+  width: 6rem;
 }
 .explorer-button {
   padding: 0.4rem 0.75rem;

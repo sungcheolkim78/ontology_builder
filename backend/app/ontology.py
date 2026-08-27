@@ -26,11 +26,12 @@ logger = logging.getLogger(__name__)
 MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 300_000))
 
 
-def _check_document_length(document_text: str) -> None:
-    if len(document_text) > MAX_DOCUMENT_CHARS:
+def _check_document_length(document_text: str, max_chars: int | None = None) -> None:
+    limit = max_chars if max_chars is not None else MAX_DOCUMENT_CHARS
+    if len(document_text) > limit:
         raise ValueError(
             f"document is too long ({len(document_text)} chars, "
-            f"max {MAX_DOCUMENT_CHARS}) to send to the LLM in one call"
+            f"max {limit}) to send to the LLM in one call"
         )
 
 DEFAULT_SCHEMA = {
@@ -63,6 +64,11 @@ identifier: letters, digits, and underscores only, no spaces or other \
 characters, and it must start with a letter or underscore (e.g. "JobTitle" \
 or "Job_Title", not "Job Title"). This applies even if the document is not \
 in English -- transliterate or translate the name into an ASCII identifier.
+
+Write every "description" value in the same language as the document itself \
+(e.g. Korean descriptions for a Korean document, English descriptions for an \
+English document), regardless of what language the "name" identifier above \
+ends up in.
 
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"node_types": [{{"name": "...", "description": "..."}}], \
@@ -160,8 +166,10 @@ def parse_json_response(text: str) -> dict:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 
 
-def generate_schema(document_text: str, document_type: str = "general") -> dict:
-    _check_document_length(document_text)
+def generate_schema(
+    document_text: str, document_type: str = "general", max_chars: int | None = None
+) -> dict:
+    _check_document_length(document_text, max_chars)
     prompt_template = SCHEMA_PROMPTS.get(document_type)
     if prompt_template is None:
         raise ValueError(f"unknown document_type: {document_type!r}")

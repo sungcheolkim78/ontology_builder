@@ -16,6 +16,7 @@ const availableTypes = ref([])
 const availableEdgeTypes = ref([])
 const schemaVersion = ref(0)
 const graphRagHops = ref(1)
+const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const highlightedNodeIds = ref([])
 const toggleTypeRequest = ref(null)
@@ -51,6 +52,10 @@ function onSchemaChanged() {
 
 function onHopsChanged(hops) {
   graphRagHops.value = hops
+}
+
+function onMaxSchemaCharsChanged(value) {
+  maxSchemaChars.value = value
 }
 
 function onMarkdownChanged(value) {
@@ -135,6 +140,7 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
       @database-reset="onSchemaChanged"
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
+      @max-schema-chars-changed="onMaxSchemaCharsChanged"
     />
     <div class="main-grid" :style="gridStyle" ref="gridRef">
       <div class="panel top-left">
@@ -159,6 +165,7 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           :enabled-edge-types="edgeGraphFilters"
           :schema-version="schemaVersion"
           :highlighted-node-ids="highlightedNodeIds"
+          :max-schema-chars="maxSchemaChars"
           @types-available="onTypesAvailable"
           @edge-types-available="onEdgeTypesAvailable"
           @schema-updated="onSchemaChanged"
