@@ -11,6 +11,8 @@
   "dependencies": {
     "vue": "^3.4.0",
     "marked": "^14.1.0",
+    "marked-katex-extension": "^5.1.12",
+    "katex": "^0.18.4",
     "v-network-graph": "^0.9.23",
     "d3-force": "^3.0.0"
   },

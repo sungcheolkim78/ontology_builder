@@ -1,6 +1,10 @@
 <script setup>
 import { marked } from 'marked'
+import markedKatex from 'marked-katex-extension'
+import 'katex/dist/katex.min.css'
 import { onMounted, onUnmounted, ref } from 'vue'
+
+marked.use(markedKatex({ throwOnError: false }))
 
 const props = defineProps({
   file: { type: Object, default: null },
