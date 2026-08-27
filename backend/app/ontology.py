@@ -64,6 +64,12 @@ characters, and it must start with a letter or underscore (e.g. "JobTitle" \
 or "Job_Title", not "Job Title"). This applies even if the document is not \
 in English -- transliterate or translate the name into an ASCII identifier.
 
+Every "description" value MUST be written in the same language as the \
+document, regardless of what language the "name" identifiers are in -- e.g. \
+for a Korean document, write descriptions in Korean, not English. This keeps \
+the schema's terminology aligned with the document's own wording, which the \
+extraction step depends on.
+
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"node_types": [{{"name": "...", "description": "..."}}], \
 "edge_types": [{{"name": "...", "description": "...", "source": "<node type name>", \
