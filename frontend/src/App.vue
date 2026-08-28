@@ -15,6 +15,11 @@ const edgeGraphFilters = ref(new Set())
 const availableTypes = ref([])
 const availableEdgeTypes = ref([])
 const schemaVersion = ref(0)
+// A fresh object each time SettingsPanel's workflow actions (schema
+// generation, extraction, schema-library apply, DB reset) change what's in
+// the backend for the current file -- OntologyGraph watches this alone to
+// know when to reload, since it no longer drives any of those actions itself.
+const schemaRefreshRequest = ref(null)
 const graphRagHops = ref(1)
 const renderMarkdown = ref(true)
 const highlightedNodeIds = ref([])
@@ -45,8 +50,9 @@ function onEdgeTypesAvailable(types) {
   availableEdgeTypes.value = types
 }
 
-function onSchemaChanged() {
+function onSchemaChanged(opts = {}) {
   schemaVersion.value++
+  schemaRefreshRequest.value = { previewSchema: !!opts.previewSchema }
 }
 
 function onHopsChanged(hops) {
@@ -132,6 +138,8 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
       @filters-changed="onFiltersChanged"
       @edge-filters-changed="onEdgeFiltersChanged"
       @schema-used="onSchemaChanged"
+      @schema-generated="onSchemaChanged({ previewSchema: true })"
+      @graph-extracted="onSchemaChanged"
       @database-reset="onSchemaChanged"
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
@@ -157,11 +165,10 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           :file="parsedFile"
           :enabled-types="graphFilters"
           :enabled-edge-types="edgeGraphFilters"
-          :schema-version="schemaVersion"
+          :schema-refresh-request="schemaRefreshRequest"
           :highlighted-node-ids="highlightedNodeIds"
           @types-available="onTypesAvailable"
           @edge-types-available="onEdgeTypesAvailable"
-          @schema-updated="onSchemaChanged"
         />
       </div>
       <div class="panel bottom-right">

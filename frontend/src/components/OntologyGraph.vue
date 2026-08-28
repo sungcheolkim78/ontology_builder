@@ -10,46 +10,31 @@ const props = defineProps({
   file: { type: Object, default: null },
   enabledTypes: { type: Set, default: () => new Set() },
   enabledEdgeTypes: { type: Set, default: () => new Set() },
-  schemaVersion: { type: Number, default: 0 },
   highlightedNodeIds: { type: Array, default: () => [] },
+  // Bumped (a new object) by App.vue whenever SettingsPanel's workflow
+  // actions (schema generation, extraction, schema-library apply, DB reset)
+  // change what's in the backend for the current file -- this view has no
+  // buttons of its own anymore, so it only ever learns to refresh this way.
+  schemaRefreshRequest: { type: Object, default: null },
 })
-const emit = defineEmits(['types-available', 'edge-types-available', 'schema-updated'])
+const emit = defineEmits(['types-available', 'edge-types-available'])
 
 const nodes = ref([])
 const edges = ref([])
 const schema = ref(null)
 const status = ref('empty') // empty | loading | no-graph | ready | error
 const error = ref('')
-const message = ref('')
-const isGeneratingSchema = ref(false)
-const schemaDocumentType = ref('general')
-const isExtracting = ref(false)
-const isEmbedding = ref(false)
-const elapsedSeconds = ref(0)
-let elapsedTimer = null
-
-function startElapsedTimer() {
-  elapsedSeconds.value = 0
-  elapsedTimer = setInterval(() => {
-    elapsedSeconds.value += 1
-  }, 1000)
-}
-
-function stopElapsedTimer() {
-  clearInterval(elapsedTimer)
-  elapsedTimer = null
-}
-
-const progressMessage = computed(() => {
-  if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
-  if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
-  if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
-  return ''
-})
+// True right after a fresh schema generation, so the graph view shows the
+// schema's own node/edge types instead of the previously extracted graph --
+// otherwise a re-generated schema would be invisible until re-extraction.
+// Reset on file change (defaults back to the extracted LadybugDB graph) and
+// after a successful extraction (which produces a graph worth showing again).
+const showSchemaPreview = ref(false)
 
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const displayMode = computed(() => {
+  if (showSchemaPreview.value && schema.value && schema.value.node_types.length > 0) return 'schema'
   if (status.value === 'ready') return 'graph'
   if (schema.value && schema.value.node_types.length > 0) return 'schema'
   return 'none'
@@ -310,7 +295,6 @@ function onNodeDragEnd(positions) {
 
 onUnmounted(() => {
   simulation?.stop()
-  stopElapsedTimer()
 })
 
 const configs = computed(() => ({
@@ -417,9 +401,9 @@ async function loadGraph(file) {
   nodes.value = []
   edges.value = []
   error.value = ''
-  message.value = ''
   layouts.value = { nodes: {} }
   selectedNodes.value = []
+  showSchemaPreview.value = false
   if (!file) {
     status.value = 'empty'
     return
@@ -445,85 +429,20 @@ async function loadGraph(file) {
 }
 
 watch(() => props.file, loadGraph, { immediate: true })
-watch(() => props.schemaVersion, () => loadSchemaStatus(props.file))
 
-async function generateSchema() {
-  if (!props.file) return
-  isGeneratingSchema.value = true
-  error.value = ''
-  message.value = ''
-  startElapsedTimer()
-  try {
-    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ document_type: schemaDocumentType.value }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw new Error(body.detail || `HTTP ${res.status}`)
-    }
-    schema.value = await res.json()
-    layouts.value = { nodes: {} }
-    message.value = `스키마 생성 완료 (노드 타입 ${schema.value.node_types.length}개, 엣지 타입 ${schema.value.edge_types.length}개)`
-    emit('schema-updated')
-    fitSoon()
-  } catch (err) {
-    error.value = '스키마 생성 실패: ' + err.message
-  } finally {
-    isGeneratingSchema.value = false
-    stopElapsedTimer()
-  }
-}
-
-async function extract() {
-  if (!props.file) return
-  isExtracting.value = true
-  error.value = ''
-  message.value = ''
-  startElapsedTimer()
-  try {
-    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
-      method: 'POST',
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw new Error(body.detail || `HTTP ${res.status}`)
-    }
+// A single consolidated trigger for every backend-side change SettingsPanel's
+// workflow actions can make (schema generation, extraction, schema-library
+// apply, DB reset) -- always reloads the full graph+schema, and additionally
+// forces schema-preview mode when the action was specifically a fresh schema
+// generation (see showSchemaPreview above).
+watch(
+  () => props.schemaRefreshRequest,
+  async (req) => {
+    if (!req) return
     await loadGraph(props.file)
-    message.value = `그래프 추출 완료 (노드 ${nodes.value.length}개, 엣지 ${edges.value.length}개)`
-    emit('schema-updated')
-  } catch (err) {
-    error.value = '그래프 추출 실패: ' + err.message
-  } finally {
-    isExtracting.value = false
-    stopElapsedTimer()
+    if (req.previewSchema) showSchemaPreview.value = true
   }
-}
-
-async function embed() {
-  if (!props.file) return
-  isEmbedding.value = true
-  error.value = ''
-  message.value = ''
-  startElapsedTimer()
-  try {
-    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/embed`, {
-      method: 'POST',
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw new Error(body.detail || `HTTP ${res.status}`)
-    }
-    const result = await res.json()
-    message.value = `임베딩 생성 완료 (노드 ${result.embedded}개)`
-  } catch (err) {
-    error.value = '임베딩 생성 실패: ' + err.message
-  } finally {
-    isEmbedding.value = false
-    stopElapsedTimer()
-  }
-}
+)
 </script>
 
 <template>
@@ -535,18 +454,11 @@ async function embed() {
 
       <template v-else-if="status === 'no-graph' || status === 'ready'">
         <div class="actions">
-          <select v-model="schemaDocumentType" :disabled="isGeneratingSchema" class="schema-type-select">
-            <option value="general">일반 문서</option>
-            <option value="legal">법률·보험 문서</option>
-          </select>
-          <button :disabled="isGeneratingSchema" @click="generateSchema">
-            {{ isGeneratingSchema ? '생성 중...' : '스키마 생성' }}
-          </button>
-          <button :disabled="isExtracting" @click="extract">
-            {{ isExtracting ? '추출 중...' : '그래프 추출' }}
-          </button>
-          <button :disabled="isEmbedding || status !== 'ready'" @click="embed">
-            {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
+          <button
+            v-if="status === 'ready' && schema && schema.node_types.length > 0"
+            @click="showSchemaPreview = !showSchemaPreview"
+          >
+            {{ showSchemaPreview ? '추출된 그래프 보기' : '스키마 미리보기' }}
           </button>
           <button v-if="displayMode !== 'none'" @click="resetView">리셋</button>
           <label class="label-toggle">
@@ -558,8 +470,6 @@ async function embed() {
             Edge Label
           </label>
         </div>
-        <p v-if="progressMessage" class="progress">{{ progressMessage }}</p>
-        <p v-if="message" class="success">{{ message }}</p>
         <p v-if="error" class="error">{{ error }}</p>
         <p v-if="displayMode === 'none' && !error" class="placeholder">
           스키마를 생성하거나 라이브러리에서 선택하세요
@@ -637,15 +547,6 @@ async function embed() {
 }
 .placeholder {
   color: #888;
-  flex-shrink: 0;
-}
-.progress {
-  color: #555;
-  font-style: italic;
-  flex-shrink: 0;
-}
-.success {
-  color: #1a7f37;
   flex-shrink: 0;
 }
 .error {

@@ -26,11 +26,12 @@ logger = logging.getLogger(__name__)
 MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 300_000))
 
 
-def _check_document_length(document_text: str) -> None:
-    if len(document_text) > MAX_DOCUMENT_CHARS:
+def _check_document_length(document_text: str, max_chars: int | None = None) -> None:
+    limit = max_chars if max_chars is not None else MAX_DOCUMENT_CHARS
+    if len(document_text) > limit:
         raise ValueError(
             f"document is too long ({len(document_text)} chars, "
-            f"max {MAX_DOCUMENT_CHARS}) to send to the LLM in one call"
+            f"max {limit}) to send to the LLM in one call"
         )
 
 DEFAULT_SCHEMA = {
@@ -58,17 +59,58 @@ describe the same underlying relationship into one (e.g. don't propose both \
 "WRITTEN_BY" and "AUTHORED_BY") -- near-duplicates split usage between them and \
 extraction ends up favoring one, leaving the other unused.
 
+After drafting node_types, check the reverse direction too: prefer that every \
+node_type appear as the "source" or "target" of at least one edge_type, since \
+a node_type with none will always end up producing disconnected nodes with no \
+relationships at extraction time. Where the document actually supports a \
+relationship for such a type, add the missing edge_type rather than leaving it \
+unreachable. But don't force a relationship that isn't really there -- a type \
+that is genuinely useful on its own for browsing or filtering (e.g. Date, \
+Event, DocumentSection) may stay edgeless if the document doesn't clearly \
+connect it to anything.
+
+Name edge_types as verbs or verb phrases describing what the source does to \
+or has with the target (e.g. COVERS, REQUIRES, EXCLUDES, PAYS), not as nouns. \
+Avoid vague catch-all relationships such as RELATED_TO, ASSOCIATED_WITH, or \
+HAS_INFO -- use one only when the document genuinely offers nothing more \
+specific to say about how two entities connect. Separately, if the document \
+has a classification/hierarchy relationship (a general category containing \
+more specific subtypes, e.g. a product line and its individual products), \
+represent that with its own taxonomic edge_type (e.g. IS_A or SUBTYPE_OF) \
+rather than folding it into a business-meaning edge_type like COVERS or \
+BELONGS_TO -- keep "this is a kind of that" separate from "this does \
+something to/for that".
+
+Before finalizing the schema, silently check it against a handful of \
+questions a user would realistically ask about this document (do not include \
+these questions in the output). If answering one of them would clearly \
+require a node_type or edge_type the schema is missing, add it; if every \
+type you have is unused by any such question, reconsider whether it belongs.
+
 Every "name" value (for both node_types and edge_types) MUST be a valid \
 identifier: letters, digits, and underscores only, no spaces or other \
 characters, and it must start with a letter or underscore (e.g. "JobTitle" \
 or "Job_Title", not "Job Title"). This applies even if the document is not \
 in English -- transliterate or translate the name into an ASCII identifier.
 
-Every "description" value MUST be written in the same language as the \
-document, regardless of what language the "name" identifiers are in -- e.g. \
-for a Korean document, write descriptions in Korean, not English. This keeps \
-the schema's terminology aligned with the document's own wording, which the \
-extraction step depends on.
+Write every "description" value in the same language as the document itself \
+(e.g. Korean descriptions for a Korean document, English descriptions for an \
+English document), regardless of what language the "name" identifier above \
+ends up in. For each edge_type, also state the direction inside the \
+description itself -- what the "source" side and "target" side each are (e.g. \
+"WRITTEN_BY: source is the document, target is its author") -- so the \
+direction is unambiguous even without looking anywhere else.
+
+Aim for around 5-12 node_types and 5-15 edge_types as a starting budget; only \
+go beyond that if the document clearly has that much genuine variety, not by \
+splitting things finer to fill the range. If nothing in the document fits a \
+meaningful ontology, return empty node_types/edge_types arrays rather than \
+inventing types to fill them. Prefer canonical, reusable type names (roles, \
+categories the document domain generally has) over document-specific one-off \
+labels, unless the document itself defines a term precisely enough that a \
+generic name would lose that precision. When transliterating a non-English \
+name into an ASCII identifier, check it doesn't collide with another type's \
+identifier -- add a disambiguating suffix if it would.
 
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"node_types": [{{"name": "...", "description": "..."}}], \
@@ -121,10 +163,25 @@ definitions clause (kept separate from the entities that later use them); partie
 and roles (e.g. insurer/policyholder/insured/beneficiary); obligations, rights, \
 and benefits each party has; conditions and exclusions that trigger or bar them \
 (e.g. waiting periods, 면책사유); cross-references between the document's own \
-provisions (e.g. "제15조에 따라", "전항에도 불구하고"); and, only if worth \
-navigating on its own, the document's structural units themselves (e.g. \
-"Article"). Only propose types the document actually supports, using its own \
-terminology rather than generic labels wholesale.
+provisions (e.g. "제15조에 따라", "전항에도 불구하고"); and the document's own \
+structural units (e.g. "Article") as their own node_type only when cross-\
+references between them are frequent enough that a section tree is actually \
+worth navigating or tracing -- not just because the document happens to have \
+numbered sections. Only propose types the document actually supports, using \
+its own terminology rather than generic labels wholesale.
+
+Keep a structural node_type like "Article" purely structural: it identifies \
+*where* something is written, not *what* it says. Never let it become a \
+catch-all for the substantive content of the provisions themselves -- a single \
+article routinely states more than one kind of thing (e.g. both a payment \
+condition and an exclusion in the same clause), so representing that content \
+as a property of the Article node, or as one more Article instance, collapses \
+distinct meanings into an undifferentiated bucket. Instead, pull the actual \
+substance out into its own concept node_types (parties, benefits, conditions/\
+events, exclusions, defined terms -- as above) and connect each back to the \
+article it comes from with an edge_type (e.g. "STATES", "DEFINES", "TRIGGERS"). \
+The same rule applies to any other structural/sectioning node_type you \
+introduce (e.g. "Clause", "Schedule", "Appendix").
 
 """ + _SCHEMA_OUTPUT_INSTRUCTIONS
 
@@ -139,11 +196,32 @@ EXTRACT_PROMPT = """Using this ontology schema:
 Extract entities and relationships from the following document that conform to \
 this schema.
 
+For each node: "type" is the node_type name from the schema; "id" is a short, \
+stable identifier unique within this document (your own choice of slug -- it \
+never has to appear in the document text verbatim); "label" is the entity's \
+canonical surface form as it actually appears in the document -- prefer the \
+first occurrence, or the fullest/most complete form if later occurrences add \
+detail the first one lacks (e.g. a full name after an initial short mention).
+
+If the document refers to the same real-world entity multiple times under \
+different names, aliases, abbreviations, or pronouns (coreference) -- e.g. \
+"김철수" and "김 대표", or a company and "동사" -- extract exactly ONE node for \
+that entity, not one per mention. Do not create a separate node per surface \
+form of the same thing.
+
 For each node and edge, also include a "detail" field: one or two sentences of \
 specific supporting information from the document -- exact conditions, exceptions, \
-figures, dates, or phrasing -- that isn't captured by the label/type alone. Omit \
-"detail" (or leave it an empty string) if the document has nothing beyond the label \
-worth adding.
+figures, dates, or phrasing -- that isn't captured by the label/type alone. Every \
+claim in "detail" must be directly supported by the document text -- don't add \
+inference, summary judgment, or outside/general knowledge about the entity. For \
+a condition, exception, figure, or date specifically, quote the document's own \
+wording for it rather than paraphrasing, so the exact number/date/phrasing is \
+preserved verbatim; paraphrase only the surrounding context needed to make that \
+quote make sense. When "detail" includes a quantity, percentage, or duration, \
+state it with its unit exactly as the document does (e.g. "90일 이내", "가입금액의 \
+50%") rather than a vaguer description, so figures stay comparable across nodes. \
+Omit "detail" (or leave it an empty string) if the document has nothing beyond \
+the label worth adding.
 
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"nodes": [{{"id": "...", "label": "...", "type": "<a node type name from the schema>", \
@@ -166,8 +244,10 @@ def parse_json_response(text: str) -> dict:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 
 
-def generate_schema(document_text: str, document_type: str = "general") -> dict:
-    _check_document_length(document_text)
+def generate_schema(
+    document_text: str, document_type: str = "general", max_chars: int | None = None
+) -> dict:
+    _check_document_length(document_text, max_chars)
     prompt_template = SCHEMA_PROMPTS.get(document_type)
     if prompt_template is None:
         raise ValueError(f"unknown document_type: {document_type!r}")

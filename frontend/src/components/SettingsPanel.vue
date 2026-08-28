@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
@@ -15,6 +15,8 @@ const emit = defineEmits([
   'filters-changed',
   'edge-filters-changed',
   'schema-used',
+  'schema-generated',
+  'graph-extracted',
   'hops-changed',
   'markdown-changed',
   'database-reset',
@@ -32,8 +34,120 @@ const resetDbError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
 const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
+const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
+
+const currentFile = computed(() => files.value.find((f) => f.filename === props.selectedFilename))
+
+const schemaDocumentType = ref('general')
+const isGeneratingSchema = ref(false)
+const isExtracting = ref(false)
+const isEmbedding = ref(false)
+const workflowMessage = ref('')
+const workflowError = ref('')
+const elapsedSeconds = ref(0)
+let elapsedTimer = null
+
+function startElapsedTimer() {
+  elapsedSeconds.value = 0
+  elapsedTimer = setInterval(() => {
+    elapsedSeconds.value += 1
+  }, 1000)
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedTimer)
+  elapsedTimer = null
+}
+
+const workflowProgress = computed(() => {
+  if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
+  if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
+  if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
+  return ''
+})
+
+onUnmounted(() => stopElapsedTimer())
+
+async function generateSchema() {
+  if (!props.selectedFilename) return
+  isGeneratingSchema.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document_type: schemaDocumentType.value,
+        max_chars: maxSchemaChars.value,
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const schema = await res.json()
+    workflowMessage.value = `스키마 생성 완료 (노드 타입 ${schema.node_types.length}개, 엣지 타입 ${schema.edge_types.length}개)`
+    emit('schema-generated')
+  } catch (err) {
+    workflowError.value = '스키마 생성 실패: ' + err.message
+  } finally {
+    isGeneratingSchema.value = false
+    stopElapsedTimer()
+  }
+}
+
+async function extractGraph() {
+  if (!props.selectedFilename) return
+  isExtracting.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/extract`, {
+      method: 'POST',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const graph = await res.json()
+    workflowMessage.value = `그래프 추출 완료 (노드 ${graph.nodes.length}개, 엣지 ${graph.edges.length}개)`
+    emit('graph-extracted')
+  } catch (err) {
+    workflowError.value = '그래프 추출 실패: ' + err.message
+  } finally {
+    isExtracting.value = false
+    stopElapsedTimer()
+  }
+}
+
+async function embed() {
+  if (!props.selectedFilename) return
+  isEmbedding.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/embed`, {
+      method: 'POST',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const result = await res.json()
+    workflowMessage.value = `임베딩 생성 완료 (노드 ${result.embedded}개)`
+  } catch (err) {
+    workflowError.value = '임베딩 생성 실패: ' + err.message
+  } finally {
+    isEmbedding.value = false
+    stopElapsedTimer()
+  }
+}
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
@@ -52,6 +166,10 @@ function onHopsInput(event) {
   const value = Math.max(1, Math.min(5, Number(event.target.value) || 1))
   graphRagHops.value = value
   emit('hops-changed', value)
+}
+
+function onMaxSchemaCharsInput(event) {
+  maxSchemaChars.value = Math.max(1, Number(event.target.value) || 300000)
 }
 
 function onMarkdownToggle(event) {
@@ -230,13 +348,56 @@ function toggleEdgeType(type) {
     <h1 class="panel-title">Ontology Builder</h1>
     <div class="panel-body">
     <div class="settings-group">
-      <h2 class="group-title">파일 설정</h2>
+      <h2 class="group-title">워크플로우</h2>
       <section>
         <button type="button" class="explorer-button" @click="showFileExplorer = true">
-          파일 설정
+          1 파일 선택
         </button>
         <p class="hint">문서를 업로드하고, 업로드된 문서를 선택하거나 스키마 라이브러리를 적용할 수 있습니다.</p>
       </section>
+
+      <section>
+        <div class="workflow-row">
+          <button
+            type="button"
+            class="workflow-button"
+            :disabled="!selectedFilename || isGeneratingSchema"
+            @click="generateSchema"
+          >
+            {{ isGeneratingSchema ? '생성 중...' : '스키마 생성' }}
+          </button>
+          <select v-model="schemaDocumentType" :disabled="isGeneratingSchema" class="schema-type-select">
+            <option value="general">일반 문서</option>
+            <option value="legal">법률·보험 문서</option>
+          </select>
+        </div>
+      </section>
+
+      <section>
+        <button
+          type="button"
+          class="workflow-button"
+          :disabled="!selectedFilename || isExtracting"
+          @click="extractGraph"
+        >
+          {{ isExtracting ? '추출 중...' : '그래프 추출' }}
+        </button>
+      </section>
+
+      <section>
+        <button
+          type="button"
+          class="workflow-button"
+          :disabled="!selectedFilename || isEmbedding || !currentFile?.has_graph"
+          @click="embed"
+        >
+          {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
+        </button>
+      </section>
+
+      <p v-if="workflowProgress" class="progress">{{ workflowProgress }}</p>
+      <p v-if="workflowMessage" class="success">{{ workflowMessage }}</p>
+      <p v-if="workflowError" class="error">{{ workflowError }}</p>
     </div>
 
     <div class="settings-group">
@@ -271,6 +432,22 @@ function toggleEdgeType(type) {
             class="hops-input"
           />
         </label>
+      </section>
+
+      <section>
+        <h3>스키마 생성 설정</h3>
+        <label class="hops-label">
+          최고 문자수
+          <input
+            type="number"
+            min="1"
+            step="1000"
+            :value="maxSchemaChars"
+            @change="onMaxSchemaCharsInput"
+            class="hops-input max-chars-input"
+          />
+        </label>
+        <p class="hint">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
       </section>
 
       <section>
@@ -561,6 +738,9 @@ function toggleEdgeType(type) {
   width: 4rem;
   padding: 0.25rem;
 }
+.max-chars-input {
+  width: 6rem;
+}
 .explorer-button {
   padding: 0.4rem 0.75rem;
   border: 1px solid #ccc;
@@ -572,6 +752,42 @@ function toggleEdgeType(type) {
 }
 .explorer-button:hover {
   background: #e4e4e4;
+}
+.workflow-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.workflow-button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f0f0f0;
+  color: #333;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.workflow-button:hover:not(:disabled) {
+  background: #e4e4e4;
+}
+.workflow-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.schema-type-select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem;
+  font-size: 0.85rem;
+}
+.progress {
+  color: #555;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+.success {
+  color: #1a7f37;
+  font-size: 0.85rem;
 }
 .file-explorer-overlay {
   position: fixed;
