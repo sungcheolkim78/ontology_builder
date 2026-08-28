@@ -46,7 +46,7 @@ Two storage shapes were considered:
 
 ```sql
 CREATE NODE TABLE {type}(
-  id STRING PRIMARY KEY, label STRING, detail STRING,
+  id STRING PRIMARY KEY, original_id STRING, label STRING, detail STRING,
   source_document STRING, version INT64, embedding FLOAT[{EMBEDDING_DIM}]
 )
 
@@ -55,6 +55,11 @@ CREATE REL TABLE GROUP {etype}(
   type STRING, detail STRING, source_document STRING, version INT64
 )
 ```
+
+`original_id` holds the bare LLM-assigned id (`"n1"`, `"n2"`, ...)
+exactly as extracted, untouched by whatever the PRIMARY KEY `id` column
+does for uniqueness. This split is what makes the ID scheme below
+correct — see "Node/edge ID scheme."
 
 `_ExtractedDocument` (today: `id=stem STRING PRIMARY KEY`, one row per
 document) becomes one row **per (stem, version)**:
@@ -70,27 +75,54 @@ CREATE NODE TABLE _ExtractedDocument(
 
 ### Node/edge ID scheme
 
-Every call to `write_graph` **from this change onward** stores ids as
-`f"{stem}::v{version}::{original_id}"` — including for version 1, not
-just versions ≥2. This isn't optional per version; it's required
-because two versions of the same document can independently extract a
-node with the same LLM-assigned raw id (e.g. both call it `n1`), and
-without the version segment those would collide on the shared table's
-`id` PRIMARY KEY.
+**Correction found during implementation planning (not in the
+originally-approved storage sketch above): a plain `rsplit`-based fix
+on the read side alone is insufficient and was found to be an actual
+bug — see below.**
 
-The one exception is rows that already exist on disk before this
-change ships (see Migration below): they keep their legacy 2-part id
-(`f"{stem}::{original_id}"`, no version segment) permanently, unless
-that document/version is re-extracted — at which point `write_graph`
-deletes and rewrites them in the new 3-part format like any other
-write.
+The PRIMARY KEY `id` column exists purely so LLM-assigned ids (`n1`,
+`n2`, ...), which are not globally unique across documents/versions
+sharing a type table, can be stored without collisions:
+`f"{stem}::v{version}::{original_id}"` for every write from this
+change onward (including version 1 — this isn't optional per version,
+since two versions of the same document can independently extract a
+node they both happen to call `n1`).
 
-`_node_from_row`/`_edge_from_row` change their id-stripping from
-`row["id"].split("::", 1)[1]` (peel off the first segment) to
-`row["id"].rsplit("::", 1)[1]` (peel off the last segment) — this
-correctly extracts the bare LLM-assigned id whether the stored id has
-2 parts (legacy) or 3 parts (`stem::vN::id`, current), so no bulk
-rewrite of existing rows is required.
+Every node row also carries a plain `original_id STRING` column
+holding the bare LLM-assigned id, untouched. **All application-level
+node lookups go through `original_id` (plus `source_document` and
+`version`), never through parsing or reconstructing the PRIMARY KEY
+`id` string.** This matters in two directions:
+
+- **Reading a row back into `{"id": ..., "label": ..., ...}` shape**
+  (`_node_from_row`): return `row["original_id"]` directly. No string
+  parsing of `id` at all.
+- **Looking a set of already-known bare ids back up** (`find_matching_edges`'
+  `matched_node_ids` param, `expand_hops`' `seed_ids` param): filter
+  with `WHERE n.original_id IN $ids AND n.source_document = $stem AND
+  n.version = $version`, never by reconstructing an `f"{stem}::v{version}::{id}"`
+  string and matching it against `n.id`.
+
+The earlier draft of this spec proposed the second direction as "just
+rebuild the same prefixed string and match against `id`," relying on
+`rsplit` only on the read-back side. That's a real bug against
+migrated data: existing rows (see Migration) keep their *legacy*
+2-part id (`f"{stem}::{original_id}"`, no version segment) rather than
+being rewritten, so reconstructing a *3-part* prefixed string to match
+against `a.id`/`n.id` would never match those rows — `find_matching_edges`
+and `expand_hops` would silently find nothing for any of today's 4
+documents until each is re-extracted. Matching via `original_id`
+instead sidesteps the legacy/current format distinction entirely: it's
+a plain column equality check, independent of whatever shape the
+PRIMARY KEY happens to have.
+
+REL tables have never had an `id` column of their own (edges are
+matched by type/endpoints, not an id) — but every query that returns
+an edge also returns the node ids on either end (`a.id AS source, b.id
+AS target` today). Those change to `a.original_id AS source,
+b.original_id AS target`, so `_edge_from_row` also drops its
+`rsplit`/parsing entirely and just uses `row["source"]`/`row["target"]`
+as-is.
 
 ### Function signature changes (`graphdb.py`)
 
@@ -222,8 +254,19 @@ Steps:
 
 1. For every existing NODE/REL table except `_ExtractedDocument`:
    `ALTER TABLE {t} ADD COLUMN version INT64 DEFAULT 1`. Every existing
-   row becomes version 1; no row's `id` string is rewritten (see "Node
-   ID scheme" above — the old 2-part id remains valid indefinitely).
+   row becomes version 1; the PRIMARY KEY `id` string is never
+   rewritten (it keeps its legacy 2-part shape, `f"{stem}::{original_id}"`,
+   indefinitely). NODE tables additionally get `ALTER TABLE {t} ADD
+   COLUMN original_id STRING`, then backfilled **in Python, one row at
+   a time** rather than a single Cypher update expression (safer than
+   relying on an unverified Cypher string-splitting function in
+   LadybugDB's dialect, and mirrors the existing per-row `SET` loop
+   pattern `update_node_embeddings` already uses): read back every
+   row's `id` via a plain `MATCH (n:{t}) RETURN n.id`, compute
+   `original_id = id.rsplit("::", 1)[1]` in Python (safe here
+   specifically because at this point in time every existing row is
+   still 2-part), then `MATCH (n:{t}) WHERE n.id = $id SET
+   n.original_id = $original_id` per row.
 2. Rebuild `_ExtractedDocument`: read its current rows (`stem`), then
    `DROP TABLE`/`CREATE TABLE` with the new `(id, stem, version)`
    shape, and reinsert one row per existing stem with `version=1`,
@@ -254,8 +297,10 @@ also a 404.
 - `graphdb.py`: extend existing fixtures to write/read multiple
   versions of the same stem and assert row isolation (`version=1`'s
   rows are untouched by writing `version=2`), the `_ExtractedDocument`
-  composite-key behavior, and `rsplit`-based id stripping against both
-  legacy (`stem::id`) and current (`stem::vN::id`) formats.
+  composite-key behavior, and that node/edge lookups resolve correctly
+  through `original_id` regardless of the underlying PRIMARY KEY `id`
+  format (legacy 2-part vs. current 3-part) — this is the specific
+  behavior the mid-planning correction above exists to get right.
 - `ontology.py`: version file naming (`schema_v{n}.json`),
   `versions.json` read/write, active-version switching, and deletion
   (including "delete the active version, most recent remaining becomes
