@@ -126,7 +126,7 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
 </script>
 
 <template>
-  <div class="dashboard">
+  <div class="flex h-screen">
     <SettingsPanel
       :selected-filename="parsedFile?.filename"
       :available-types="availableTypes"
@@ -144,8 +144,8 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
     />
-    <div class="main-grid" :style="gridStyle" ref="gridRef">
-      <div class="panel top-left">
+    <div class="relative flex-1 min-w-0 grid" :style="gridStyle" ref="gridRef">
+      <div class="col-start-1 row-start-1 flex min-w-0 min-h-0 flex-col overflow-hidden">
         <ChatPanel
           :file="parsedFile"
           :hops="graphRagHops"
@@ -157,10 +157,10 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           @toggle-type="onToggleType"
         />
       </div>
-      <div class="panel top-right">
+      <div class="col-start-2 row-start-1 min-w-0 min-h-0 overflow-hidden border-l border-slate-200">
         <DocumentPreview :file="parsedFile" />
       </div>
-      <div class="panel bottom-left">
+      <div class="col-start-1 row-start-2 min-w-0 min-h-0 overflow-hidden border-t border-slate-200">
         <OntologyGraph
           :file="parsedFile"
           :enabled-types="graphFilters"
@@ -171,78 +171,19 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           @edge-types-available="onEdgeTypesAvailable"
         />
       </div>
-      <div class="panel bottom-right">
+      <div class="col-start-2 row-start-2 min-w-0 min-h-0 overflow-hidden border-l border-t border-slate-200">
         <SchemaGraphPreview :file="parsedFile" :schema-version="schemaVersion" />
       </div>
-      <div class="resizer-v" :style="colResizerStyle" @mousedown="startColResize"></div>
-      <div class="resizer-h" :style="rowResizerStyle" @mousedown="startRowResize"></div>
+      <div
+        class="absolute top-0 bottom-0 z-[2] w-2 cursor-col-resize bg-transparent hover:bg-indigo-200 active:bg-indigo-200"
+        :style="colResizerStyle"
+        @mousedown="startColResize"
+      ></div>
+      <div
+        class="absolute left-0 right-0 z-[2] h-2 cursor-row-resize bg-transparent hover:bg-indigo-200 active:bg-indigo-200"
+        :style="rowResizerStyle"
+        @mousedown="startRowResize"
+      ></div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.dashboard {
-  display: flex;
-  height: 100vh;
-  font-family: sans-serif;
-}
-.main-grid {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: grid;
-}
-.panel {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.top-left {
-  grid-column: 1;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-}
-.top-right {
-  grid-column: 2;
-  grid-row: 1;
-  border-left: 1px solid #ccc;
-}
-.bottom-left {
-  grid-column: 1;
-  grid-row: 2;
-  border-top: 1px solid #ccc;
-}
-.bottom-right {
-  grid-column: 2;
-  grid-row: 2;
-  border-left: 1px solid #ccc;
-  border-top: 1px solid #ccc;
-}
-.resizer-v {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  z-index: 2;
-  cursor: col-resize;
-  background: transparent;
-}
-.resizer-v:hover,
-.resizer-v:active {
-  background: #b8d0ff;
-}
-.resizer-h {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 8px;
-  z-index: 2;
-  cursor: row-resize;
-  background: transparent;
-}
-.resizer-h:hover,
-.resizer-h:active {
-  background: #b8d0ff;
-}
-</style>
