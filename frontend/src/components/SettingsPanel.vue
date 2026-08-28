@@ -351,7 +351,7 @@ function toggleEdgeType(type) {
       <h2 class="group-title">워크플로우</h2>
       <section>
         <button type="button" class="explorer-button" @click="showFileExplorer = true">
-          원본 파일 선택
+          1 파일 선택
         </button>
         <p class="hint">문서를 업로드하고, 업로드된 문서를 선택하거나 스키마 라이브러리를 적용할 수 있습니다.</p>
       </section>
