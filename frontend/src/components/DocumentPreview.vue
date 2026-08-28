@@ -93,73 +93,28 @@ watch(
 </script>
 
 <template>
-  <section class="preview">
-    <h2 class="panel-title">문서 Preview</h2>
-    <div class="panel-body">
-      <p v-if="!file" class="placeholder">업로드된 문서가 없습니다</p>
-      <p v-else-if="error" class="error">{{ error }}</p>
+  <section class="flex h-full flex-col border-b border-slate-200">
+    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">문서 Preview</h2>
+    <div class="flex-1 min-h-0 flex flex-col p-4">
+      <p v-if="!file" class="text-sm text-slate-500">업로드된 문서가 없습니다</p>
+      <p v-else-if="error" class="text-sm text-red-600">{{ error }}</p>
       <template v-else>
-        <div class="content-row">
-          <div class="markdown-scroll" ref="scrollRef" @scroll="onScroll">
+        <div class="flex-1 min-h-0 flex gap-2">
+          <div class="markdown-scroll flex-1 min-h-0 overflow-y-scroll" ref="scrollRef" @scroll="onScroll">
             <div class="markdown" v-html="html"></div>
           </div>
-          <div class="position-track">
-            <div class="position-thumb" :style="thumbStyle"></div>
+          <div class="relative w-1.5 shrink-0 rounded-full bg-slate-100">
+            <div class="absolute inset-x-0 min-h-4 rounded-full bg-indigo-600" :style="thumbStyle"></div>
           </div>
         </div>
-        <p class="status-line">{{ currentLine }} of {{ totalLines }} lines</p>
+        <p class="mt-1 shrink-0 border-t border-slate-100 pt-1 text-xs text-slate-500">{{ currentLine }} of {{ totalLines }} lines</p>
       </template>
     </div>
   </section>
 </template>
 
 <style scoped>
-.preview {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid #ccc;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #059669;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-.content-row {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 0.5rem;
-}
-.position-track {
-  flex-shrink: 0;
-  width: 6px;
-  border-radius: 3px;
-  background: #eee;
-  position: relative;
-}
-.position-thumb {
-  position: absolute;
-  left: 0;
-  right: 0;
-  min-height: 16px;
-  border-radius: 3px;
-  background: #059669;
-}
 .markdown-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: scroll;
   scrollbar-width: thin;
   scrollbar-color: #b0b0b0 #f0f0f0;
 }
@@ -173,20 +128,6 @@ watch(
   background-color: #b0b0b0;
   border-radius: 6px;
   border: 2px solid #f0f0f0;
-}
-.status-line {
-  flex-shrink: 0;
-  margin: 0.15rem 0 0;
-  padding-top: 0.15rem;
-  border-top: 1px solid #eee;
-  font-size: 0.75rem;
-  color: #888;
-}
-.placeholder {
-  color: #888;
-}
-.error {
-  color: red;
 }
 .markdown :deep(h1) {
   font-size: 1.5rem;
@@ -222,7 +163,7 @@ watch(
 }
 .markdown :deep(td),
 .markdown :deep(th) {
-  border: 1px solid #ccc;
+  border: 1px solid #e2e8f0;
   padding: 0.25rem 0.5rem;
 }
 </style>
