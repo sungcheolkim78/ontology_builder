@@ -290,6 +290,19 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
 
         conn.execute("MERGE (d:_ExtractedDocument {stem: $stem})", {"stem": stem})
         conn.execute("COMMIT")
+        # Flushes the WAL into the main DB file immediately, rather than
+        # leaving this write to sit only in the WAL until the engine's own
+        # threshold trips. Ladybug Explorer (see podman-compose.yml) opens
+        # the main file once at container start and never re-reads it
+        # afterward, WAL included -- without this, a long-running Explorer
+        # would show stale data for every write made after it started, no
+        # matter how many times it's reconnected or re-queried. Verified
+        # experimentally that an explicit `CHECKPOINT;` on the still-open
+        # connection does NOT do this (the WAL keeps growing) -- only
+        # actually closing the connection/database does, so reset_connection
+        # (close now, transparently reopened by the next _get_connection()
+        # call) is the only way to force it, not a lighter-weight statement.
+        reset_connection()
     except Exception:
         # Some engine-level errors (e.g. a constraint violation mid-query)
         # already auto-abort the transaction before this except block runs,
@@ -325,6 +338,7 @@ def update_node_embeddings(stem: str, nodes: list) -> None:
                 {"id": f"{stem}::{node['id']}", "embedding": node.get("embedding")},
             )
         conn.execute("COMMIT")
+        reset_connection()  # see write_graph's identical rationale
     except Exception:
         # See write_graph's identical rationale: some engine-level errors
         # already auto-abort the transaction before this block runs, so an

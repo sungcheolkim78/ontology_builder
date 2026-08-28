@@ -20,6 +20,20 @@ services:
     depends_on:
       - jaeger
 
+  # Image tag must match backend/requirements.txt's `ladybug` version -- the
+  # explorer and the embedded library have to agree on storage format.
+  ladybug-explorer:
+    image: ghcr.io/ladybugdb/explorer:0.19.1
+    ports:
+      - "8001:8000"
+    environment:
+      - LBUG_FILE=graph.ladybugdb
+      - MODE=READ_ONLY
+    volumes:
+      - ./backend/data/graph:/database
+    depends_on:
+      - backend
+
   frontend:
     build: ./frontend
     ports:
