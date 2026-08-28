@@ -15,8 +15,12 @@ const edgeGraphFilters = ref(new Set())
 const availableTypes = ref([])
 const availableEdgeTypes = ref([])
 const schemaVersion = ref(0)
+// A fresh object each time SettingsPanel's workflow actions (schema
+// generation, extraction, schema-library apply, DB reset) change what's in
+// the backend for the current file -- OntologyGraph watches this alone to
+// know when to reload, since it no longer drives any of those actions itself.
+const schemaRefreshRequest = ref(null)
 const graphRagHops = ref(1)
-const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const highlightedNodeIds = ref([])
 const toggleTypeRequest = ref(null)
@@ -46,16 +50,13 @@ function onEdgeTypesAvailable(types) {
   availableEdgeTypes.value = types
 }
 
-function onSchemaChanged() {
+function onSchemaChanged(opts = {}) {
   schemaVersion.value++
+  schemaRefreshRequest.value = { previewSchema: !!opts.previewSchema }
 }
 
 function onHopsChanged(hops) {
   graphRagHops.value = hops
-}
-
-function onMaxSchemaCharsChanged(value) {
-  maxSchemaChars.value = value
 }
 
 function onMarkdownChanged(value) {
@@ -137,10 +138,11 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
       @filters-changed="onFiltersChanged"
       @edge-filters-changed="onEdgeFiltersChanged"
       @schema-used="onSchemaChanged"
+      @schema-generated="onSchemaChanged({ previewSchema: true })"
+      @graph-extracted="onSchemaChanged"
       @database-reset="onSchemaChanged"
       @hops-changed="onHopsChanged"
       @markdown-changed="onMarkdownChanged"
-      @max-schema-chars-changed="onMaxSchemaCharsChanged"
     />
     <div class="main-grid" :style="gridStyle" ref="gridRef">
       <div class="panel top-left">
@@ -163,12 +165,10 @@ const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)
           :file="parsedFile"
           :enabled-types="graphFilters"
           :enabled-edge-types="edgeGraphFilters"
-          :schema-version="schemaVersion"
+          :schema-refresh-request="schemaRefreshRequest"
           :highlighted-node-ids="highlightedNodeIds"
-          :max-schema-chars="maxSchemaChars"
           @types-available="onTypesAvailable"
           @edge-types-available="onEdgeTypesAvailable"
-          @schema-updated="onSchemaChanged"
         />
       </div>
       <div class="panel bottom-right">
