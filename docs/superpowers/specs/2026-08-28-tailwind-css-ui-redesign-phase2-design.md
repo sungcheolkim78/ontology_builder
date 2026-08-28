@@ -81,17 +81,21 @@ not oversights:
    approximation of today's green/brown.
 2. **Per-instance related-node chips** (`ChatPanel.vue`'s `.node-chip`,
    color bound via `colorForNodeType()` to match that exact node's color
-   in the `OntologyGraph.vue` view). This can't become a static Tailwind
-   class — the color is computed per node type at runtime from the same
-   function the graph view uses for its own node dots, so the two stay
-   visually consistent with each other. The `:style="{ '--chip-color':
-   ... }"` binding stays exactly as today. Its `:hover` background swap
-   also can't be expressed as a static utility (a CSS custom property
-   swapped on hover), so a **minimal one-rule `<style scoped>` block
-   survives just for this**: `.node-chip:hover { background:
-   var(--chip-color); color: white; }`. Every other property on this
-   element (padding, radius, font-size, cursor) moves to Tailwind
-   utilities.
+   in the `OntologyGraph.vue` view). The color itself can't become a
+   static Tailwind class — it's computed per node type at runtime from
+   the same function the graph view uses for its own node dots, so the
+   two stay visually consistent with each other — so the `:style="{
+   '--chip-color': ... }"` binding stays exactly as today. **Correction
+   found while writing the implementation plan (the spec originally
+   assumed a `<style scoped>` remnant was unavoidable for the `:hover`
+   swap — it isn't):** Tailwind's arbitrary-value syntax works directly
+   against a CSS custom property, including under variants, so the
+   entire element — base color *and* its hover swap — is expressible as
+   plain utility classes: `border-[var(--chip-color)]
+   text-[var(--chip-color)] hover:bg-[var(--chip-color)]
+   hover:text-white`. No `<style scoped>` block is needed for this
+   element at all; only the `:style` binding that sets the variable's
+   *value* remains.
 3. **Custom scrollbars** (`DocumentPreview.vue`'s `.markdown-scroll` and
    `SchemaGraphPreview.vue`'s `.table-wrap`, both using
    `scrollbar-width`/`scrollbar-color` plus `::-webkit-scrollbar`
