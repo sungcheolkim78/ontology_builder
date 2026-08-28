@@ -411,145 +411,170 @@ function toggleEdgeType(type) {
 </script>
 
 <template>
-  <aside class="settings">
-    <h1 class="panel-title">Ontology Builder</h1>
-    <div class="panel-body">
-    <div class="settings-group">
-      <h2 class="group-title">워크플로우</h2>
-      <section>
-        <button type="button" class="explorer-button" @click="showFileExplorer = true">
-          1 파일 선택
-        </button>
-      </section>
-
-      <section>
-        <div class="workflow-row">
+  <aside class="flex w-[270px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white">
+    <h1 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">
+      Ontology Builder
+    </h1>
+    <div class="flex-1 overflow-y-auto p-3">
+      <div class="mb-3 border-b border-slate-200 pb-2">
+        <h2 class="mb-1.5 text-sm font-semibold text-slate-900">워크플로우</h2>
+        <section class="mb-2.5">
           <button
             type="button"
-            class="workflow-button"
-            :disabled="!selectedFilename || isGeneratingSchema"
-            @click="generateSchema"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            @click="showFileExplorer = true"
           >
-            {{ isGeneratingSchema ? '생성 중...' : '2 스키마 생성' }}
+            1 파일 선택
           </button>
-          <select v-model="schemaDocumentType" :disabled="isGeneratingSchema" class="schema-type-select">
-            <option value="general">일반 문서</option>
-            <option value="legal">법률·보험 문서</option>
-          </select>
+        </section>
+
+        <section class="mb-2.5">
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-indigo-600"
+              :disabled="!selectedFilename || isGeneratingSchema"
+              @click="generateSchema"
+            >
+              {{ isGeneratingSchema ? '생성 중...' : '2 스키마 생성' }}
+            </button>
+            <select
+              v-model="schemaDocumentType"
+              :disabled="isGeneratingSchema"
+              class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="general">일반 문서</option>
+              <option value="legal">법률·보험 문서</option>
+            </select>
+          </div>
+          <p v-if="activeVersionLabel" class="mt-1 text-xs text-slate-500">{{ activeVersionLabel }}</p>
+        </section>
+
+        <section class="mb-2.5">
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-indigo-600"
+            :disabled="!selectedFilename || isExtracting"
+            @click="extractGraph"
+          >
+            {{ isExtracting ? '추출 중...' : '3 그래프 추출' }}
+          </button>
+        </section>
+
+        <section class="mb-2.5">
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-indigo-600"
+            :disabled="!selectedFilename || isEmbedding || !currentFile?.has_graph"
+            @click="embed"
+          >
+            {{ isEmbedding ? '임베딩 생성 중...' : '4 임베딩 생성' }}
+          </button>
+        </section>
+
+        <p v-if="workflowProgress" class="text-sm italic text-slate-500">{{ workflowProgress }}</p>
+        <p v-if="workflowMessage" class="text-sm text-green-600">{{ workflowMessage }}</p>
+        <p v-if="workflowError" class="text-sm text-red-600">{{ workflowError }}</p>
+      </div>
+
+      <div class="mb-3 border-b border-slate-200 pb-2">
+        <h2 class="mb-1.5 text-sm font-semibold text-slate-900">실행 설정</h2>
+        <section>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            @click="showConfigurations = true"
+          >
+            Configurations
+          </button>
+        </section>
+      </div>
+
+      <div>
+        <h2 class="mb-1.5 text-sm font-semibold text-slate-900">온톨로지 설정</h2>
+        <section class="mb-2.5">
+          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">그래프 노드 필터</h3>
+          <p v-if="availableTypes.length === 0" class="text-sm text-slate-400">
+            아직 추출된 그래프가 없습니다
+          </p>
+          <label v-for="type in availableTypes" :key="type" class="mb-1 flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 break-words">
+              <input
+                type="checkbox"
+                class="accent-indigo-600"
+                :checked="enabledTypes.has(type)"
+                @change="toggleType(type)"
+              />
+              {{ type }}
+            </span>
+            <span class="h-3 w-3 shrink-0 rounded-full" :style="{ background: colorForType(type) }"></span>
+          </label>
+        </section>
+
+        <section>
+          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">그래프 엣지 필터</h3>
+          <p v-if="availableEdgeTypes.length === 0" class="text-sm text-slate-400">
+            아직 추출된 그래프가 없습니다
+          </p>
+          <label v-for="type in availableEdgeTypes" :key="type" class="mb-1 flex items-center justify-between gap-2">
+            <span class="flex items-center gap-1.5 break-words">
+              <input
+                type="checkbox"
+                class="accent-indigo-600"
+                :checked="enabledEdgeTypes.has(type)"
+                @change="toggleEdgeType(type)"
+              />
+              {{ type }}
+            </span>
+            <span class="h-[5px] w-5 shrink-0 rounded" :style="{ background: colorForEdgeType(type) }"></span>
+          </label>
+        </section>
+      </div>
+    </div>
+
+    <div v-if="showFileExplorer" class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
+      <div class="flex max-h-[80vh] w-[480px] max-w-[90vw] flex-col overflow-hidden rounded-lg bg-white shadow-lg">
+        <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h2 class="text-base font-semibold text-slate-900">File Explorer</h2>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            @click="showFileExplorer = false"
+          >닫기</button>
         </div>
-        <p v-if="activeVersionLabel" class="version-indicator">{{ activeVersionLabel }}</p>
-      </section>
-
-      <section>
-        <button
-          type="button"
-          class="workflow-button"
-          :disabled="!selectedFilename || isExtracting"
-          @click="extractGraph"
-        >
-          {{ isExtracting ? '추출 중...' : '3 그래프 추출' }}
-        </button>
-      </section>
-
-      <section>
-        <button
-          type="button"
-          class="workflow-button"
-          :disabled="!selectedFilename || isEmbedding || !currentFile?.has_graph"
-          @click="embed"
-        >
-          {{ isEmbedding ? '임베딩 생성 중...' : '4 임베딩 생성' }}
-        </button>
-      </section>
-
-      <p v-if="workflowProgress" class="progress">{{ workflowProgress }}</p>
-      <p v-if="workflowMessage" class="success">{{ workflowMessage }}</p>
-      <p v-if="workflowError" class="error">{{ workflowError }}</p>
-    </div>
-
-    <div class="settings-group">
-      <h2 class="group-title">실행 설정</h2>
-      <section>
-        <button type="button" class="explorer-button" @click="showConfigurations = true">
-          Configurations
-        </button>
-      </section>
-    </div>
-
-    <div class="settings-group">
-      <h2 class="group-title">온톨로지 설정</h2>
-      <section>
-        <h3>그래프 노드 필터</h3>
-        <p v-if="availableTypes.length === 0" class="placeholder">
-          아직 추출된 그래프가 없습니다
-        </p>
-        <label v-for="type in availableTypes" :key="type" class="filter-item">
-          <span class="filter-item-left">
+        <div class="flex-1 overflow-y-auto p-4">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">문서 업로드</h3>
             <input
-              type="checkbox"
-              :checked="enabledTypes.has(type)"
-              @change="toggleType(type)"
+              type="file"
+              @change="handleFileChange"
+              :disabled="isUploading"
+              class="text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
             />
-            {{ type }}
-          </span>
-          <span class="type-swatch" :style="{ background: colorForType(type) }"></span>
-        </label>
-      </section>
-
-      <section>
-        <h3>그래프 엣지 필터</h3>
-        <p v-if="availableEdgeTypes.length === 0" class="placeholder">
-          아직 추출된 그래프가 없습니다
-        </p>
-        <label v-for="type in availableEdgeTypes" :key="type" class="filter-item">
-          <span class="filter-item-left">
-            <input
-              type="checkbox"
-              :checked="enabledEdgeTypes.has(type)"
-              @change="toggleEdgeType(type)"
-            />
-            {{ type }}
-          </span>
-          <span class="edge-swatch" :style="{ background: colorForEdgeType(type) }"></span>
-        </label>
-      </section>
-    </div>
-    </div>
-
-    <div v-if="showFileExplorer" class="file-explorer-overlay">
-      <div class="file-explorer-window">
-        <div class="file-explorer-header">
-          <h2>File Explorer</h2>
-          <button type="button" class="close-button" @click="showFileExplorer = false">닫기</button>
-        </div>
-        <div class="file-explorer-body">
-          <section>
-            <h3>문서 업로드</h3>
-            <input type="file" @change="handleFileChange" :disabled="isUploading" />
-            <p v-if="isUploading">업로드 중...</p>
-            <p v-if="uploadError" class="error">{{ uploadError }}</p>
+            <p v-if="isUploading" class="mt-1 text-sm text-slate-500">업로드 중...</p>
+            <p v-if="uploadError" class="mt-1 text-sm text-red-600">{{ uploadError }}</p>
           </section>
 
-          <section>
-            <h3>업로드된 문서</h3>
-            <p v-if="files.length === 0" class="placeholder">문서가 없습니다</p>
-            <ul v-else class="file-list">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">업로드된 문서</h3>
+            <p v-if="files.length === 0" class="text-sm text-slate-400">문서가 없습니다</p>
+            <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="f in files"
                 :key="f.filename"
-                class="file-item"
-                :class="{ selected: f.filename === selectedFilename }"
+                class="cursor-pointer rounded-md px-2 py-1.5 text-sm break-words hover:bg-slate-50"
+                :class="{ 'bg-indigo-50 font-semibold': f.filename === selectedFilename }"
                 @click="selectFile(f.filename)"
               >
-                <div class="file-item-name">{{ f.original_filename }}</div>
-                <div class="file-item-meta">
+                <div class="break-words">{{ f.original_filename }}</div>
+                <div class="mt-1 flex gap-1.5">
                   <span
-                    class="status-badge"
-                    :class="{ on: f.has_schema }"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs"
+                    :class="f.has_schema ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'"
                   >스키마</span>
                   <span
-                    class="status-badge"
-                    :class="{ on: f.has_graph }"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs"
+                    :class="f.has_graph ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'"
                     :title="f.has_graph ? `그래프DB: ${f.graphdb_name}` : ''"
                   >그래프</span>
                 </div>
@@ -557,78 +582,89 @@ function toggleEdgeType(type) {
             </ul>
           </section>
 
-          <section>
-            <h3>선택된 문서의 스키마 버전</h3>
-            <p v-if="!selectedFilename" class="placeholder">문서를 먼저 선택하세요</p>
-            <p v-else-if="schemaVersions.length === 0" class="placeholder">생성된 버전이 없습니다</p>
-            <ul v-else class="file-list">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">선택된 문서의 스키마 버전</h3>
+            <p v-if="!selectedFilename" class="text-sm text-slate-400">문서를 먼저 선택하세요</p>
+            <p v-else-if="schemaVersions.length === 0" class="text-sm text-slate-400">생성된 버전이 없습니다</p>
+            <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="v in schemaVersions"
                 :key="v.version"
-                class="version-item"
-                :class="{ active: v.is_active }"
+                class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm"
+                :class="{ 'bg-indigo-50': v.is_active }"
               >
-                <div class="version-item-main">
-                  <span class="version-label">v{{ v.version }} · {{ v.document_type }}</span>
-                  <span v-if="v.is_active" class="status-badge on">활성</span>
-                  <span class="status-badge" :class="{ on: v.has_graph }">그래프</span>
+                <div class="flex items-center gap-1.5 break-words">
+                  <span class="font-semibold text-slate-900">v{{ v.version }} · {{ v.document_type }}</span>
+                  <span
+                    v-if="v.is_active"
+                    class="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700"
+                  >활성</span>
+                  <span
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs"
+                    :class="v.has_graph ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'"
+                  >그래프</span>
                 </div>
-                <div class="version-item-actions">
+                <div class="flex shrink-0 gap-1">
                   <button
                     v-if="!v.is_active"
                     type="button"
-                    class="version-action-button"
+                    class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                     @click="activateVersion(v.version)"
                   >활성화</button>
                   <button
                     type="button"
-                    class="version-action-button danger"
+                    class="inline-flex items-center justify-center rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
                     @click="deleteVersion(v.version)"
                   >삭제</button>
                 </div>
               </li>
             </ul>
-            <p v-if="versionActionError" class="error">{{ versionActionError }}</p>
+            <p v-if="versionActionError" class="mt-1 text-sm text-red-600">{{ versionActionError }}</p>
           </section>
 
-          <section>
-            <h3>스키마 라이브러리</h3>
-            <p v-if="schemas.length === 0" class="placeholder">생성된 스키마가 없습니다</p>
-            <ul v-else class="file-list">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">스키마 라이브러리</h3>
+            <p v-if="schemas.length === 0" class="text-sm text-slate-400">생성된 스키마가 없습니다</p>
+            <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="s in schemas"
                 :key="s.stem"
-                class="file-item"
-                :class="{ disabled: isUsingSchema || !selectedFilename }"
+                class="cursor-pointer rounded-md px-2 py-1.5 text-sm break-words hover:bg-slate-50"
+                :class="{ 'pointer-events-none opacity-50': isUsingSchema || !selectedFilename }"
                 @click="useSchema(s.stem)"
               >
                 {{ s.stem }}
               </li>
             </ul>
-            <p v-if="isUsingSchema">적용 중...</p>
-            <p v-if="schemaUseError" class="error">{{ schemaUseError }}</p>
+            <p v-if="isUsingSchema" class="mt-1 text-sm text-slate-500">적용 중...</p>
+            <p v-if="schemaUseError" class="mt-1 text-sm text-red-600">{{ schemaUseError }}</p>
           </section>
         </div>
       </div>
     </div>
 
-    <div v-if="showConfigurations" class="file-explorer-overlay">
-      <div class="file-explorer-window">
-        <div class="file-explorer-header">
-          <h2>Configurations</h2>
-          <button type="button" class="close-button" @click="showConfigurations = false">닫기</button>
+    <div v-if="showConfigurations" class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
+      <div class="flex max-h-[80vh] w-[480px] max-w-[90vw] flex-col overflow-hidden rounded-lg bg-white shadow-lg">
+        <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h2 class="text-base font-semibold text-slate-900">Configurations</h2>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            @click="showConfigurations = false"
+          >닫기</button>
         </div>
-        <div class="file-explorer-body">
-          <section>
-            <h3>LLM 모델</h3>
-            <p class="model-name">{{ model }}</p>
+        <div class="flex-1 overflow-y-auto p-4">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">LLM 모델</h3>
+            <p class="inline-block rounded-md bg-slate-100 px-2 py-1 font-mono text-sm text-slate-700">{{ model }}</p>
           </section>
 
-          <section>
-            <h3>채팅 표시 설정</h3>
-            <label class="markdown-label">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">채팅 표시 설정</h3>
+            <label class="flex items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
+                class="accent-indigo-600"
                 :checked="renderMarkdown"
                 @change="onMarkdownToggle"
               />
@@ -636,9 +672,9 @@ function toggleEdgeType(type) {
             </label>
           </section>
 
-          <section>
-            <h3>GraphRAG 설정</h3>
-            <label class="hops-label">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">GraphRAG 설정</h3>
+            <label class="flex items-center gap-2 text-sm text-slate-700">
               검색 hop 수
               <input
                 type="number"
@@ -646,14 +682,14 @@ function toggleEdgeType(type) {
                 max="5"
                 :value="graphRagHops"
                 @change="onHopsInput"
-                class="hops-input"
+                class="w-16 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </label>
           </section>
 
-          <section>
-            <h3>스키마 생성 설정</h3>
-            <label class="hops-label">
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">스키마 생성 설정</h3>
+            <label class="flex items-center gap-2 text-sm text-slate-700">
               최고 문자수
               <input
                 type="number"
@@ -661,354 +697,27 @@ function toggleEdgeType(type) {
                 step="1000"
                 :value="maxSchemaChars"
                 @change="onMaxSchemaCharsInput"
-                class="hops-input max-chars-input"
+                class="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </label>
-            <p class="hint">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
+            <p class="mt-1 text-xs text-slate-500">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
           </section>
 
-          <section>
-            <h3>데이터베이스 관리</h3>
+          <section class="mb-6">
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">데이터베이스 관리</h3>
             <button
               type="button"
-              class="danger-button"
+              class="inline-flex items-center justify-center rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-white"
               :disabled="isResettingDb"
               @click="resetDatabase"
             >
               {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
             </button>
-            <p class="hint">WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.</p>
-            <p v-if="resetDbError" class="error">{{ resetDbError }}</p>
+            <p class="mt-1 text-xs text-slate-500">WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.</p>
+            <p v-if="resetDbError" class="mt-1 text-sm text-red-600">{{ resetDbError }}</p>
           </section>
         </div>
       </div>
     </div>
   </aside>
 </template>
-
-<style scoped>
-.settings {
-  width: 270px;
-  flex-shrink: 0;
-  border-right: 1px solid #ccc;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #1f2937;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0.6rem 0.75rem;
-}
-.settings section {
-  margin-bottom: 0.6rem;
-}
-.settings-group {
-  margin-bottom: 0.6rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #e0e0e0;
-}
-.settings-group:last-child {
-  border-bottom: none;
-}
-.group-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #1f2937;
-  margin: 0 0 0.35rem;
-}
-.settings h3 {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  color: #666;
-  margin: 0 0 0.25rem;
-}
-.settings p {
-  margin: 0.25rem 0 0;
-}
-.model-name {
-  font-family: monospace;
-  background: #f0f0f0;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  display: inline-block;
-}
-.filter-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.15rem;
-}
-.filter-item-left {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  overflow-wrap: anywhere;
-}
-.type-swatch {
-  flex-shrink: 0;
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-.edge-swatch {
-  flex-shrink: 0;
-  display: inline-block;
-  width: 20px;
-  height: 5px;
-  border-radius: 2px;
-}
-.error {
-  color: red;
-}
-.placeholder {
-  color: #888;
-  font-size: 0.9rem;
-}
-.hint {
-  color: #888;
-  font-size: 0.8rem;
-  margin-top: 0.25rem;
-}
-.danger-button {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #c0392b;
-  border-radius: 4px;
-  background: #fff;
-  color: #c0392b;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.danger-button:hover:not(:disabled) {
-  background: #fdecea;
-}
-.danger-button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.file-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.file-item {
-  padding: 0.4rem 0.5rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-.file-item:hover {
-  background: #f0f0f0;
-}
-.file-item.selected {
-  background: #dbe9ff;
-  font-weight: bold;
-}
-.file-item.disabled {
-  pointer-events: none;
-  opacity: 0.5;
-}
-.file-item-name {
-  overflow-wrap: anywhere;
-}
-.file-item-meta {
-  display: flex;
-  gap: 0.35rem;
-  margin-top: 0.25rem;
-}
-.status-badge {
-  font-size: 0.7rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 3px;
-  background: #eee;
-  color: #999;
-}
-.status-badge.on {
-  background: #dff0d8;
-  color: #3c763d;
-}
-.hops-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-}
-.markdown-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-}
-.hops-input {
-  width: 4rem;
-  padding: 0.25rem;
-}
-.max-chars-input {
-  width: 6rem;
-}
-.explorer-button {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #f0f0f0;
-  color: #333;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-.explorer-button:hover {
-  background: #e4e4e4;
-}
-.workflow-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.workflow-button {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #f0f0f0;
-  color: #333;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-.workflow-button:hover:not(:disabled) {
-  background: #e4e4e4;
-}
-.workflow-button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.schema-type-select {
-  flex: 1;
-  min-width: 0;
-  padding: 0.35rem;
-  font-size: 0.85rem;
-}
-.progress {
-  color: #555;
-  font-style: italic;
-  font-size: 0.85rem;
-}
-.success {
-  color: #1a7f37;
-  font-size: 0.85rem;
-}
-.file-explorer-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.file-explorer-window {
-  width: 480px;
-  max-width: 90vw;
-  max-height: 80vh;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.file-explorer-header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1rem;
-  background: #1f2937;
-  color: #fff;
-}
-.file-explorer-header h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-.close-button {
-  padding: 0.3rem 0.75rem;
-  border: 1px solid #fff;
-  border-radius: 4px;
-  background: transparent;
-  color: #fff;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.close-button:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-.file-explorer-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 1rem;
-}
-.file-explorer-body section {
-  margin-bottom: 1.5rem;
-}
-.version-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-.version-item.active {
-  background: #dbe9ff;
-}
-.version-item-main {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  overflow-wrap: anywhere;
-}
-.version-label {
-  font-weight: 600;
-}
-.version-item-actions {
-  display: flex;
-  gap: 0.3rem;
-  flex-shrink: 0;
-}
-.version-action-button {
-  padding: 0.2rem 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #f0f0f0;
-  color: #333;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.version-action-button:hover {
-  background: #e4e4e4;
-}
-.version-action-button.danger {
-  border-color: #c0392b;
-  color: #c0392b;
-  background: #fff;
-}
-.version-action-button.danger:hover {
-  background: #fdecea;
-}
-.version-indicator {
-  color: #555;
-  font-size: 0.8rem;
-  margin: 0.2rem 0 0;
-}
-</style>
