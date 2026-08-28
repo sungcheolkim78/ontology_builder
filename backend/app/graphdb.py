@@ -59,7 +59,8 @@ def _get_connection() -> Connection:
         _database = Database(str(DB_PATH))
         _connection = Connection(_database)
         _connection.execute(
-            "CREATE NODE TABLE IF NOT EXISTS _ExtractedDocument(stem STRING PRIMARY KEY)"
+            "CREATE NODE TABLE IF NOT EXISTS _ExtractedDocument("
+            "id STRING PRIMARY KEY, stem STRING, version INT64)"
         )
     return _connection
 
@@ -99,10 +100,11 @@ def reset_database() -> None:
 
 
 @_synchronized
-def has_graph(stem: str) -> bool:
+def has_graph(stem: str, version: int = 1) -> bool:
     conn = _get_connection()
     result = conn.execute(
-        "MATCH (d:_ExtractedDocument {stem: $stem}) RETURN d.stem AS stem", {"stem": stem}
+        "MATCH (d:_ExtractedDocument {id: $id}) RETURN d.stem AS stem",
+        {"id": f"{stem}::v{version}"},
     )
     return len(list(result.rows_as_dict())) > 0
 
@@ -173,7 +175,7 @@ def _edge_from_row(row: dict) -> dict:
 
 
 @_synchronized
-def write_graph(stem: str, nodes: list, edges: list) -> None:
+def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
     conn = _get_connection()
     nodes_by_id = {n["id"]: n for n in nodes}
 
@@ -211,8 +213,9 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
     for t in node_types:
         if t not in existing:
             conn.execute(
-                f"CREATE NODE TABLE {t}(id STRING PRIMARY KEY, label STRING, "
-                f"detail STRING, source_document STRING, embedding FLOAT[{EMBEDDING_DIM}])"
+                f"CREATE NODE TABLE {t}(id STRING PRIMARY KEY, original_id STRING, "
+                f"label STRING, detail STRING, source_document STRING, version INT64, "
+                f"embedding FLOAT[{EMBEDDING_DIM}])"
             )
             existing[t] = "NODE"
 
@@ -220,7 +223,7 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         if etype not in existing:
             conn.execute(
                 f"CREATE REL TABLE GROUP {etype}(FROM {src} TO {dst}, "
-                f"type STRING, detail STRING, source_document STRING)"
+                f"type STRING, detail STRING, source_document STRING, version INT64)"
             )
             existing[etype] = "REL"
         elif (src, dst) not in _existing_pairs(conn, etype):
@@ -230,12 +233,13 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
     try:
         # DETACH DELETE removes each node's own edges too -- edges never
         # cross documents (see Global Constraints), so this alone clears
-        # this document's entire previous graph.
+        # this document *version*'s entire previous graph.
         for name, kind in existing.items():
             if kind == "NODE":
                 conn.execute(
-                    f"MATCH (n:{name}) WHERE n.source_document = $stem DETACH DELETE n",
-                    {"stem": stem},
+                    f"MATCH (n:{name}) WHERE n.source_document = $stem "
+                    f"AND n.version = $version DETACH DELETE n",
+                    {"stem": stem, "version": version},
                 )
 
         # Batched one UNWIND per distinct node type / edge spec rather than
@@ -247,15 +251,18 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
         for node_type, type_nodes in nodes_by_type.items():
             conn.execute(
                 f"UNWIND $rows AS row "
-                f"CREATE (:{node_type} {{id: row.id, label: row.label, "
-                f"detail: row.detail, source_document: row.stem, embedding: row.embedding}})",
+                f"CREATE (:{node_type} {{id: row.id, original_id: row.original_id, "
+                f"label: row.label, detail: row.detail, source_document: row.stem, "
+                f"version: row.version, embedding: row.embedding}})",
                 {
                     "rows": [
                         {
-                            "id": f"{stem}::{node['id']}",
+                            "id": f"{stem}::v{version}::{node['id']}",
+                            "original_id": node["id"],
                             "label": node["label"],
                             "detail": node.get("detail") or "",
                             "stem": stem,
+                            "version": version,
                             "embedding": node.get("embedding"),
                         }
                         for node in type_nodes
@@ -273,22 +280,26 @@ def write_graph(stem: str, nodes: list, edges: list) -> None:
                 f"UNWIND $rows AS row "
                 f"MATCH (a:{src_type} {{id: row.src}}), (b:{dst_type} {{id: row.dst}}) "
                 f"CREATE (a)-[:{etype} {{type: row.type, detail: row.detail, "
-                f"source_document: row.stem}}]->(b)",
+                f"source_document: row.stem, version: row.version}}]->(b)",
                 {
                     "rows": [
                         {
-                            "src": f"{stem}::{edge['source']}",
-                            "dst": f"{stem}::{edge['target']}",
+                            "src": f"{stem}::v{version}::{edge['source']}",
+                            "dst": f"{stem}::v{version}::{edge['target']}",
                             "type": edge["type"],
                             "detail": edge.get("detail") or "",
                             "stem": stem,
+                            "version": version,
                         }
                         for edge in spec_edges
                     ]
                 },
             )
 
-        conn.execute("MERGE (d:_ExtractedDocument {stem: $stem})", {"stem": stem})
+        conn.execute(
+            "MERGE (d:_ExtractedDocument {id: $id}) SET d.stem = $stem, d.version = $version",
+            {"id": f"{stem}::v{version}", "stem": stem, "version": version},
+        )
         conn.execute("COMMIT")
         # Flushes the WAL into the main DB file immediately, rather than
         # leaving this write to sit only in the WAL until the engine's own

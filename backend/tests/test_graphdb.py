@@ -638,3 +638,26 @@ def test_expand_hops_nonzero_hops_on_zero_rel_table_database_returns_seed():
 
     assert {n["id"] for n in result_nodes} == {"n1"}
     assert edges == []
+
+
+def test_write_graph_scopes_by_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+    graphdb.write_graph(
+        "doc_a",
+        [{"id": "n1", "label": "Version 2 Node", "type": "Person"}],
+        [],
+        version=2,
+    )
+
+    loaded_v1 = graphdb.load_graph("doc_a", version=1)
+    loaded_v2 = graphdb.load_graph("doc_a", version=2)
+
+    assert {n["label"] for n in loaded_v1["nodes"]} == {"Ada Lovelace", "Analytical Engine"}
+    assert {n["label"] for n in loaded_v2["nodes"]} == {"Version 2 Node"}
+
+
+def test_has_graph_is_scoped_by_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+
+    assert graphdb.has_graph("doc_a", version=1) is True
+    assert graphdb.has_graph("doc_a", version=2) is False
