@@ -413,3 +413,77 @@ def test_use_schema_returns_404_when_source_missing():
     )
 
     assert response.status_code == 404
+
+
+def test_create_schema_version_increments_and_activates():
+    from app.ontology import create_schema_version, get_active_version, list_versions
+
+    v1 = create_schema_version("doc_raw", {"node_types": [], "edge_types": []}, "general")
+    v2 = create_schema_version("doc_raw", {"node_types": [], "edge_types": []}, "legal")
+
+    assert v1 == 1
+    assert v2 == 2
+    assert get_active_version("doc_raw") == 2
+    assert [v["version"] for v in list_versions("doc_raw")] == [1, 2]
+
+
+def test_activate_version_switches_active_pointer():
+    from app.ontology import activate_version, create_schema_version, get_active_version
+
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+
+    activate_version("doc_raw", 1)
+
+    assert get_active_version("doc_raw") == 1
+
+
+def test_activate_version_raises_for_unknown_version():
+    from app.ontology import activate_version, create_schema_version
+
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+
+    with pytest.raises(ValueError):
+        activate_version("doc_raw", 99)
+
+
+def test_delete_version_removes_schema_file_and_graph_rows():
+    from app import graphdb
+    from app.ontology import create_schema_version, delete_version, list_versions
+
+    v1 = create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    graphdb.write_graph(
+        "doc_raw", [{"id": "n1", "label": "Alice", "type": "Person"}], [], version=v1
+    )
+
+    delete_version("doc_raw", v1)
+
+    assert list_versions("doc_raw") == []
+    assert not (GRAPH_DIR / "doc_raw" / "schema_v1.json").is_file()
+    assert graphdb.has_graph("doc_raw", version=1) is False
+
+
+def test_delete_active_version_reactivates_most_recent_remaining():
+    from app.ontology import create_schema_version, delete_version, get_active_version
+
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+
+    delete_version("doc_raw", 2)
+
+    assert get_active_version("doc_raw") == 1
+
+
+def test_delete_version_raises_for_unknown_version():
+    from app.ontology import create_schema_version, delete_version
+
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+
+    with pytest.raises(ValueError):
+        delete_version("doc_raw", 99)
+
+
+def test_get_active_version_returns_none_when_no_versions_exist():
+    from app.ontology import get_active_version
+
+    assert get_active_version("never_seen") is None

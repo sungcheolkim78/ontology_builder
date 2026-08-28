@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 from app.chat import get_chat_model
@@ -299,17 +300,83 @@ def graph_dir_for(stem: str) -> Path:
     return GRAPH_DIR / stem
 
 
-def save_schema(stem: str, schema: dict) -> None:
+def versions_path(stem: str) -> Path:
+    return graph_dir_for(stem) / "versions.json"
+
+
+def _load_versions_manifest(stem: str) -> dict:
+    path = versions_path(stem)
+    if not path.is_file():
+        return {"active_version": None, "versions": []}
+    return json.loads(path.read_text())
+
+
+def _save_versions_manifest(stem: str, manifest: dict) -> None:
     d = graph_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "schema.json").write_text(json.dumps(schema))
+    versions_path(stem).write_text(json.dumps(manifest))
 
 
-def load_schema(stem: str) -> dict | None:
-    path = graph_dir_for(stem) / "schema.json"
+def list_versions(stem: str) -> list[dict]:
+    return _load_versions_manifest(stem)["versions"]
+
+
+def get_active_version(stem: str) -> int | None:
+    return _load_versions_manifest(stem)["active_version"]
+
+
+def schema_path_for_version(stem: str, version: int) -> Path:
+    return graph_dir_for(stem) / f"schema_v{version}.json"
+
+
+def save_schema(stem: str, version: int, schema: dict) -> None:
+    d = graph_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    schema_path_for_version(stem, version).write_text(json.dumps(schema))
+
+
+def load_schema(stem: str, version: int) -> dict | None:
+    path = schema_path_for_version(stem, version)
     if not path.is_file():
         return None
     return json.loads(path.read_text())
+
+
+def create_schema_version(stem: str, schema: dict, document_type: str = "general") -> int:
+    manifest = _load_versions_manifest(stem)
+    next_version = max((v["version"] for v in manifest["versions"]), default=0) + 1
+    save_schema(stem, next_version, schema)
+    manifest["versions"].append(
+        {
+            "version": next_version,
+            "document_type": document_type,
+            "created_at": datetime.now().isoformat(),
+        }
+    )
+    manifest["active_version"] = next_version
+    _save_versions_manifest(stem, manifest)
+    return next_version
+
+
+def activate_version(stem: str, version: int) -> None:
+    manifest = _load_versions_manifest(stem)
+    if not any(v["version"] == version for v in manifest["versions"]):
+        raise ValueError(f"version {version} not found for {stem!r}")
+    manifest["active_version"] = version
+    _save_versions_manifest(stem, manifest)
+
+
+def delete_version(stem: str, version: int) -> None:
+    manifest = _load_versions_manifest(stem)
+    remaining = [v for v in manifest["versions"] if v["version"] != version]
+    if len(remaining) == len(manifest["versions"]):
+        raise ValueError(f"version {version} not found for {stem!r}")
+    schema_path_for_version(stem, version).unlink(missing_ok=True)
+    graphdb.delete_version_data(stem, version)
+    manifest["versions"] = remaining
+    if manifest["active_version"] == version:
+        manifest["active_version"] = max((v["version"] for v in remaining), default=None)
+    _save_versions_manifest(stem, manifest)
 
 
 def save_document_manifest(stem: str, original_filename: str) -> None:
@@ -344,23 +411,23 @@ def embed_nodes(nodes: list) -> list:
     return [{**node, "embedding": vector} for node, vector in zip(nodes, vectors)]
 
 
-def save_graph(stem: str, graph: dict) -> None:
-    graphdb.write_graph(stem, graph["nodes"], graph["edges"])
+def save_graph(stem: str, graph: dict, version: int = 1) -> None:
+    graphdb.write_graph(stem, graph["nodes"], graph["edges"], version=version)
 
 
-def embed_graph(stem: str) -> int:
-    """Embeds this document's already-extracted nodes in a separate pass
-    from extraction, so a large document's LLM extraction call doesn't also
-    pay for the embedding call before anything is visible. Reads the nodes
-    graphdb already has (written by save_graph with no embedding), computes
-    vectors, and updates them in place via graphdb.update_node_embeddings --
-    rerunning this is safe and simply recomputes/overwrites every node's
+def embed_graph(stem: str, version: int = 1) -> int:
+    """Embeds this document version's already-extracted nodes in a separate
+    pass from extraction, so a large document's LLM extraction call doesn't
+    also pay for the embedding call before anything is visible. Reads the
+    nodes graphdb already has (written by save_graph with no embedding),
+    computes vectors, and updates them in place via graphdb.update_node_embeddings
+    -- rerunning this is safe and simply recomputes/overwrites every node's
     embedding."""
-    graph = graphdb.load_graph(stem)
+    graph = graphdb.load_graph(stem, version=version)
     if graph is None or not graph["nodes"]:
         return 0
     nodes = embed_nodes(graph["nodes"])
-    graphdb.update_node_embeddings(stem, nodes)
+    graphdb.update_node_embeddings(stem, nodes, version=version)
     return len(nodes)
 
 
@@ -370,9 +437,9 @@ def list_schema_stems() -> list[str]:
     return [
         d.name
         for d in GRAPH_DIR.iterdir()
-        if d.is_dir() and (d / "schema.json").is_file()
+        if d.is_dir() and (d / "versions.json").is_file()
     ]
 
 
-def load_graph(stem: str) -> dict | None:
-    return graphdb.load_graph(stem)
+def load_graph(stem: str, version: int = 1) -> dict | None:
+    return graphdb.load_graph(stem, version=version)
