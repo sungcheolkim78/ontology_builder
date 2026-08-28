@@ -253,11 +253,12 @@ per existing project practice for anything risky to `backend/data`.
 Steps:
 
 1. For every existing NODE/REL table except `_ExtractedDocument`:
-   `ALTER TABLE {t} ADD COLUMN version INT64 DEFAULT 1`. Every existing
+   `ALTER TABLE {t} ADD version INT64 DEFAULT 1` (verified against the
+   real installed LadybugDB: no `COLUMN` keyword). Every existing
    row becomes version 1; the PRIMARY KEY `id` string is never
    rewritten (it keeps its legacy 2-part shape, `f"{stem}::{original_id}"`,
    indefinitely). NODE tables additionally get `ALTER TABLE {t} ADD
-   COLUMN original_id STRING`, then backfilled **in Python, one row at
+   original_id STRING`, then backfilled **in Python, one row at
    a time** rather than a single Cypher update expression (safer than
    relying on an unverified Cypher string-splitting function in
    LadybugDB's dialect, and mirrors the existing per-row `SET` loop
