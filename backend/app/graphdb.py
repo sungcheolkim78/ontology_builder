@@ -157,7 +157,7 @@ def _existing_pairs(conn, rel_type: str) -> set:
 
 
 def _node_from_row(row: dict) -> dict:
-    node = {"id": row["id"].split("::", 1)[1], "label": row["label"], "type": row["type"]}
+    node = {"id": row["original_id"], "label": row["label"], "type": row["type"]}
     if row.get("detail"):
         node["detail"] = row["detail"]
     return node
@@ -165,8 +165,8 @@ def _node_from_row(row: dict) -> dict:
 
 def _edge_from_row(row: dict) -> dict:
     edge = {
-        "source": row["source"].split("::", 1)[1],
-        "target": row["target"].split("::", 1)[1],
+        "source": row["source"],
+        "target": row["target"],
         "type": row["type"],
     }
     if row.get("detail"):
@@ -330,7 +330,7 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
 
 
 @_synchronized
-def update_node_embeddings(stem: str, nodes: list) -> None:
+def update_node_embeddings(stem: str, nodes: list, version: int = 1) -> None:
     """Sets the embedding column on nodes write_graph already created for
     this document, without touching labels/details/edges or the
     delete-and-recreate dance write_graph does. Each node dict must carry
@@ -346,7 +346,7 @@ def update_node_embeddings(stem: str, nodes: list) -> None:
             node_type = _validate_identifier(node["type"])
             conn.execute(
                 f"MATCH (n:{node_type} {{id: $id}}) SET n.embedding = $embedding",
-                {"id": f"{stem}::{node['id']}", "embedding": node.get("embedding")},
+                {"id": f"{stem}::v{version}::{node['id']}", "embedding": node.get("embedding")},
             )
         conn.execute("COMMIT")
         reset_connection()  # see write_graph's identical rationale
@@ -364,8 +364,8 @@ def update_node_embeddings(stem: str, nodes: list) -> None:
 
 
 @_synchronized
-def load_graph(stem: str) -> dict | None:
-    if not has_graph(stem):
+def load_graph(stem: str, version: int = 1) -> dict | None:
+    if not has_graph(stem, version):
         return None
     conn = _get_connection()
 
@@ -381,10 +381,10 @@ def load_graph(stem: str) -> dict | None:
     # document written so far had zero nodes) -- see _has_table_of_kind.
     if _has_table_of_kind(conn, "NODE"):
         node_rows = conn.execute(
-            "MATCH (n) WHERE n.source_document = $stem "
-            "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail "
-            "ORDER BY n.id",
-            {"stem": stem},
+            "MATCH (n) WHERE n.source_document = $stem AND n.version = $version "
+            "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
+            "n.detail AS detail ORDER BY n.id",
+            {"stem": stem, "version": version},
         ).rows_as_dict()
         nodes = [_node_from_row(row) for row in node_rows]
     else:
@@ -395,10 +395,10 @@ def load_graph(stem: str) -> dict | None:
     # zero edges) -- see _has_table_of_kind.
     if _has_table_of_kind(conn, "REL"):
         edge_rows = conn.execute(
-            "MATCH (a)-[r]->(b) WHERE r.source_document = $stem "
-            "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target "
-            "ORDER BY r.type, a.id, b.id",
-            {"stem": stem},
+            "MATCH (a)-[r]->(b) WHERE r.source_document = $stem AND r.version = $version "
+            "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+            "b.original_id AS target ORDER BY r.type, a.id, b.id",
+            {"stem": stem, "version": version},
         ).rows_as_dict()
         edges = [_edge_from_row(row) for row in edge_rows]
     else:
@@ -408,7 +408,7 @@ def load_graph(stem: str) -> dict | None:
 
 
 @_synchronized
-def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list) -> list:
+def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list, version: int = 1) -> list:
     """type_keywords maps each node type to its own keyword list (e.g.
     {"Person": ["Ada Lovelace"]}) so a term is only matched against nodes of
     the type it was extracted for, not every allowed type at once."""
@@ -428,17 +428,19 @@ def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list) -> 
     result = conn.execute(
         "UNWIND $pairs AS tk "
         "MATCH (n) WHERE label(n) = tk.type AND n.source_document = $stem "
+        "AND n.version = $version "
         "AND ANY(kw IN tk.keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
         "OR toLower(kw) CONTAINS toLower(n.label)) "
-        "RETURN DISTINCT n.id AS id",
-        {"pairs": pairs, "stem": stem},
+        "RETURN DISTINCT n.original_id AS id",
+        {"pairs": pairs, "stem": stem, "version": version},
     )
-    return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
+    return [row["id"] for row in result.rows_as_dict()]
 
 
 @_synchronized
 def find_similar_nodes(
-    stem: str, node_type: str, query_embedding: list, top_k: int, min_score: float = 0.0
+    stem: str, node_type: str, query_embedding: list, top_k: int, min_score: float = 0.0,
+    version: int = 1,
 ) -> list:
     """Embedding fallback for a single type when find_relevant_nodes'
     keyword matching comes up empty -- ranks that type's own nodes by
@@ -454,20 +456,21 @@ def find_similar_nodes(
     if node_type not in _existing_tables(conn):
         return []
     result = conn.execute(
-        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.embedding IS NOT NULL "
-        f"RETURN n.id AS id, array_cosine_similarity(n.embedding, $query_embedding) AS score "
+        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
+        f"AND n.embedding IS NOT NULL "
+        f"RETURN n.original_id AS id, array_cosine_similarity(n.embedding, $query_embedding) AS score "
         f"ORDER BY score DESC LIMIT $top_k",
-        {"stem": stem, "query_embedding": query_embedding, "top_k": top_k},
+        {"stem": stem, "version": version, "query_embedding": query_embedding, "top_k": top_k},
     )
     return [
-        row["id"].split("::", 1)[1]
+        row["id"]
         for row in result.rows_as_dict()
         if row["score"] is not None and row["score"] >= min_score
     ]
 
 
 @_synchronized
-def all_nodes_of_types(stem: str, allowed_types: list) -> list:
+def all_nodes_of_types(stem: str, allowed_types: list, version: int = 1) -> list:
     if not allowed_types:
         return []
     conn = _get_connection()
@@ -475,32 +478,33 @@ def all_nodes_of_types(stem: str, allowed_types: list) -> list:
     if not _has_table_of_kind(conn, "NODE"):
         return []
     result = conn.execute(
-        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem RETURN n.id AS id",
-        {"types": allowed_types, "stem": stem},
+        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
+        "AND n.version = $version RETURN n.original_id AS id",
+        {"types": allowed_types, "stem": stem, "version": version},
     )
-    return [row["id"].split("::", 1)[1] for row in result.rows_as_dict()]
+    return [row["id"] for row in result.rows_as_dict()]
 
 
 @_synchronized
-def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set) -> list:
+def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set, version: int = 1) -> list:
     if not allowed_types or not matched_node_ids:
         return []
     conn = _get_connection()
     # No REL table exists at all -- see _has_table_of_kind.
     if not _has_table_of_kind(conn, "REL"):
         return []
-    prefixed_ids = [f"{stem}::{nid}" for nid in matched_node_ids]
     result = conn.execute(
         "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
-        "AND (a.id IN $ids OR b.id IN $ids) "
-        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
-        {"types": allowed_types, "stem": stem, "ids": prefixed_ids},
+        "AND r.version = $version AND (a.original_id IN $ids OR b.original_id IN $ids) "
+        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+        "b.original_id AS target",
+        {"types": allowed_types, "stem": stem, "version": version, "ids": list(matched_node_ids)},
     )
     return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
 @_synchronized
-def all_edges_of_types(stem: str, allowed_types: list) -> list:
+def all_edges_of_types(stem: str, allowed_types: list, version: int = 1) -> list:
     if not allowed_types:
         return []
     conn = _get_connection()
@@ -509,18 +513,19 @@ def all_edges_of_types(stem: str, allowed_types: list) -> list:
         return []
     result = conn.execute(
         "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
-        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
-        {"types": allowed_types, "stem": stem},
+        "AND r.version = $version "
+        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+        "b.original_id AS target",
+        {"types": allowed_types, "stem": stem, "version": version},
     )
     return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
 @_synchronized
-def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
+def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
     if not seed_ids:
         return [], []
     conn = _get_connection()
-    prefixed_seeds = [f"{stem}::{sid}" for sid in seed_ids]
     hops = max(min(hops, MAX_EXPAND_HOPS), 0)
 
     # No NODE table exists at all -- see _has_table_of_kind. Nothing can
@@ -554,28 +559,40 @@ def expand_hops(stem: str, seed_ids: set, hops: int) -> tuple:
     # pattern at all) and skip the edge query, returning no edges.
     has_rel_table = _has_table_of_kind(conn, "REL")
 
+    # seed_ids/expanded_ids are bare original_id values, not globally unique
+    # on their own (unlike the old prefixed-id scheme) -- every match below
+    # also filters by source_document/version so a seed can't accidentally
+    # resolve to a different document's or version's node sharing the same
+    # bare id in the same shared type table.
     if has_rel_table:
         node_rows = conn.execute(
-            f"MATCH (n)-[*0..{hops}]-(m) WHERE n.id IN $seeds AND m.source_document = $stem "
-            f"RETURN DISTINCT label(m) AS type, m.id AS id, m.label AS label, m.detail AS detail",
-            {"seeds": prefixed_seeds, "stem": stem},
+            f"MATCH (n)-[*0..{hops}]-(m) WHERE n.original_id IN $seeds "
+            f"AND n.source_document = $stem AND n.version = $version "
+            f"AND m.source_document = $stem AND m.version = $version "
+            f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
+            f"m.label AS label, m.detail AS detail",
+            {"seeds": list(seed_ids), "stem": stem, "version": version},
         )
     else:
         node_rows = conn.execute(
-            "MATCH (n) WHERE n.id IN $seeds AND n.source_document = $stem "
-            "RETURN label(n) AS type, n.id AS id, n.label AS label, n.detail AS detail",
-            {"seeds": prefixed_seeds, "stem": stem},
+            "MATCH (n) WHERE n.original_id IN $seeds AND n.source_document = $stem "
+            "AND n.version = $version "
+            "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
+            "n.detail AS detail",
+            {"seeds": list(seed_ids), "stem": stem, "version": version},
         )
     nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
 
     if not has_rel_table:
         return nodes, []
 
-    expanded_ids = [f"{stem}::{n['id']}" for n in nodes]
+    expanded_ids = [n["id"] for n in nodes]
     edge_rows = conn.execute(
-        "MATCH (a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids AND r.source_document = $stem "
-        "RETURN r.type AS type, r.detail AS detail, a.id AS source, b.id AS target",
-        {"ids": expanded_ids, "stem": stem},
+        "MATCH (a)-[r]->(b) WHERE a.original_id IN $ids AND b.original_id IN $ids "
+        "AND r.source_document = $stem AND r.version = $version "
+        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+        "b.original_id AS target",
+        {"ids": expanded_ids, "stem": stem, "version": version},
     )
     edges = [_edge_from_row(row) for row in edge_rows.rows_as_dict()]
 
