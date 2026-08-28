@@ -225,6 +225,32 @@ async function sendMessage() {
 .message .markdown :deep(p) {
   margin: 0.25rem 0;
 }
+.message .markdown :deep(h1) {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0.3rem;
+}
+.message .markdown :deep(h2) {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0.3rem;
+}
+.message .markdown :deep(h3) {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.4rem 0 0.25rem;
+}
+.message .markdown :deep(h4) {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0.4rem 0 0.25rem;
+}
+.message .markdown :deep(ul),
+.message .markdown :deep(ol) {
+  list-style: revert;
+  padding-left: 1.4em;
+  margin: 0.25rem 0;
+}
 .message .markdown :deep(table) {
   border-collapse: collapse;
 }

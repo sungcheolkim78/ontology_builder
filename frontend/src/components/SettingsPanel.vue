@@ -473,7 +473,7 @@ function toggleEdgeType(type) {
         </section>
 
         <p v-if="workflowProgress" class="text-sm italic text-slate-500">{{ workflowProgress }}</p>
-        <p v-if="workflowMessage" class="text-sm text-green-600">{{ workflowMessage }}</p>
+        <p v-if="workflowMessage" class="text-sm text-green-700">{{ workflowMessage }}</p>
         <p v-if="workflowError" class="text-sm text-red-600">{{ workflowError }}</p>
       </div>
 
@@ -494,11 +494,11 @@ function toggleEdgeType(type) {
         <h2 class="mb-1.5 text-sm font-semibold text-slate-900">온톨로지 설정</h2>
         <section class="mb-2.5">
           <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">그래프 노드 필터</h3>
-          <p v-if="availableTypes.length === 0" class="text-sm text-slate-400">
+          <p v-if="availableTypes.length === 0" class="text-sm text-slate-500">
             아직 추출된 그래프가 없습니다
           </p>
           <label v-for="type in availableTypes" :key="type" class="mb-1 flex items-center justify-between gap-2">
-            <span class="flex items-center gap-1.5 break-words">
+            <span class="flex items-center gap-1.5 [overflow-wrap:anywhere]">
               <input
                 type="checkbox"
                 class="accent-indigo-600"
@@ -513,11 +513,11 @@ function toggleEdgeType(type) {
 
         <section>
           <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">그래프 엣지 필터</h3>
-          <p v-if="availableEdgeTypes.length === 0" class="text-sm text-slate-400">
+          <p v-if="availableEdgeTypes.length === 0" class="text-sm text-slate-500">
             아직 추출된 그래프가 없습니다
           </p>
           <label v-for="type in availableEdgeTypes" :key="type" class="mb-1 flex items-center justify-between gap-2">
-            <span class="flex items-center gap-1.5 break-words">
+            <span class="flex items-center gap-1.5 [overflow-wrap:anywhere]">
               <input
                 type="checkbox"
                 class="accent-indigo-600"
@@ -557,16 +557,16 @@ function toggleEdgeType(type) {
 
           <section class="mb-6">
             <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">업로드된 문서</h3>
-            <p v-if="files.length === 0" class="text-sm text-slate-400">문서가 없습니다</p>
+            <p v-if="files.length === 0" class="text-sm text-slate-500">문서가 없습니다</p>
             <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="f in files"
                 :key="f.filename"
-                class="cursor-pointer rounded-md px-2 py-1.5 text-sm break-words hover:bg-slate-50"
-                :class="{ 'bg-indigo-50 font-semibold': f.filename === selectedFilename }"
+                class="cursor-pointer rounded-md px-2 py-1.5 text-sm [overflow-wrap:anywhere]"
+                :class="f.filename === selectedFilename ? 'bg-indigo-50 font-semibold' : 'hover:bg-slate-50'"
                 @click="selectFile(f.filename)"
               >
-                <div class="break-words">{{ f.original_filename }}</div>
+                <div class="[overflow-wrap:anywhere]">{{ f.original_filename }}</div>
                 <div class="mt-1 flex gap-1.5">
                   <span
                     class="inline-flex items-center rounded-full px-2 py-0.5 text-xs"
@@ -584,8 +584,8 @@ function toggleEdgeType(type) {
 
           <section class="mb-6">
             <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">선택된 문서의 스키마 버전</h3>
-            <p v-if="!selectedFilename" class="text-sm text-slate-400">문서를 먼저 선택하세요</p>
-            <p v-else-if="schemaVersions.length === 0" class="text-sm text-slate-400">생성된 버전이 없습니다</p>
+            <p v-if="!selectedFilename" class="text-sm text-slate-500">문서를 먼저 선택하세요</p>
+            <p v-else-if="schemaVersions.length === 0" class="text-sm text-slate-500">생성된 버전이 없습니다</p>
             <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="v in schemaVersions"
@@ -593,7 +593,7 @@ function toggleEdgeType(type) {
                 class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm"
                 :class="{ 'bg-indigo-50': v.is_active }"
               >
-                <div class="flex items-center gap-1.5 break-words">
+                <div class="flex items-center gap-1.5 [overflow-wrap:anywhere]">
                   <span class="font-semibold text-slate-900">v{{ v.version }} · {{ v.document_type }}</span>
                   <span
                     v-if="v.is_active"
@@ -624,12 +624,12 @@ function toggleEdgeType(type) {
 
           <section class="mb-6">
             <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">스키마 라이브러리</h3>
-            <p v-if="schemas.length === 0" class="text-sm text-slate-400">생성된 스키마가 없습니다</p>
+            <p v-if="schemas.length === 0" class="text-sm text-slate-500">생성된 스키마가 없습니다</p>
             <ul v-else class="m-0 list-none p-0">
               <li
                 v-for="s in schemas"
                 :key="s.stem"
-                class="cursor-pointer rounded-md px-2 py-1.5 text-sm break-words hover:bg-slate-50"
+                class="cursor-pointer rounded-md px-2 py-1.5 text-sm [overflow-wrap:anywhere] hover:bg-slate-50"
                 :class="{ 'pointer-events-none opacity-50': isUsingSchema || !selectedFilename }"
                 @click="useSchema(s.stem)"
               >

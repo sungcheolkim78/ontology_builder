@@ -188,6 +188,35 @@ watch(
 .error {
   color: red;
 }
+.markdown :deep(h1) {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0.75rem 0 0.5rem;
+}
+.markdown :deep(h2) {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.75rem 0 0.5rem;
+}
+.markdown :deep(h3) {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.35rem;
+}
+.markdown :deep(h4) {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.35rem;
+}
+.markdown :deep(p) {
+  margin: 0.5rem 0;
+}
+.markdown :deep(ul),
+.markdown :deep(ol) {
+  list-style: revert;
+  padding-left: 1.5em;
+  margin: 0.5rem 0;
+}
 .markdown :deep(table) {
   border-collapse: collapse;
 }
