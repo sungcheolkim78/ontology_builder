@@ -347,3 +347,29 @@ def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
 
     assert result["context"] is not None
     assert "None" not in result["context"]
+
+
+def test_search_graph_scoped_to_active_version(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES, version=1)
+    graphdb.write_graph(
+        STEM,
+        [{"id": "n9", "label": "Grace Hopper", "type": "Person"}],
+        [],
+        version=2,
+    )
+    model = SequencedChatModel(
+        [
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": [],
+                    "keywords": {"Person": ["Grace Hopper"]},
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+
+    result = search_graph("Who is Grace Hopper?", SCHEMA, STEM, version=2, hops=0)
+
+    assert {n["label"] for n in result["related_nodes"]} == {"Grace Hopper"}

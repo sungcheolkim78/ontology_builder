@@ -487,3 +487,106 @@ def test_get_active_version_returns_none_when_no_versions_exist():
     from app.ontology import get_active_version
 
     assert get_active_version("never_seen") is None
+
+
+def test_generate_schema_response_includes_version(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/schema")
+
+    assert response.status_code == 200
+    assert response.json() == {**schema, "version": 1}
+    saved = json.loads((GRAPH_DIR / "doc_raw" / "schema_v1.json").read_text())
+    assert saved == schema
+    versions = json.loads((GRAPH_DIR / "doc_raw" / "versions.json").read_text())
+    assert versions["active_version"] == 1
+
+
+def test_generate_schema_second_call_creates_second_version(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema))
+    )
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+    response = client.post("/api/ontology/doc_raw.md/schema")
+
+    assert response.json()["version"] == 2
+    assert (GRAPH_DIR / "doc_raw" / "schema_v1.json").is_file()
+    assert (GRAPH_DIR / "doc_raw" / "schema_v2.json").is_file()
+
+
+def test_list_schema_versions_endpoint_reports_active_and_graph_status(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+    client.post("/api/ontology/doc_raw.md/schema")
+
+    response = client.get("/api/ontology/doc_raw.md/schema/versions")
+
+    assert response.status_code == 200
+    versions = response.json()["versions"]
+    assert [v["version"] for v in versions] == [1, 2]
+    assert [v["is_active"] for v in versions] == [False, True]
+    assert [v["has_graph"] for v in versions] == [False, False]
+
+
+def test_activate_schema_version_endpoint_switches_active_version(monkeypatch):
+    write_document()
+    schema_v1 = {"node_types": [{"name": "Person", "description": "v1"}], "edge_types": []}
+    schema_v2 = {"node_types": [{"name": "Organization", "description": "v2"}], "edge_types": []}
+    client = TestClient(app)
+
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema_v1)))
+    client.post("/api/ontology/doc_raw.md/schema")
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema_v2)))
+    client.post("/api/ontology/doc_raw.md/schema")
+
+    response = client.post("/api/ontology/doc_raw.md/schema/versions/1/activate")
+
+    assert response.status_code == 200
+    assert client.get("/api/ontology/doc_raw.md/schema").json() == schema_v1
+
+
+def test_activate_schema_version_endpoint_returns_404_for_unknown_version():
+    write_document()
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/schema/versions/99/activate")
+
+    assert response.status_code == 404
+
+
+def test_delete_schema_version_endpoint_removes_version(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    client = TestClient(app)
+    client.post("/api/ontology/doc_raw.md/schema")
+    client.post("/api/ontology/doc_raw.md/schema")
+
+    response = client.delete("/api/ontology/doc_raw.md/schema/versions/2")
+
+    assert response.status_code == 200
+    versions = client.get("/api/ontology/doc_raw.md/schema/versions").json()["versions"]
+    assert [v["version"] for v in versions] == [1]
+    assert versions[0]["is_active"] is True
+
+
+def test_delete_schema_version_endpoint_returns_404_for_unknown_version():
+    write_document()
+    client = TestClient(app)
+
+    response = client.delete("/api/ontology/doc_raw.md/schema/versions/99")
+
+    assert response.status_code == 404

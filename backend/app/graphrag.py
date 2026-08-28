@@ -103,7 +103,7 @@ def _build_context_text(nodes: list, edges: list) -> str | None:
     return "\n".join(parts)
 
 
-def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
+def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops: int = 1) -> dict:
     """Schema-aware graph search: determine which node/edge types (from the
     document's own schema) are relevant to the question, then search actual
     node/edge instances of those types via LadybugDB, then expand `hops`
@@ -142,7 +142,7 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
         query_embedding = None
         for node_type in node_types:
             type_ids = graphdb.find_relevant_nodes(
-                stem, {node_type: keywords.get(node_type, [])}, [node_type]
+                stem, {node_type: keywords.get(node_type, [])}, [node_type], version=version
             )
             if not type_ids:
                 # No keyword was extracted for this type, or the extracted
@@ -156,7 +156,8 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
                 if query_embedding is None:
                     query_embedding = embed_query(question)
                 type_ids = graphdb.find_similar_nodes(
-                    stem, node_type, query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K
+                    stem, node_type, query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K,
+                    version=version,
                 )
             if not type_ids:
                 # No embedding was stored for this type either -- most
@@ -164,12 +165,14 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
                 # there's nothing to rank. Last resort: every instance of
                 # just this type, same fallback embeddings were meant to
                 # narrow (see EMBEDDING_FALLBACK_TOP_K above).
-                type_ids = graphdb.all_nodes_of_types(stem, [node_type])
+                type_ids = graphdb.all_nodes_of_types(stem, [node_type], version=version)
             for node_id in type_ids:
                 _add_matched(node_id)
 
     if edge_types:
-        matched_edges = graphdb.find_matching_edges(stem, edge_types, matched_node_id_set)
+        matched_edges = graphdb.find_matching_edges(
+            stem, edge_types, matched_node_id_set, version=version
+        )
         for edge in matched_edges:
             _add_matched(edge["source"])
             _add_matched(edge["target"])
@@ -179,11 +182,13 @@ def search_graph(question: str, schema: dict, stem: str, hops: int = 1) -> dict:
             # determined node type turned out to have zero real instances) --
             # fall back to every edge of the determined type rather than
             # reporting "not found" when the graph actually has data.
-            for edge in graphdb.all_edges_of_types(stem, edge_types):
+            for edge in graphdb.all_edges_of_types(stem, edge_types, version=version):
                 _add_matched(edge["source"])
                 _add_matched(edge["target"])
 
-    related_nodes, related_edges = graphdb.expand_hops(stem, matched_node_id_set, hops)
+    related_nodes, related_edges = graphdb.expand_hops(
+        stem, matched_node_id_set, hops, version=version
+    )
     # Put directly-matched nodes first, in the relevance order they were
     # matched in above; nodes only pulled in by hop expansion (never
     # directly matched) sort after, in whatever order the DB returned them.
