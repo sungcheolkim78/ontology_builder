@@ -37,6 +37,7 @@ const graphRagHops = ref(1)
 const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
+const showConfigurations = ref(false)
 
 const currentFile = computed(() => files.value.find((f) => f.filename === props.selectedFilename))
 
@@ -353,7 +354,6 @@ function toggleEdgeType(type) {
         <button type="button" class="explorer-button" @click="showFileExplorer = true">
           1 파일 선택
         </button>
-        <p class="hint">문서를 업로드하고, 업로드된 문서를 선택하거나 스키마 라이브러리를 적용할 수 있습니다.</p>
       </section>
 
       <section>
@@ -364,7 +364,7 @@ function toggleEdgeType(type) {
             :disabled="!selectedFilename || isGeneratingSchema"
             @click="generateSchema"
           >
-            {{ isGeneratingSchema ? '생성 중...' : '스키마 생성' }}
+            {{ isGeneratingSchema ? '생성 중...' : '2 스키마 생성' }}
           </button>
           <select v-model="schemaDocumentType" :disabled="isGeneratingSchema" class="schema-type-select">
             <option value="general">일반 문서</option>
@@ -380,7 +380,7 @@ function toggleEdgeType(type) {
           :disabled="!selectedFilename || isExtracting"
           @click="extractGraph"
         >
-          {{ isExtracting ? '추출 중...' : '그래프 추출' }}
+          {{ isExtracting ? '추출 중...' : '3 그래프 추출' }}
         </button>
       </section>
 
@@ -391,7 +391,7 @@ function toggleEdgeType(type) {
           :disabled="!selectedFilename || isEmbedding || !currentFile?.has_graph"
           @click="embed"
         >
-          {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
+          {{ isEmbedding ? '임베딩 생성 중...' : '4 임베딩 생성' }}
         </button>
       </section>
 
@@ -403,65 +403,9 @@ function toggleEdgeType(type) {
     <div class="settings-group">
       <h2 class="group-title">실행 설정</h2>
       <section>
-        <h3>LLM 모델</h3>
-        <p class="model-name">{{ model }}</p>
-      </section>
-
-      <section>
-        <h3>채팅 표시 설정</h3>
-        <label class="markdown-label">
-          <input
-            type="checkbox"
-            :checked="renderMarkdown"
-            @change="onMarkdownToggle"
-          />
-          마크다운 HTML로 렌더링
-        </label>
-      </section>
-
-      <section>
-        <h3>GraphRAG 설정</h3>
-        <label class="hops-label">
-          검색 hop 수
-          <input
-            type="number"
-            min="1"
-            max="5"
-            :value="graphRagHops"
-            @change="onHopsInput"
-            class="hops-input"
-          />
-        </label>
-      </section>
-
-      <section>
-        <h3>스키마 생성 설정</h3>
-        <label class="hops-label">
-          최고 문자수
-          <input
-            type="number"
-            min="1"
-            step="1000"
-            :value="maxSchemaChars"
-            @change="onMaxSchemaCharsInput"
-            class="hops-input max-chars-input"
-          />
-        </label>
-        <p class="hint">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
-      </section>
-
-      <section>
-        <h3>데이터베이스 관리</h3>
-        <button
-          type="button"
-          class="danger-button"
-          :disabled="isResettingDb"
-          @click="resetDatabase"
-        >
-          {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
+        <button type="button" class="explorer-button" @click="showConfigurations = true">
+          Configurations
         </button>
-        <p class="hint">WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.</p>
-        <p v-if="resetDbError" class="error">{{ resetDbError }}</p>
       </section>
     </div>
 
@@ -562,6 +506,78 @@ function toggleEdgeType(type) {
             </ul>
             <p v-if="isUsingSchema">적용 중...</p>
             <p v-if="schemaUseError" class="error">{{ schemaUseError }}</p>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showConfigurations" class="file-explorer-overlay">
+      <div class="file-explorer-window">
+        <div class="file-explorer-header">
+          <h2>Configurations</h2>
+          <button type="button" class="close-button" @click="showConfigurations = false">닫기</button>
+        </div>
+        <div class="file-explorer-body">
+          <section>
+            <h3>LLM 모델</h3>
+            <p class="model-name">{{ model }}</p>
+          </section>
+
+          <section>
+            <h3>채팅 표시 설정</h3>
+            <label class="markdown-label">
+              <input
+                type="checkbox"
+                :checked="renderMarkdown"
+                @change="onMarkdownToggle"
+              />
+              마크다운 HTML로 렌더링
+            </label>
+          </section>
+
+          <section>
+            <h3>GraphRAG 설정</h3>
+            <label class="hops-label">
+              검색 hop 수
+              <input
+                type="number"
+                min="1"
+                max="5"
+                :value="graphRagHops"
+                @change="onHopsInput"
+                class="hops-input"
+              />
+            </label>
+          </section>
+
+          <section>
+            <h3>스키마 생성 설정</h3>
+            <label class="hops-label">
+              최고 문자수
+              <input
+                type="number"
+                min="1"
+                step="1000"
+                :value="maxSchemaChars"
+                @change="onMaxSchemaCharsInput"
+                class="hops-input max-chars-input"
+              />
+            </label>
+            <p class="hint">이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.</p>
+          </section>
+
+          <section>
+            <h3>데이터베이스 관리</h3>
+            <button
+              type="button"
+              class="danger-button"
+              :disabled="isResettingDb"
+              @click="resetDatabase"
+            >
+              {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
+            </button>
+            <p class="hint">WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.</p>
+            <p v-if="resetDbError" class="error">{{ resetDbError }}</p>
           </section>
         </div>
       </div>
