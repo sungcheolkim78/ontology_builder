@@ -446,39 +446,50 @@ watch(
 </script>
 
 <template>
-  <section class="graph">
-    <h2 class="panel-title">온톨로지 그래프</h2>
+  <section class="flex h-full flex-col">
+    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">온톨로지 그래프</h2>
 
-    <div class="panel-body">
-      <p v-if="status === 'empty'" class="placeholder">문서를 선택하세요</p>
+    <div class="flex-1 min-h-0 flex flex-col p-4">
+      <p v-if="status === 'empty'" class="shrink-0 text-sm text-slate-500">문서를 선택하세요</p>
 
       <template v-else-if="status === 'no-graph' || status === 'ready'">
-        <div class="actions">
+        <div class="mb-3 flex shrink-0 items-center gap-2">
           <button
             v-if="status === 'ready' && schema && schema.node_types.length > 0"
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             @click="showSchemaPreview = !showSchemaPreview"
           >
             {{ showSchemaPreview ? '추출된 그래프 보기' : '스키마 미리보기' }}
           </button>
-          <button v-if="displayMode !== 'none'" @click="resetView">리셋</button>
-          <label class="label-toggle">
-            <input type="checkbox" v-model="showNodeLabels" />
+          <button
+            v-if="displayMode !== 'none'"
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            @click="resetView"
+          >리셋</button>
+          <label class="ml-1 flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" class="accent-indigo-600" v-model="showNodeLabels" />
             Node Label
           </label>
-          <label class="label-toggle">
-            <input type="checkbox" v-model="showEdgeLabels" />
+          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" class="accent-indigo-600" v-model="showEdgeLabels" />
             Edge Label
           </label>
         </div>
-        <p v-if="error" class="error">{{ error }}</p>
-        <p v-if="displayMode === 'none' && !error" class="placeholder">
+        <p v-if="error" class="shrink-0 text-sm text-red-600">{{ error }}</p>
+        <p v-if="displayMode === 'none' && !error" class="shrink-0 text-sm text-slate-500">
           스키마를 생성하거나 라이브러리에서 선택하세요
         </p>
       </template>
 
-      <p v-else-if="status === 'error'" class="error">{{ error }}</p>
+      <p v-else-if="status === 'error'" class="shrink-0 text-sm text-red-600">{{ error }}</p>
 
-      <div v-if="displayMode !== 'none'" class="graph-viewport" @mousemove="onNodePointerMove">
+      <div
+        v-if="displayMode !== 'none'"
+        class="relative flex-1 min-h-0 w-full rounded-lg shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08),0_1px_4px_rgba(0,0,0,0.12)]"
+        @mousemove="onNodePointerMove"
+      >
         <v-network-graph
           ref="graphRef"
           v-model:selected-nodes="selectedNodes"
@@ -496,96 +507,14 @@ watch(
 
         <div
           v-if="hoveredNode"
-          class="node-tooltip"
+          class="pointer-events-none fixed z-[2000] max-w-[260px] rounded-md bg-slate-800 px-[0.65rem] py-2 text-sm leading-snug text-white shadow-lg"
           :style="{ left: tooltipPos.x + 12 + 'px', top: tooltipPos.y + 12 + 'px' }"
         >
-          <div class="node-tooltip-type">{{ hoveredNode.type }}</div>
-          <div class="node-tooltip-label">{{ hoveredNode.name }}</div>
-          <div v-if="hoveredNode.detail" class="node-tooltip-detail">{{ hoveredNode.detail }}</div>
+          <div class="mb-0.5 text-xs uppercase tracking-wide text-slate-400">{{ hoveredNode.type }}</div>
+          <div class="mb-0.5 font-semibold">{{ hoveredNode.name }}</div>
+          <div v-if="hoveredNode.detail" class="text-slate-300">{{ hoveredNode.detail }}</div>
         </div>
       </div>
     </div>
   </section>
 </template>
-
-<style scoped>
-.graph {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #7c3aed;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  flex-shrink: 0;
-}
-.label-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.85rem;
-  color: #555;
-  margin-left: 0.25rem;
-  cursor: pointer;
-}
-.placeholder {
-  color: #888;
-  flex-shrink: 0;
-}
-.error {
-  color: red;
-  flex-shrink: 0;
-}
-.graph-viewport {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.12);
-  position: relative;
-}
-.node-tooltip {
-  position: fixed;
-  z-index: 2000;
-  pointer-events: none;
-  max-width: 260px;
-  background: #1f2937;
-  color: #fff;
-  padding: 0.5rem 0.65rem;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  line-height: 1.4;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-}
-.node-tooltip-type {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #9ca3af;
-  margin-bottom: 0.15rem;
-}
-.node-tooltip-label {
-  font-weight: 600;
-  margin-bottom: 0.15rem;
-}
-.node-tooltip-detail {
-  color: #d1d5db;
-}
-</style>
