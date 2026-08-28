@@ -731,8 +731,54 @@ CREATE NODE TABLE Person(
   </div>
 </section>
 
+<section class="slide" id="s-podman">
+  <div class="kicker">2부 · 07 · 로컬 실행 환경</div>
+  <h2>Dockerfile + podman-compose — "내 컴퓨터에서도 똑같이 돌아간다"</h2>
+  <p class="lead" style="margin-bottom:1.2rem">
+    백엔드(FastAPI)와 프론트엔드(Vue)는 각자의 <code class="inline">Dockerfile</code>로 컨테이너 이미지를 정의하고,
+    <code class="inline">podman-compose.yml</code>이 이 둘과 Jaeger까지 세 컨테이너를 한 번에 띄웁니다.
+    Docker 대신 <b style="color:var(--text)">Podman</b>을 쓰는 이유는 데몬 없이(rootless) 동작해서
+    macOS/리눅스에서 더 가볍고 안전하기 때문입니다 — 명령어와 compose 파일 문법은 Docker와 거의 동일합니다.
+  </p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Dockerfile — "무엇을 담을지"</h3>
+      <p style="margin-bottom:.6rem">각 서비스가 어떤 베이스 이미지 위에서, 어떤 의존성을 깔고, 무엇을 실행할지 정의합니다.</p>
+      <pre style="margin:0"># backend/Dockerfile
+FROM python:3.12-slim
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY app ./app
+CMD ["uvicorn", "app.main:app",
+     "--host", "0.0.0.0", "--reload"]</pre>
+      <p style="margin-top:.8rem">
+        <code class="inline">--reload</code>와 volume 마운트(아래 compose 참고) 덕분에 컨테이너를
+        다시 빌드하지 않고도 호스트에서 코드를 고치면 즉시 반영됩니다.
+      </p>
+    </div>
+    <div class="card">
+      <h3>podman-compose.yml — "어떻게 연결할지"</h3>
+      <ul class="plain">
+        <li><b>jaeger</b> — 트레이싱 UI (<code class="inline">:16686</code>)</li>
+        <li><b>backend</b> — <code class="inline">./backend/app</code>, <code class="inline">./backend/data</code>를
+          바인드 마운트 + <code class="inline">OTEL_EXPORTER_OTLP_ENDPOINT</code>로 jaeger 연결 (<code class="inline">:8000</code>)</li>
+        <li><b>frontend</b> — <code class="inline">./frontend/src</code>를 바인드 마운트, backend에 의존 (<code class="inline">:5173</code>)</li>
+      </ul>
+      <p style="margin-top:.8rem">
+        <code class="inline">depends_on</code>으로 시작 순서(jaeger → backend → frontend)를 보장하고,
+        바인드 마운트로 "컨테이너 안 코드 = 호스트 코드"를 유지해 편집기에서 고친 파일이 곧바로 컨테이너에 반영됩니다.
+      </p>
+    </div>
+  </div>
+  <p class="footnote">
+    실행은 <code class="inline">podman-compose up --build -d</code> 한 줄. macOS의 virtiofs 바인드 마운트가
+    가끔 stale해지는 알려진 이슈가 있어 — 증상은 CLAUDE.md의 "Known gotcha" 참고 —
+    이때는 <code class="inline">podman-compose down && podman-compose up --build -d</code>로 재기동하면 해결됩니다.
+  </p>
+</section>
+
 <section class="slide" id="s-vibe">
-  <div class="kicker">2부 · 07 · 실전: 반복 개발의 증거</div>
+  <div class="kicker">2부 · 08 · 실전: 반복 개발의 증거</div>
   <h2>커밋 로그로 보는 "바이브 코딩" 한 사이클</h2>
   <p class="lead" style="margin-bottom:1.2rem">
     <span class="fwd">2부 · 01</span>에서 말한 세 가지(즉각 피드백 / 안전한 경계 / 관측)가 실제로 어떻게
@@ -755,7 +801,7 @@ ed16814 Add LadybugDB reset button for WAL corruption recovery
 </section>
 
 <section class="slide" id="s-limits">
-  <div class="kicker">2부 · 08 · 한계</div>
+  <div class="kicker">2부 · 09 · 한계</div>
   <h2>알고 있는 한계 (일부)</h2>
   <div class="grid2">
     <ul class="plain">
