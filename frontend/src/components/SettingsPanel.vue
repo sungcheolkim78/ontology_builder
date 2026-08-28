@@ -424,7 +424,7 @@ function toggleEdgeType(type) {
             class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             @click="showFileExplorer = true"
           >
-            1 파일 선택
+            1 원본 파일 선택
           </button>
         </section>
 
