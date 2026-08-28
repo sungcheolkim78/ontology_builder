@@ -59,7 +59,12 @@ def stub_embedding_model(monkeypatch):
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
     graph_dir = GRAPH_DIR / stem
     graph_dir.mkdir(parents=True)
-    (graph_dir / "schema.json").write_text(json.dumps(schema))
+    (graph_dir / "schema_v1.json").write_text(json.dumps(schema))
+    (graph_dir / "versions.json").write_text(
+        json.dumps(
+            {"active_version": 1, "versions": [{"version": 1, "document_type": "general", "created_at": None}]}
+        )
+    )
     graphdb.write_graph(stem, nodes, edges)
     return graph_dir
 

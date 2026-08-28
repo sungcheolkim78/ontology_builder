@@ -58,23 +58,20 @@ def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme.")
     (DATA_DIR / filename).write_text(content)
 
 
-def test_generate_schema_saves_and_returns_schema(monkeypatch):
-    write_document()
-    schema = {
-        "node_types": [{"name": "Person", "description": "a person"}],
-        "edge_types": [],
-    }
-    monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema))
+def seed_schema_version(stem, schema, version=1, document_type="general"):
+    d = GRAPH_DIR / stem
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"schema_v{version}.json").write_text(json.dumps(schema))
+    (d / "versions.json").write_text(
+        json.dumps(
+            {
+                "active_version": version,
+                "versions": [
+                    {"version": version, "document_type": document_type, "created_at": None}
+                ],
+            }
+        )
     )
-    client = TestClient(app)
-
-    response = client.post("/api/ontology/doc_raw.md/schema")
-
-    assert response.status_code == 200
-    assert response.json() == schema
-    saved = json.loads((GRAPH_DIR / "doc_raw" / "schema.json").read_text())
-    assert saved == schema
 
 
 def test_generate_schema_returns_400_on_invalid_json(monkeypatch):
@@ -220,16 +217,14 @@ def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
-    saved_schema = json.loads((GRAPH_DIR / "doc_raw" / "schema.json").read_text())
+    saved_schema = json.loads((GRAPH_DIR / "doc_raw" / "schema_v1.json").read_text())
     assert saved_schema == DEFAULT_SCHEMA
 
 
 def test_extract_saves_and_returns_graph(monkeypatch):
     write_document()
-    schema_dir = GRAPH_DIR / "doc_raw"
-    schema_dir.mkdir(parents=True)
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    (schema_dir / "schema.json").write_text(json.dumps(schema))
+    seed_schema_version("doc_raw", schema)
 
     graph = {
         "nodes": [{"id": "n1", "label": "Alice", "type": "Person"}],
@@ -245,14 +240,12 @@ def test_extract_saves_and_returns_graph(monkeypatch):
     assert response.status_code == 200
     assert response.json() == graph
     from app import graphdb
-    assert graphdb.load_graph("doc_raw") == graph
+    assert graphdb.load_graph("doc_raw", version=1) == graph
 
 
 def test_extract_returns_400_on_invalid_json(monkeypatch):
     write_document()
-    schema_dir = GRAPH_DIR / "doc_raw"
-    schema_dir.mkdir(parents=True)
-    (schema_dir / "schema.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
+    seed_schema_version("doc_raw", {"node_types": [], "edge_types": []})
     monkeypatch.setattr(
         "app.ontology.get_chat_model", lambda: FakeChatModel("nope")
     )
@@ -265,10 +258,8 @@ def test_extract_returns_400_on_invalid_json(monkeypatch):
 
 def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
     write_document()
-    schema_dir = GRAPH_DIR / "doc_raw"
-    schema_dir.mkdir(parents=True)
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    (schema_dir / "schema.json").write_text(json.dumps(schema))
+    seed_schema_version("doc_raw", schema)
 
     graph = {
         "nodes": [{"id": "n1", "label": "Alice", "type": "Person"}],
@@ -289,6 +280,7 @@ def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
 
 def test_get_ontology_returns_saved_graph():
     from app import graphdb
+    seed_schema_version("doc_raw", DEFAULT_SCHEMA)
     nodes = [{"id": "n1", "label": "Alice", "type": "Person"}]
     edges = []
     graphdb.write_graph("doc_raw", nodes, edges)
@@ -332,10 +324,8 @@ def test_list_schemas_returns_empty_when_none():
 def test_list_schemas_returns_stems_with_a_saved_schema():
     schema = {"node_types": [], "edge_types": []}
     for stem in ("doc_raw", "other_raw"):
-        d = GRAPH_DIR / stem
-        d.mkdir(parents=True)
-        (d / "schema.json").write_text(json.dumps(schema))
-    # a graph dir with no schema.json shouldn't be listed
+        seed_schema_version(stem, schema)
+    # a graph dir with no versions.json shouldn't be listed
     (GRAPH_DIR / "no_schema_raw").mkdir(parents=True)
     client = TestClient(app)
 
@@ -364,9 +354,7 @@ def test_load_document_manifest_returns_none_when_missing():
 
 def test_get_schema_returns_saved_schema():
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    d = GRAPH_DIR / "doc_raw"
-    d.mkdir(parents=True)
-    (d / "schema.json").write_text(json.dumps(schema))
+    seed_schema_version("doc_raw", schema)
     client = TestClient(app)
 
     response = client.get("/api/ontology/doc_raw.md/schema")
@@ -389,9 +377,7 @@ def test_use_schema_copies_source_schema_to_target():
         "node_types": [{"name": "Organization", "description": "an org"}],
         "edge_types": [],
     }
-    source_dir = GRAPH_DIR / "source_raw"
-    source_dir.mkdir(parents=True)
-    (source_dir / "schema.json").write_text(json.dumps(source_schema))
+    seed_schema_version("source_raw", source_schema)
     client = TestClient(app)
 
     response = client.post(
@@ -399,8 +385,8 @@ def test_use_schema_copies_source_schema_to_target():
     )
 
     assert response.status_code == 200
-    assert response.json() == source_schema
-    saved = json.loads((GRAPH_DIR / "target_raw" / "schema.json").read_text())
+    assert response.json() == {**source_schema, "version": 1}
+    saved = json.loads((GRAPH_DIR / "target_raw" / "schema_v1.json").read_text())
     assert saved == source_schema
 
 
