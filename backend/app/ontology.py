@@ -69,6 +69,24 @@ that is genuinely useful on its own for browsing or filtering (e.g. Date, \
 Event, DocumentSection) may stay edgeless if the document doesn't clearly \
 connect it to anything.
 
+Name edge_types as verbs or verb phrases describing what the source does to \
+or has with the target (e.g. COVERS, REQUIRES, EXCLUDES, PAYS), not as nouns. \
+Avoid vague catch-all relationships such as RELATED_TO, ASSOCIATED_WITH, or \
+HAS_INFO -- use one only when the document genuinely offers nothing more \
+specific to say about how two entities connect. Separately, if the document \
+has a classification/hierarchy relationship (a general category containing \
+more specific subtypes, e.g. a product line and its individual products), \
+represent that with its own taxonomic edge_type (e.g. IS_A or SUBTYPE_OF) \
+rather than folding it into a business-meaning edge_type like COVERS or \
+BELONGS_TO -- keep "this is a kind of that" separate from "this does \
+something to/for that".
+
+Before finalizing the schema, silently check it against a handful of \
+questions a user would realistically ask about this document (do not include \
+these questions in the output). If answering one of them would clearly \
+require a node_type or edge_type the schema is missing, add it; if every \
+type you have is unused by any such question, reconsider whether it belongs.
+
 Every "name" value (for both node_types and edge_types) MUST be a valid \
 identifier: letters, digits, and underscores only, no spaces or other \
 characters, and it must start with a letter or underscore (e.g. "JobTitle" \
@@ -152,6 +170,19 @@ worth navigating or tracing -- not just because the document happens to have \
 numbered sections. Only propose types the document actually supports, using \
 its own terminology rather than generic labels wholesale.
 
+Keep a structural node_type like "Article" purely structural: it identifies \
+*where* something is written, not *what* it says. Never let it become a \
+catch-all for the substantive content of the provisions themselves -- a single \
+article routinely states more than one kind of thing (e.g. both a payment \
+condition and an exclusion in the same clause), so representing that content \
+as a property of the Article node, or as one more Article instance, collapses \
+distinct meanings into an undifferentiated bucket. Instead, pull the actual \
+substance out into its own concept node_types (parties, benefits, conditions/\
+events, exclusions, defined terms -- as above) and connect each back to the \
+article it comes from with an edge_type (e.g. "STATES", "DEFINES", "TRIGGERS"). \
+The same rule applies to any other structural/sectioning node_type you \
+introduce (e.g. "Clause", "Schedule", "Appendix").
+
 """ + _SCHEMA_OUTPUT_INSTRUCTIONS
 
 SCHEMA_PROMPTS = {
@@ -182,10 +213,15 @@ For each node and edge, also include a "detail" field: one or two sentences of \
 specific supporting information from the document -- exact conditions, exceptions, \
 figures, dates, or phrasing -- that isn't captured by the label/type alone. Every \
 claim in "detail" must be directly supported by the document text -- don't add \
-inference, summary judgment, or outside/general knowledge about the entity. \
-Prefer a short direct quote or paraphrase of the specific condition/figure/date \
-over a general description. Omit "detail" (or leave it an empty string) if the \
-document has nothing beyond the label worth adding.
+inference, summary judgment, or outside/general knowledge about the entity. For \
+a condition, exception, figure, or date specifically, quote the document's own \
+wording for it rather than paraphrasing, so the exact number/date/phrasing is \
+preserved verbatim; paraphrase only the surrounding context needed to make that \
+quote make sense. When "detail" includes a quantity, percentage, or duration, \
+state it with its unit exactly as the document does (e.g. "90일 이내", "가입금액의 \
+50%") rather than a vaguer description, so figures stay comparable across nodes. \
+Omit "detail" (or leave it an empty string) if the document has nothing beyond \
+the label worth adding.
 
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"nodes": [{{"id": "...", "label": "...", "type": "<a node type name from the schema>", \
