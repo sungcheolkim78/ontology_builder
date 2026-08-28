@@ -38,6 +38,8 @@ const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
 const showConfigurations = ref(false)
+const schemaVersions = ref([])
+const versionActionError = ref('')
 
 const currentFile = computed(() => files.value.find((f) => f.filename === props.selectedFilename))
 
@@ -208,6 +210,9 @@ watch(
   }
 )
 
+watch(() => props.selectedFilename, loadSchemaVersions)
+watch(() => props.schemaVersion, loadSchemaVersions)
+
 async function loadSchemas() {
   try {
     const res = await apiFetch('/api/ontology/schemas')
@@ -228,6 +233,27 @@ async function loadDocuments() {
   }
 }
 
+async function loadSchemaVersions() {
+  if (!props.selectedFilename) {
+    schemaVersions.value = []
+    return
+  }
+  try {
+    const res = await apiFetch(
+      `/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema/versions`
+    )
+    const data = await res.json()
+    schemaVersions.value = data.versions
+  } catch (err) {
+    // version list is best-effort; leave as-is on failure
+  }
+}
+
+const activeVersionLabel = computed(() => {
+  const active = schemaVersions.value.find((v) => v.is_active)
+  return active ? `v${active.version} 활성` : ''
+})
+
 onMounted(async () => {
   try {
     const res = await apiFetch('/api/config')
@@ -239,6 +265,7 @@ onMounted(async () => {
 
   await loadDocuments()
   await loadSchemas()
+  await loadSchemaVersions()
 })
 
 watch(() => props.schemaVersion, () => {
@@ -272,6 +299,45 @@ async function useSchema(sourceStem) {
     schemaUseError.value = '스키마 적용 실패: ' + err.message
   } finally {
     isUsingSchema.value = false
+  }
+}
+
+async function activateVersion(version) {
+  versionActionError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema/versions/${version}/activate`,
+      { method: 'POST' }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    await loadSchemaVersions()
+    emit('graph-extracted')
+  } catch (err) {
+    versionActionError.value = '버전 활성화 실패: ' + err.message
+  }
+}
+
+async function deleteVersion(version) {
+  const confirmed = window.confirm(`v${version} 스키마와 그 그래프 데이터를 삭제하시겠습니까?`)
+  if (!confirmed) return
+
+  versionActionError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema/versions/${version}`,
+      { method: 'DELETE' }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    await loadSchemaVersions()
+    emit('graph-extracted')
+  } catch (err) {
+    versionActionError.value = '버전 삭제 실패: ' + err.message
   }
 }
 
@@ -371,6 +437,7 @@ function toggleEdgeType(type) {
             <option value="legal">법률·보험 문서</option>
           </select>
         </div>
+        <p v-if="activeVersionLabel" class="version-indicator">{{ activeVersionLabel }}</p>
       </section>
 
       <section>
@@ -488,6 +555,40 @@ function toggleEdgeType(type) {
                 </div>
               </li>
             </ul>
+          </section>
+
+          <section>
+            <h3>선택된 문서의 스키마 버전</h3>
+            <p v-if="!selectedFilename" class="placeholder">문서를 먼저 선택하세요</p>
+            <p v-else-if="schemaVersions.length === 0" class="placeholder">생성된 버전이 없습니다</p>
+            <ul v-else class="file-list">
+              <li
+                v-for="v in schemaVersions"
+                :key="v.version"
+                class="version-item"
+                :class="{ active: v.is_active }"
+              >
+                <div class="version-item-main">
+                  <span class="version-label">v{{ v.version }} · {{ v.document_type }}</span>
+                  <span v-if="v.is_active" class="status-badge on">활성</span>
+                  <span class="status-badge" :class="{ on: v.has_graph }">그래프</span>
+                </div>
+                <div class="version-item-actions">
+                  <button
+                    v-if="!v.is_active"
+                    type="button"
+                    class="version-action-button"
+                    @click="activateVersion(v.version)"
+                  >활성화</button>
+                  <button
+                    type="button"
+                    class="version-action-button danger"
+                    @click="deleteVersion(v.version)"
+                  >삭제</button>
+                </div>
+              </li>
+            </ul>
+            <p v-if="versionActionError" class="error">{{ versionActionError }}</p>
           </section>
 
           <section>
@@ -858,5 +959,56 @@ function toggleEdgeType(type) {
 }
 .file-explorer-body section {
   margin-bottom: 1.5rem;
+}
+.version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.version-item.active {
+  background: #dbe9ff;
+}
+.version-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-wrap: anywhere;
+}
+.version-label {
+  font-weight: 600;
+}
+.version-item-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.version-action-button {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f0f0f0;
+  color: #333;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.version-action-button:hover {
+  background: #e4e4e4;
+}
+.version-action-button.danger {
+  border-color: #c0392b;
+  color: #c0392b;
+  background: #fff;
+}
+.version-action-button.danger:hover {
+  background: #fdecea;
+}
+.version-indicator {
+  color: #555;
+  font-size: 0.8rem;
+  margin: 0.2rem 0 0;
 }
 </style>
