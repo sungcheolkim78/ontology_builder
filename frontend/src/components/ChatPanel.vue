@@ -96,64 +96,64 @@ async function sendMessage() {
 </script>
 
 <template>
-  <section class="chat">
-    <h2 class="panel-title">Chat</h2>
+  <section class="flex h-full min-w-0 flex-col">
+    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">Chat</h2>
 
-    <div class="panel-body">
-      <div class="messages">
+    <div class="flex-1 min-h-0 flex flex-col p-4">
+      <div class="mb-4 flex-1 overflow-y-auto rounded-lg border border-slate-200 p-4">
         <div
           v-for="(msg, i) in messages"
           :key="i"
-          class="message"
-          :class="msg.role"
+          class="message mb-3 rounded-lg px-3 py-2"
+          :class="msg.role === 'user' ? 'bg-indigo-100 text-right' : 'bg-slate-100'"
         >
           <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
           <div
             v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
-            class="type-analysis"
+            class="mt-1 mb-4 border-b border-dashed border-slate-300 pb-2"
           >
-            <div class="type-analysis-row">
-              <span class="type-analysis-label">노드:</span>
+            <div class="mb-1 flex flex-wrap items-center gap-1.5">
+              <span class="text-xs text-slate-500">노드:</span>
               <template v-if="msg.nodeTypes.length">
                 <button
                   v-for="type in msg.nodeTypes"
                   :key="'n-' + type"
                   type="button"
-                  class="type-chip node-type"
-                  :class="{ inactive: !enabledTypes.has(type) }"
+                  class="cursor-pointer rounded-full border border-emerald-600 bg-white px-2.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                  :class="{ 'opacity-40 line-through': !enabledTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'node', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="type-analysis-empty">없음</span>
+              <span v-else class="text-xs text-slate-400">없음</span>
             </div>
-            <div class="type-analysis-row">
-              <span class="type-analysis-label">엣지:</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-xs text-slate-500">엣지:</span>
               <template v-if="msg.edgeTypes.length">
                 <button
                   v-for="type in msg.edgeTypes"
                   :key="'e-' + type"
                   type="button"
-                  class="type-chip edge-type"
-                  :class="{ inactive: !enabledEdgeTypes.has(type) }"
+                  class="cursor-pointer rounded-full border border-amber-800 bg-white px-2.5 py-0.5 text-xs text-amber-800 hover:bg-amber-800 hover:text-white"
+                  :class="{ 'opacity-40 line-through': !enabledEdgeTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'edge', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="type-analysis-empty">없음</span>
+              <span v-else class="text-xs text-slate-400">없음</span>
             </div>
           </div>
-          <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
-          <p v-else>{{ msg.content }}</p>
-          <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
-            <span class="related-label">관련 노드:</span>
+          <div v-if="renderMarkdown" class="markdown mt-1" v-html="marked.parse(msg.content)"></div>
+          <p v-else class="mt-1 whitespace-pre-wrap">{{ msg.content }}</p>
+          <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-slate-500">관련 노드:</span>
             <button
               v-for="node in msg.relatedNodes"
               :key="node.id"
               type="button"
-              class="node-chip"
+              class="cursor-pointer rounded-full border border-[var(--chip-color)] bg-white px-2.5 py-0.5 text-xs text-[var(--chip-color)] hover:bg-[var(--chip-color)] hover:text-white"
               :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
               @click="emit('highlight-nodes', [node.id])"
             >
@@ -161,67 +161,28 @@ async function sendMessage() {
             </button>
           </div>
         </div>
-        <p v-if="isLoading">응답 중... (ESC로 취소)</p>
-        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="isLoading" class="text-sm text-slate-500">응답 중... (ESC로 취소)</p>
+        <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
       </div>
 
-      <form class="input-row" @submit.prevent="sendMessage">
-        <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
-        <button type="submit" :disabled="isLoading">전송</button>
+      <form class="flex gap-2" @submit.prevent="sendMessage">
+        <input
+          v-model="input"
+          type="text"
+          placeholder="메시지를 입력하세요"
+          class="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+        <button
+          type="submit"
+          :disabled="isLoading"
+          class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-indigo-600"
+        >전송</button>
       </form>
     </div>
   </section>
 </template>
 
 <style scoped>
-.chat {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #2563eb;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-.message {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-}
-.message.user {
-  text-align: right;
-  background: #dbe9ff;
-}
-.message.assistant {
-  background: #f0f0f0;
-}
-.message p {
-  margin: 0.25rem 0 0;
-  white-space: pre-wrap;
-}
-.message .markdown {
-  margin: 0.25rem 0 0;
-}
 .message .markdown :deep(p) {
   margin: 0.25rem 0;
 }
@@ -256,89 +217,7 @@ async function sendMessage() {
 }
 .message .markdown :deep(td),
 .message .markdown :deep(th) {
-  border: 1px solid #ccc;
+  border: 1px solid #e2e8f0;
   padding: 0.25rem 0.5rem;
-}
-.type-analysis {
-  margin: 0.25rem 0 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px dashed #ccc;
-}
-.type-analysis-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.25rem;
-}
-.type-analysis-label {
-  font-size: 0.75rem;
-  color: #666;
-}
-.type-analysis-empty {
-  font-size: 0.75rem;
-  color: #999;
-}
-.type-chip {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  cursor: pointer;
-  background: white;
-}
-.type-chip.node-type {
-  border: 1px solid #4fbf7a;
-  color: #2f8a54;
-}
-.type-chip.node-type:hover {
-  background: #4fbf7a;
-  color: white;
-}
-.type-chip.edge-type {
-  border: 1px solid #8a6d3b;
-  color: #8a6d3b;
-}
-.type-chip.edge-type:hover {
-  background: #8a6d3b;
-  color: white;
-}
-.type-chip.inactive {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
-.related-nodes {
-  margin-top: 0.5rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-.related-label {
-  font-size: 0.75rem;
-  color: #666;
-}
-.node-chip {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--chip-color, #4f8ef7);
-  background: white;
-  color: var(--chip-color, #4f8ef7);
-  cursor: pointer;
-}
-.node-chip:hover {
-  background: var(--chip-color, #4f8ef7);
-  color: white;
-}
-.error {
-  color: red;
-}
-.input-row {
-  display: flex;
-  gap: 0.5rem;
-}
-.input-row input {
-  flex: 1;
-  padding: 0.5rem;
 }
 </style>
