@@ -330,6 +330,39 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
 
 
 @_synchronized
+def delete_version_data(stem: str, version: int = 1) -> None:
+    """Removes every row belonging to this (stem, version) across all known
+    NODE tables (DETACH DELETE also removes their edges) plus the matching
+    _ExtractedDocument marker row. Used by ontology.delete_version when a
+    schema version is deleted -- the schema file itself is removed by that
+    caller, this only clears the graph data side."""
+    conn = _get_connection()
+    existing = _existing_tables(conn)
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        for name, kind in existing.items():
+            if kind == "NODE":
+                conn.execute(
+                    f"MATCH (n:{name}) WHERE n.source_document = $stem "
+                    f"AND n.version = $version DETACH DELETE n",
+                    {"stem": stem, "version": version},
+                )
+        conn.execute(
+            "MATCH (d:_ExtractedDocument {id: $id}) DETACH DELETE d",
+            {"id": f"{stem}::v{version}"},
+        )
+        conn.execute("COMMIT")
+        reset_connection()
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except RuntimeError as rollback_error:
+            if "No active transaction" not in str(rollback_error):
+                raise
+        raise
+
+
+@_synchronized
 def update_node_embeddings(stem: str, nodes: list, version: int = 1) -> None:
     """Sets the embedding column on nodes write_graph already created for
     this document, without touching labels/details/edges or the

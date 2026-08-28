@@ -712,3 +712,17 @@ def test_find_matching_edges_and_expand_hops_resolve_legacy_two_part_ids_via_ori
     nodes, edges = graphdb.expand_hops("doc_a", {"n1"}, hops=1, version=1)
     assert {n["id"] for n in nodes} == {"n1", "n2"}
     assert edges == [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
+
+
+def test_delete_version_data_removes_only_that_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+    graphdb.write_graph(
+        "doc_a", [{"id": "n1", "label": "V2 Node", "type": "Person"}], [], version=2
+    )
+
+    graphdb.delete_version_data("doc_a", version=1)
+
+    assert graphdb.has_graph("doc_a", version=1) is False
+    assert graphdb.has_graph("doc_a", version=2) is True
+    loaded_v2 = graphdb.load_graph("doc_a", version=2)
+    assert {n["label"] for n in loaded_v2["nodes"]} == {"V2 Node"}
