@@ -121,128 +121,89 @@ const gridStyle = computed(() => ({
   gridTemplateRows: `${rowPercent.value}% 1fr`,
 }))
 
-const colResizerStyle = computed(() => ({ left: `calc(${colPercent.value}% - 4px)` }))
-const rowResizerStyle = computed(() => ({ top: `calc(${rowPercent.value}% - 4px)` }))
+const colResizerStyle = computed(() => ({ left: `${colPercent.value}%` }))
+const rowResizerStyle = computed(() => ({ top: `${rowPercent.value}%` }))
 </script>
 
 <template>
-  <div class="dashboard">
-    <SettingsPanel
-      :selected-filename="parsedFile?.filename"
-      :available-types="availableTypes"
-      :available-edge-types="availableEdgeTypes"
-      :schema-version="schemaVersion"
-      :toggle-type-request="toggleTypeRequest"
-      :toggle-edge-type-request="toggleEdgeTypeRequest"
-      @file-selected="onFileSelected"
-      @filters-changed="onFiltersChanged"
-      @edge-filters-changed="onEdgeFiltersChanged"
-      @schema-used="onSchemaChanged"
-      @schema-generated="onSchemaChanged({ previewSchema: true })"
-      @graph-extracted="onSchemaChanged"
-      @database-reset="onSchemaChanged"
-      @hops-changed="onHopsChanged"
-      @markdown-changed="onMarkdownChanged"
-    />
-    <div class="main-grid" :style="gridStyle" ref="gridRef">
-      <div class="panel top-left">
-        <ChatPanel
-          :file="parsedFile"
-          :hops="graphRagHops"
-          :render-markdown="renderMarkdown"
-          :enabled-types="graphFilters"
-          :enabled-edge-types="edgeGraphFilters"
-          :available-types="availableTypes"
-          @highlight-nodes="onHighlightNodes"
-          @toggle-type="onToggleType"
-        />
+  <div class="flex h-screen w-screen flex-col overflow-hidden bg-canvas text-ink">
+    <header
+      class="flex h-11 flex-shrink-0 items-center gap-3 border-b border-border bg-surface-raised px-3"
+    >
+      <div class="flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-md bg-accent/90 text-[13px] font-bold text-white">
+          O
+        </span>
+        <span class="text-[13px] font-semibold tracking-wide text-ink">Ontology Builder</span>
       </div>
-      <div class="panel top-right">
-        <DocumentPreview :file="parsedFile" />
+      <div class="h-4 w-px bg-border"></div>
+      <div class="flex min-w-0 items-center gap-1.5 text-xs text-ink-muted">
+        <span class="text-ink-faint">문서</span>
+        <span class="truncate font-medium text-ink" :class="{ 'italic text-ink-faint': !parsedFile }">
+          {{ parsedFile?.filename ?? '선택된 문서 없음' }}
+        </span>
       </div>
-      <div class="panel bottom-left">
-        <OntologyGraph
-          :file="parsedFile"
-          :enabled-types="graphFilters"
-          :enabled-edge-types="edgeGraphFilters"
-          :schema-refresh-request="schemaRefreshRequest"
-          :highlighted-node-ids="highlightedNodeIds"
-          @types-available="onTypesAvailable"
-          @edge-types-available="onEdgeTypesAvailable"
-        />
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+      <SettingsPanel
+        :selected-filename="parsedFile?.filename"
+        :available-types="availableTypes"
+        :available-edge-types="availableEdgeTypes"
+        :schema-version="schemaVersion"
+        :toggle-type-request="toggleTypeRequest"
+        :toggle-edge-type-request="toggleEdgeTypeRequest"
+        @file-selected="onFileSelected"
+        @filters-changed="onFiltersChanged"
+        @edge-filters-changed="onEdgeFiltersChanged"
+        @schema-used="onSchemaChanged"
+        @schema-generated="onSchemaChanged({ previewSchema: true })"
+        @graph-extracted="onSchemaChanged"
+        @database-reset="onSchemaChanged"
+        @hops-changed="onHopsChanged"
+        @markdown-changed="onMarkdownChanged"
+      />
+      <div class="relative grid min-w-0 flex-1" :style="gridStyle" ref="gridRef">
+        <div class="col-start-1 row-start-1 min-h-0 min-w-0 overflow-hidden">
+          <ChatPanel
+            :file="parsedFile"
+            :hops="graphRagHops"
+            :render-markdown="renderMarkdown"
+            :enabled-types="graphFilters"
+            :enabled-edge-types="edgeGraphFilters"
+            :available-types="availableTypes"
+            @highlight-nodes="onHighlightNodes"
+            @toggle-type="onToggleType"
+          />
+        </div>
+        <div class="col-start-2 row-start-1 min-h-0 min-w-0 overflow-hidden border-l border-border">
+          <DocumentPreview :file="parsedFile" />
+        </div>
+        <div class="col-start-1 row-start-2 min-h-0 min-w-0 overflow-hidden border-t border-border">
+          <OntologyGraph
+            :file="parsedFile"
+            :enabled-types="graphFilters"
+            :enabled-edge-types="edgeGraphFilters"
+            :schema-refresh-request="schemaRefreshRequest"
+            :highlighted-node-ids="highlightedNodeIds"
+            @types-available="onTypesAvailable"
+            @edge-types-available="onEdgeTypesAvailable"
+          />
+        </div>
+        <div class="col-start-2 row-start-2 min-h-0 min-w-0 overflow-hidden border-l border-t border-border">
+          <SchemaGraphPreview :file="parsedFile" :schema-version="schemaVersion" />
+        </div>
+        <div
+          class="absolute top-0 bottom-0 z-10 w-2 -translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-accent/30 active:bg-accent/40"
+          :style="colResizerStyle"
+          @mousedown="startColResize"
+        ></div>
+        <div
+          class="absolute left-0 right-0 z-10 h-2 -translate-y-1/2 cursor-row-resize bg-transparent transition-colors hover:bg-accent/30 active:bg-accent/40"
+          :style="rowResizerStyle"
+          @mousedown="startRowResize"
+        ></div>
       </div>
-      <div class="panel bottom-right">
-        <SchemaGraphPreview :file="parsedFile" :schema-version="schemaVersion" />
-      </div>
-      <div class="resizer-v" :style="colResizerStyle" @mousedown="startColResize"></div>
-      <div class="resizer-h" :style="rowResizerStyle" @mousedown="startRowResize"></div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.dashboard {
-  display: flex;
-  height: 100vh;
-  font-family: sans-serif;
-}
-.main-grid {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: grid;
-}
-.panel {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.top-left {
-  grid-column: 1;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-}
-.top-right {
-  grid-column: 2;
-  grid-row: 1;
-  border-left: 1px solid #ccc;
-}
-.bottom-left {
-  grid-column: 1;
-  grid-row: 2;
-  border-top: 1px solid #ccc;
-}
-.bottom-right {
-  grid-column: 2;
-  grid-row: 2;
-  border-left: 1px solid #ccc;
-  border-top: 1px solid #ccc;
-}
-.resizer-v {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  z-index: 2;
-  cursor: col-resize;
-  background: transparent;
-}
-.resizer-v:hover,
-.resizer-v:active {
-  background: #b8d0ff;
-}
-.resizer-h {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 8px;
-  z-index: 2;
-  cursor: row-resize;
-  background: transparent;
-}
-.resizer-h:hover,
-.resizer-h:active {
-  background: #b8d0ff;
-}
-</style>

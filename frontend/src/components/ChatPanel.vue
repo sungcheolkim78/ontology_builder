@@ -96,64 +96,70 @@ async function sendMessage() {
 </script>
 
 <template>
-  <section class="chat">
-    <h2 class="panel-title">Chat</h2>
+  <section class="flex h-full min-w-0 flex-col">
+    <div class="panel-header">
+      <span>Chat</span>
+    </div>
 
-    <div class="panel-body">
-      <div class="messages">
+    <div class="flex min-h-0 flex-1 flex-col gap-3 p-3">
+      <div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-lg border border-border bg-surface-sunken p-3">
         <div
           v-for="(msg, i) in messages"
           :key="i"
-          class="message"
-          :class="msg.role"
+          class="max-w-[92%] rounded-lg px-3 py-2 text-[13px] leading-relaxed"
+          :class="msg.role === 'user'
+            ? 'self-end bg-accent/20 text-ink'
+            : 'self-start bg-surface-raised text-ink border border-border'"
         >
-          <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+          <div class="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            {{ msg.role === 'user' ? '나' : '챗봇' }}
+          </div>
           <div
             v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
-            class="type-analysis"
+            class="mb-2 space-y-1 border-b border-dashed border-border pb-2"
           >
-            <div class="type-analysis-row">
-              <span class="type-analysis-label">노드:</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] text-ink-faint">노드:</span>
               <template v-if="msg.nodeTypes.length">
                 <button
                   v-for="type in msg.nodeTypes"
                   :key="'n-' + type"
                   type="button"
-                  class="type-chip node-type"
-                  :class="{ inactive: !enabledTypes.has(type) }"
+                  class="chip border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white"
+                  :class="{ 'opacity-40 line-through': !enabledTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'node', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="type-analysis-empty">없음</span>
+              <span v-else class="text-[10px] text-ink-faint">없음</span>
             </div>
-            <div class="type-analysis-row">
-              <span class="type-analysis-label">엣지:</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] text-ink-faint">엣지:</span>
               <template v-if="msg.edgeTypes.length">
                 <button
                   v-for="type in msg.edgeTypes"
                   :key="'e-' + type"
                   type="button"
-                  class="type-chip edge-type"
-                  :class="{ inactive: !enabledEdgeTypes.has(type) }"
+                  class="chip border-amber-500/50 text-amber-400 hover:bg-amber-500 hover:text-white"
+                  :class="{ 'opacity-40 line-through': !enabledEdgeTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'edge', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="type-analysis-empty">없음</span>
+              <span v-else class="text-[10px] text-ink-faint">없음</span>
             </div>
           </div>
           <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
-          <p v-else>{{ msg.content }}</p>
-          <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="related-nodes">
-            <span class="related-label">관련 노드:</span>
+          <p v-else class="whitespace-pre-wrap">{{ msg.content }}</p>
+          <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="mt-2 flex flex-wrap items-center gap-1.5">
+            <span class="text-[10px] text-ink-faint">관련 노드:</span>
             <button
               v-for="node in msg.relatedNodes"
               :key="node.id"
               type="button"
-              class="node-chip"
+              class="chip border-[color:var(--chip-color)] text-[color:var(--chip-color)] hover:bg-[color:var(--chip-color)] hover:text-white"
               :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
               @click="emit('highlight-nodes', [node.id])"
             >
@@ -161,158 +167,49 @@ async function sendMessage() {
             </button>
           </div>
         </div>
-        <p v-if="isLoading">응답 중... (ESC로 취소)</p>
-        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="isLoading" class="text-xs italic text-ink-faint">응답 중... (ESC로 취소)</p>
+        <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
       </div>
 
-      <form class="input-row" @submit.prevent="sendMessage">
-        <input v-model="input" type="text" placeholder="메시지를 입력하세요" />
-        <button type="submit" :disabled="isLoading">전송</button>
+      <form class="flex flex-shrink-0 gap-2" @submit.prevent="sendMessage">
+        <input
+          v-model="input"
+          type="text"
+          placeholder="메시지를 입력하세요"
+          class="field flex-1 py-2"
+        />
+        <button type="submit" class="btn-primary px-4" :disabled="isLoading">전송</button>
       </form>
     </div>
   </section>
 </template>
 
 <style scoped>
-.chat {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #2563eb;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-.message {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-}
-.message.user {
-  text-align: right;
-  background: #dbe9ff;
-}
-.message.assistant {
-  background: #f0f0f0;
-}
-.message p {
-  margin: 0.25rem 0 0;
-  white-space: pre-wrap;
-}
-.message .markdown {
-  margin: 0.25rem 0 0;
-}
-.message .markdown :deep(p) {
+.markdown :deep(p) {
   margin: 0.25rem 0;
 }
-.message .markdown :deep(table) {
+.markdown :deep(table) {
   border-collapse: collapse;
+  margin: 0.25rem 0;
 }
-.message .markdown :deep(td),
-.message .markdown :deep(th) {
-  border: 1px solid #ccc;
+.markdown :deep(td),
+.markdown :deep(th) {
+  border: 1px solid theme('colors.border.DEFAULT');
   padding: 0.25rem 0.5rem;
 }
-.type-analysis {
-  margin: 0.25rem 0 1rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px dashed #ccc;
+.markdown :deep(code) {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.85em;
 }
-.type-analysis-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.25rem;
-}
-.type-analysis-label {
-  font-size: 0.75rem;
-  color: #666;
-}
-.type-analysis-empty {
-  font-size: 0.75rem;
-  color: #999;
-}
-.type-chip {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  cursor: pointer;
-  background: white;
-}
-.type-chip.node-type {
-  border: 1px solid #4fbf7a;
-  color: #2f8a54;
-}
-.type-chip.node-type:hover {
-  background: #4fbf7a;
-  color: white;
-}
-.type-chip.edge-type {
-  border: 1px solid #8a6d3b;
-  color: #8a6d3b;
-}
-.type-chip.edge-type:hover {
-  background: #8a6d3b;
-  color: white;
-}
-.type-chip.inactive {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
-.related-nodes {
-  margin-top: 0.5rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-.related-label {
-  font-size: 0.75rem;
-  color: #666;
-}
-.node-chip {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--chip-color, #4f8ef7);
-  background: white;
-  color: var(--chip-color, #4f8ef7);
-  cursor: pointer;
-}
-.node-chip:hover {
-  background: var(--chip-color, #4f8ef7);
-  color: white;
-}
-.error {
-  color: red;
-}
-.input-row {
-  display: flex;
-  gap: 0.5rem;
-}
-.input-row input {
-  flex: 1;
+.markdown :deep(pre) {
+  background: rgba(255, 255, 255, 0.05);
   padding: 0.5rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown :deep(a) {
+  color: theme('colors.accent.DEFAULT');
 }
 </style>

@@ -62,22 +62,42 @@ const statusText = computed(() => {
 </script>
 
 <template>
-  <section class="schema-preview">
-    <h2 class="panel-title">스키마 / 그래프DB</h2>
-    <div class="panel-body">
-      <p v-if="!file" class="placeholder">문서를 선택하세요</p>
+  <section class="flex h-full flex-col">
+    <div class="panel-header">
+      <span>스키마 / 그래프DB</span>
+    </div>
+    <div class="flex min-h-0 flex-1 flex-col p-3">
+      <p v-if="!file" class="text-xs text-ink-faint">문서를 선택하세요</p>
       <template v-else>
-        <div class="tabs">
-          <button :class="{ active: activeTab === 'schema' }" @click="activeTab = 'schema'">스키마</button>
-          <button :class="{ active: activeTab === 'nodes' }" @click="activeTab = 'nodes'">Nodes</button>
-          <button :class="{ active: activeTab === 'edges' }" @click="activeTab = 'edges'">Edges</button>
+        <div class="mb-2.5 flex flex-shrink-0 gap-1.5">
+          <button
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'schema'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+            @click="activeTab = 'schema'"
+          >스키마</button>
+          <button
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'nodes'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+            @click="activeTab = 'nodes'"
+          >Nodes</button>
+          <button
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'edges'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+            @click="activeTab = 'edges'"
+          >Edges</button>
         </div>
 
-        <div class="content-area">
+        <div class="flex min-h-0 flex-1 flex-col">
           <template v-if="activeTab === 'schema'">
-            <p v-if="!schema" class="placeholder">아직 데이터가 없습니다</p>
-            <div v-else class="schema-tables">
-              <div class="schema-table-block">
+            <p v-if="!schema" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
+            <div v-else class="flex min-h-0 flex-1 flex-col gap-3">
+              <div class="flex min-h-0 flex-1 flex-col">
                 <h4 class="table-label">node_types</h4>
                 <div class="table-wrap">
                   <table class="data-table">
@@ -96,7 +116,7 @@ const statusText = computed(() => {
                   </table>
                 </div>
               </div>
-              <div class="schema-table-block">
+              <div class="flex min-h-0 flex-1 flex-col">
                 <h4 class="table-label">edge_types</h4>
                 <div class="table-wrap">
                   <table class="data-table">
@@ -123,7 +143,7 @@ const statusText = computed(() => {
           </template>
 
           <template v-else-if="activeTab === 'nodes'">
-            <p v-if="nodeRows.length === 0" class="placeholder">아직 데이터가 없습니다</p>
+            <p v-if="nodeRows.length === 0" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
             <div v-else class="table-wrap">
               <table class="data-table">
                 <thead>
@@ -147,7 +167,7 @@ const statusText = computed(() => {
           </template>
 
           <template v-else-if="activeTab === 'edges'">
-            <p v-if="edgeRows.length === 0" class="placeholder">아직 데이터가 없습니다</p>
+            <p v-if="edgeRows.length === 0" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
             <div v-else class="table-wrap">
               <table class="data-table">
                 <thead>
@@ -171,117 +191,50 @@ const statusText = computed(() => {
           </template>
         </div>
 
-        <p class="status-line">{{ statusText }}</p>
+        <p class="mt-2 flex-shrink-0 border-t border-border pt-2 text-[11px] text-ink-muted">{{ statusText }}</p>
       </template>
     </div>
   </section>
 </template>
 
 <style scoped>
-.schema-preview {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.panel-title {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  color: #fff;
-  background: #b45309;
-}
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-.placeholder {
-  color: #888;
-}
-.tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  flex-shrink: 0;
-}
-.tabs button {
-  padding: 0.25rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #f5f5f5;
-  cursor: pointer;
-}
-.tabs button.active {
-  background: #4f8ef7;
-  color: white;
-  border-color: #4f8ef7;
-}
-.content-area {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.schema-tables {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-.schema-table-block {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 .table-label {
   flex-shrink: 0;
   margin: 0 0 0.25rem;
-  font-size: 0.7rem;
-  font-weight: bold;
+  font-size: 0.65rem;
+  font-weight: 700;
   text-transform: uppercase;
-  color: #666;
+  letter-spacing: 0.04em;
+  color: theme('colors.ink.faint');
 }
 .table-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: #b0b0b0 #f0f0f0;
+  border: 1px solid theme('colors.border.DEFAULT');
+  border-radius: 6px;
 }
 .data-table {
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   width: 100%;
 }
 .data-table th,
 .data-table td {
   padding: 0.35rem 0.6rem;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid theme('colors.border.subtle');
   text-align: left;
   white-space: nowrap;
+  color: theme('colors.ink.DEFAULT');
 }
 .data-table th {
   position: sticky;
   top: 0;
-  background: #f5f5f5;
+  background: theme('colors.surface.raised');
+  color: theme('colors.ink.muted');
   font-weight: 600;
 }
 .data-table tbody tr:hover {
-  background: #f8f8f8;
-}
-.status-line {
-  flex-shrink: 0;
-  margin: 0.5rem 0 0;
-  padding-top: 0.5rem;
-  border-top: 1px solid #ccc;
-  font-size: 0.85rem;
-  color: #555;
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>
