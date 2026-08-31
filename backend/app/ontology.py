@@ -233,6 +233,78 @@ Document:
 """
 
 
+# Adapted from docs/ontology/ontology_validation_prompt.md (the team's
+# ontology-validation agent spec) into a single-call JSON-output prompt, the
+# same shape every other prompt in this module uses. Keeps that doc's
+# validation dimensions (semantic/structural/provenance/rule/extraction/
+# consistency), severity scale, and "flag, don't fix" rule; folds its
+# competency-question check in by having the LLM derive a handful of
+# competency questions from the schema itself, since this app has no
+# separately-authored competency-question list to validate against.
+VALIDATION_PROMPT = """You are a senior Ontology Validator and Knowledge Graph \
+Quality Engineer. Validate the ontology schema and the knowledge graph \
+extracted from it against the source document below. Identify errors, \
+omissions, contradictions, and ontology weaknesses -- do NOT silently fix \
+anything; only report what should change and why.
+
+Check each of these dimensions:
+
+- Semantic: is every node/edge type well-defined? Are similar concepts \
+incorrectly split into different types, or different concepts incorrectly \
+merged into one? Are edge directions and meanings semantically correct?
+- Structural: for each edge instance, do its source/target node types match \
+what the schema's edge_type declares?
+- Provenance: for nodes/edges with a "detail" field, is that detail actually \
+supported by the document text, or is it invented/overstated? Flag \
+MISSING_EVIDENCE, INCORRECT_EVIDENCE, or WEAK_EVIDENCE.
+- Rule/figures: for conditions, exceptions, thresholds, dates, and amounts \
+mentioned in the document, has any numerical or qualifying detail been lost \
+or altered in the extracted nodes/edges?
+- Extraction completeness: does the document contain important entities, \
+relationships, attributes, events, or rules that the schema or the \
+extraction missed? Flag MISSING_ENTITY, MISSING_RELATIONSHIP, \
+MISSING_ATTRIBUTE, MISSING_EVENT, MISSING_RULE.
+- Consistency: flag CONTRADICTION, DUPLICATE_ENTITY, DUPLICATE_RELATION, \
+AMBIGUOUS_ENTITY, AMBIGUOUS_RELATION.
+
+Competency questions: derive 3-5 realistic questions a user of this document \
+would ask (grounded in what the schema's own types/relationships suggest the \
+document is about), then for each determine whether the current schema and \
+graph can answer it, and if not, what node/edge types or instances are \
+missing.
+
+Assign each issue a severity: CRITICAL (produces materially incorrect \
+knowledge), HIGH (important business meaning lost or incorrect), MEDIUM \
+(significant modeling/extraction weakness), LOW (minor inconsistency), INFO \
+(non-critical observation).
+
+Write every text field (description, evidence, recommended_action, question, \
+missing_elements entries) in the same language as the document.
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"validation_summary": {{"ontology_valid": true/false, "extraction_valid": \
+true/false, "provenance_valid": true/false, \
+"competency_questions_answerable": true/false, "overall_quality": \
+"<one short sentence>"}}, "issues": [{{"severity": \
+"CRITICAL|HIGH|MEDIUM|LOW|INFO", "category": "...", "description": "...", \
+"affected_element": "...", "evidence": "...", "recommended_action": "..."}}], \
+"missing_elements": {{"classes": ["..."], "relationships": ["..."], \
+"attributes": ["..."], "events": ["..."], "rules": ["..."]}}, \
+"contradictions": ["..."], "ambiguities": ["..."], "competency_questions": \
+[{{"question": "...", "answerable": true/false, "missing_elements": ["..."], \
+"evidence": "..."}}], "recommended_changes": ["..."]}}
+
+Ontology schema:
+{schema}
+
+Extracted graph (nodes and edges):
+{graph}
+
+Document:
+{document}
+"""
+
+
 def parse_json_response(text: str) -> dict:
     stripped = text.strip()
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
@@ -293,6 +365,21 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     graph["edges"] = valid_edges
 
     return graph
+
+
+def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: int | None = None) -> dict:
+    _check_document_length(document_text, max_chars)
+    model = get_chat_model()
+    prompt = VALIDATION_PROMPT.format(
+        schema=json.dumps(schema), graph=json.dumps(graph), document=document_text
+    )
+    response = invoke_with_telemetry("ontology.validate_ontology", model, prompt)
+    report = parse_json_response(response.content)
+    if not isinstance(report.get("validation_summary"), dict) or not isinstance(
+        report.get("issues"), list
+    ):
+        raise ValueError("validation JSON missing validation_summary/issues")
+    return report
 
 
 def graph_dir_for(stem: str) -> Path:

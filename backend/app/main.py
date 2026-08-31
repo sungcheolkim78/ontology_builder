@@ -22,6 +22,7 @@ from app.ontology import (
     save_document_manifest,
     save_graph,
     save_schema,
+    validate_ontology,
 )
 from app.parser import DATA_DIR, parse_to_markdown_file
 from app.telemetry import configure_telemetry, invoke_with_telemetry
@@ -261,6 +262,30 @@ def create_embeddings(filename: str):
         raise HTTPException(status_code=404, detail="ontology not extracted yet")
     embedded = embed_graph(stem)
     return {"embedded": embedded}
+
+
+class ValidateRequest(BaseModel):
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/{filename}/validate")
+def validate(filename: str, request: ValidateRequest | None = None):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    stem = _stem(filename)
+    schema = load_schema(stem)
+    if schema is None:
+        raise HTTPException(status_code=404, detail="schema not found")
+    graph = load_graph(stem)
+    if graph is None:
+        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    max_chars = request.max_chars if request else None
+    try:
+        report = validate_ontology(doc_path.read_text(), schema, graph, max_chars=max_chars)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return report
 
 
 @app.get("/api/ontology/{filename}")

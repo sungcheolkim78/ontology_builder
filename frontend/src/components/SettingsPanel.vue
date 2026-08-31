@@ -45,6 +45,10 @@ const schemaDocumentType = ref('general')
 const isGeneratingSchema = ref(false)
 const isExtracting = ref(false)
 const isEmbedding = ref(false)
+const isValidating = ref(false)
+const validationReport = ref(null)
+const validationError = ref('')
+const showValidationReport = ref(false)
 const workflowMessage = ref('')
 const workflowError = ref('')
 const elapsedSeconds = ref(0)
@@ -66,6 +70,7 @@ const workflowProgress = computed(() => {
   if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
   if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
   if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
+  if (isValidating.value) return `문서와 스키마, 추출된 그래프를 검토하여 보고서 작성 중... ${elapsedSeconds.value}초`
   return ''
 })
 
@@ -149,6 +154,64 @@ async function embed() {
     stopElapsedTimer()
   }
 }
+
+async function validateOntology() {
+  if (!props.selectedFilename) return
+  isValidating.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  validationError.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_chars: maxSchemaChars.value }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    validationReport.value = await res.json()
+    showValidationReport.value = true
+  } catch (err) {
+    validationError.value = '온톨로지 검증 실패: ' + err.message
+  } finally {
+    isValidating.value = false
+    stopElapsedTimer()
+  }
+}
+
+const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
+const SEVERITY_STYLES = {
+  CRITICAL: 'border-red-500/50 bg-red-500/15 text-red-400',
+  HIGH: 'border-orange-500/50 bg-orange-500/15 text-orange-400',
+  MEDIUM: 'border-amber-500/50 bg-amber-500/15 text-amber-400',
+  LOW: 'border-sky-500/50 bg-sky-500/15 text-sky-400',
+  INFO: 'border-border bg-white/5 text-ink-muted',
+}
+
+function severityClass(severity) {
+  return SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.INFO
+}
+
+const sortedIssues = computed(() => {
+  const issues = validationReport.value?.issues ?? []
+  return [...issues].sort(
+    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
+  )
+})
+
+const missingElementGroups = computed(() => {
+  const missing = validationReport.value?.missing_elements ?? {}
+  return [
+    ['classes', '클래스', missing.classes],
+    ['relationships', '관계', missing.relationships],
+    ['attributes', '속성', missing.attributes],
+    ['events', '이벤트', missing.events],
+    ['rules', '규칙', missing.rules],
+  ].filter(([, , items]) => Array.isArray(items) && items.length > 0)
+})
 
 const TYPE_COLORS = ['#4f8ef7', '#f7a24f', '#4fbf7a', '#c96fd6', '#e0555a', '#5ac8d8']
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
@@ -401,9 +464,27 @@ function toggleEdgeType(type) {
             {{ isEmbedding ? '임베딩 생성 중...' : '임베딩 생성' }}
           </button>
 
+          <button
+            type="button"
+            class="btn w-full"
+            :disabled="!selectedFilename || isValidating || !currentFile?.has_graph"
+            @click="validateOntology"
+          >
+            {{ isValidating ? '검증 중...' : '온톨로지 검증' }}
+          </button>
+
           <p v-if="workflowProgress" class="text-[11px] italic text-ink-muted">{{ workflowProgress }}</p>
           <p v-if="workflowMessage" class="text-[11px] text-emerald-400">{{ workflowMessage }}</p>
           <p v-if="workflowError" class="text-[11px] text-red-400">{{ workflowError }}</p>
+          <p v-if="validationError" class="text-[11px] text-red-400">{{ validationError }}</p>
+          <button
+            v-if="validationReport && !showValidationReport"
+            type="button"
+            class="text-[11px] text-accent hover:underline"
+            @click="showValidationReport = true"
+          >
+            마지막 검증 보고서 다시 보기
+          </button>
         </div>
       </div>
 
@@ -626,6 +707,143 @@ function toggleEdgeType(type) {
               WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.
             </p>
             <p v-if="resetDbError" class="mt-1 text-[11px] text-red-400">{{ resetDbError }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showValidationReport && validationReport"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showValidationReport = false"
+    >
+      <div class="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">온톨로지 검증 보고서</h2>
+          <button type="button" class="btn" @click="showValidationReport = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-5 overflow-y-auto p-4">
+          <div>
+            <h3 class="section-label">요약</h3>
+            <p class="mb-2 text-xs leading-relaxed text-ink">
+              {{ validationReport.validation_summary?.overall_quality }}
+            </p>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                class="chip"
+                :class="validationReport.validation_summary?.ontology_valid
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+              >
+                온톨로지 {{ validationReport.validation_summary?.ontology_valid ? '유효' : '문제 있음' }}
+              </span>
+              <span
+                class="chip"
+                :class="validationReport.validation_summary?.extraction_valid
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+              >
+                추출 {{ validationReport.validation_summary?.extraction_valid ? '유효' : '문제 있음' }}
+              </span>
+              <span
+                class="chip"
+                :class="validationReport.validation_summary?.provenance_valid
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+              >
+                근거 {{ validationReport.validation_summary?.provenance_valid ? '유효' : '문제 있음' }}
+              </span>
+              <span
+                class="chip"
+                :class="validationReport.validation_summary?.competency_questions_answerable
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+              >
+                질의응답 {{ validationReport.validation_summary?.competency_questions_answerable ? '가능' : '불가' }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="sortedIssues.length">
+            <h3 class="section-label">발견된 문제 ({{ sortedIssues.length }}건)</h3>
+            <div class="space-y-2">
+              <div
+                v-for="(issue, i) in sortedIssues"
+                :key="i"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                  <span class="chip" :class="severityClass(issue.severity)">{{ issue.severity }}</span>
+                  <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ issue.category }}</span>
+                </div>
+                <p class="text-xs text-ink">{{ issue.description }}</p>
+                <p v-if="issue.affected_element" class="mt-1 text-[11px] text-ink-muted">
+                  대상: {{ issue.affected_element }}
+                </p>
+                <p v-if="issue.evidence" class="mt-1 text-[11px] italic text-ink-faint">"{{ issue.evidence }}"</p>
+                <p v-if="issue.recommended_action" class="mt-1 text-[11px] text-sky-400">
+                  제안: {{ issue.recommended_action }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="missingElementGroups.length">
+            <h3 class="section-label">누락된 요소</h3>
+            <div class="space-y-1.5">
+              <div v-for="[key, label, items] in missingElementGroups" :key="key" class="text-xs">
+                <span class="text-ink-faint">{{ label }}:</span>
+                <span class="text-ink">{{ items.join(', ') }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="validationReport.contradictions?.length">
+            <h3 class="section-label">모순</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-ink">
+              <li v-for="(c, i) in validationReport.contradictions" :key="i">{{ c }}</li>
+            </ul>
+          </div>
+
+          <div v-if="validationReport.ambiguities?.length">
+            <h3 class="section-label">모호한 부분</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-ink">
+              <li v-for="(a, i) in validationReport.ambiguities" :key="i">{{ a }}</li>
+            </ul>
+          </div>
+
+          <div v-if="validationReport.competency_questions?.length">
+            <h3 class="section-label">질의응답 가능 여부</h3>
+            <div class="space-y-2">
+              <div
+                v-for="(q, i) in validationReport.competency_questions"
+                :key="i"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <p class="text-xs text-ink">{{ q.question }}</p>
+                  <span
+                    class="chip flex-shrink-0"
+                    :class="q.answerable
+                      ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
+                      : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                  >
+                    {{ q.answerable ? '가능' : '불가' }}
+                  </span>
+                </div>
+                <p v-if="q.missing_elements?.length" class="mt-1 text-[11px] text-ink-muted">
+                  누락: {{ q.missing_elements.join(', ') }}
+                </p>
+                <p v-if="q.evidence" class="mt-1 text-[11px] italic text-ink-faint">{{ q.evidence }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="validationReport.recommended_changes?.length">
+            <h3 class="section-label">권장 변경 사항</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-ink">
+              <li v-for="(c, i) in validationReport.recommended_changes" :key="i">{{ c }}</li>
+            </ul>
           </div>
         </div>
       </div>

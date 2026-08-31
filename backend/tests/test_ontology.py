@@ -413,3 +413,85 @@ def test_use_schema_returns_404_when_source_missing():
     )
 
     assert response.status_code == 404
+
+
+def _seed_schema_and_graph(stem="doc_raw"):
+    from app import graphdb
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    schema_dir = GRAPH_DIR / stem
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "schema.json").write_text(json.dumps(schema))
+    graphdb.write_graph(stem, [{"id": "n1", "label": "Alice", "type": "Person"}], [])
+    return schema
+
+
+def test_validate_endpoint_returns_report(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    report = {
+        "validation_summary": {
+            "ontology_valid": True,
+            "extraction_valid": True,
+            "provenance_valid": True,
+            "competency_questions_answerable": True,
+            "overall_quality": "good",
+        },
+        "issues": [],
+        "missing_elements": {"classes": [], "relationships": [], "attributes": [], "events": [], "rules": []},
+        "contradictions": [],
+        "ambiguities": [],
+        "competency_questions": [],
+        "recommended_changes": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 200
+    assert response.json() == report
+
+
+def test_validate_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/missing_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_404_when_schema_missing():
+    write_document()
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_404_when_graph_not_extracted():
+    write_document()
+    schema_dir = GRAPH_DIR / "doc_raw"
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "schema.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 400
