@@ -429,6 +429,39 @@ async function loadGraph(file) {
   fitSoon()
 }
 
+// Explicit refresh for the "그래프 보기" button -- re-reads this document's
+// nodes/edges straight from LadybugDB (via GET /api/ontology/{filename}, the
+// same endpoint loadGraph uses) rather than trusting whatever this component
+// already has in memory, since schema/graph changes made elsewhere (schema
+// version activation, ontology evolution apply) don't otherwise trigger a
+// reload here unless they happen to also bump schemaRefreshRequest. Leaves
+// layouts/selectedNodes alone (unlike loadGraph's full reset for a brand new
+// file) so nodes that still exist keep their on-screen position across a
+// refresh; the [visibleNodes, visibleEdges] watch below already knows how to
+// carry over existing positions and settle new nodes into place.
+async function viewGraph() {
+  if (!props.file) return
+  showSchemaPreview.value = false
+  error.value = ''
+  status.value = 'loading'
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}`)
+    if (res.status === 404) {
+      status.value = 'no-graph'
+      return
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    nodes.value = data.nodes
+    edges.value = data.edges
+    status.value = 'ready'
+  } catch (err) {
+    status.value = 'error'
+    error.value = '온톨로지를 불러오지 못했습니다: ' + err.message
+  }
+  fitSoon()
+}
+
 watch(() => props.file, loadGraph, { immediate: true })
 
 // A single consolidated trigger for every backend-side change SettingsPanel's
@@ -458,11 +491,21 @@ watch(
       <template v-else-if="status === 'no-graph' || status === 'ready'">
         <div class="mb-2.5 flex flex-shrink-0 items-center gap-2">
           <button
-            v-if="status === 'ready' && schema && schema.node_types.length > 0"
+            v-if="schema && schema.node_types.length > 0"
+            type="button"
             class="btn"
-            @click="showSchemaPreview = !showSchemaPreview"
+            :class="{ 'ring-1 ring-accent': showSchemaPreview }"
+            @click="showSchemaPreview = true"
           >
-            {{ showSchemaPreview ? '추출된 그래프 보기' : '스키마 미리보기' }}
+            스키마 미리보기
+          </button>
+          <button
+            type="button"
+            class="btn"
+            :class="{ 'ring-1 ring-accent': !showSchemaPreview }"
+            @click="viewGraph"
+          >
+            그래프 보기
           </button>
           <button v-if="displayMode !== 'none'" class="btn" @click="resetView">리셋</button>
           <label class="ml-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted">
