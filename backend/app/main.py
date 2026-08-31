@@ -16,16 +16,19 @@ from app.ontology import (
     apply_evolution,
     create_schema_version,
     delete_version,
+    discover_ontology,
     embed_graph,
     extract_graph,
     generate_schema,
     get_active_version,
     list_schema_stems,
     list_versions,
+    load_discovery,
     load_document_manifest,
     load_graph,
     load_schema,
     propose_evolution,
+    save_discovery,
     save_document_manifest,
     save_graph,
     validate_ontology,
@@ -205,9 +208,36 @@ def reset_database():
     return {"status": "ok"}
 
 
+class DiscoverRequest(BaseModel):
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/{filename}/discover")
+def discover(filename: str, request: DiscoverRequest | None = None):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    max_chars = request.max_chars if request else None
+    try:
+        report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_discovery(_stem(filename), report)
+    return report
+
+
+@app.get("/api/ontology/{filename}/discover")
+def get_discovery(filename: str):
+    report = load_discovery(_stem(filename))
+    if report is None:
+        raise HTTPException(status_code=404, detail="discovery not found")
+    return report
+
+
 class CreateSchemaRequest(BaseModel):
     document_type: str = "general"
     max_chars: int | None = None
+    use_discovery: bool = False
 
 
 @app.post("/api/ontology/{filename}/schema")
@@ -217,9 +247,10 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
         raise HTTPException(status_code=404, detail="document not found")
     document_type = request.document_type if request else "general"
     max_chars = request.max_chars if request else None
+    discovery = load_discovery(_stem(filename)) if (request and request.use_discovery) else None
     try:
         schema = generate_schema(
-            doc_path.read_text(), document_type=document_type, max_chars=max_chars
+            doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

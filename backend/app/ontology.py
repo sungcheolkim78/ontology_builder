@@ -317,17 +317,114 @@ def parse_json_response(text: str) -> dict:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 
 
+# Adapted from docs/ontology/ontology_discovery_prompt.md (the team's earlier,
+# richer "candidate ontology" stage) into a single-call JSON-output prompt.
+# Deliberately produces a different, broader artifact than SCHEMA_PROMPT/
+# LEGAL_SCHEMA_PROMPT above -- a domain model, taxonomy, attributes, events,
+# rules, terminology map, and competency questions, none of which
+# generate_schema's node_types/edge_types shape has room for -- rather than
+# trying to force it into that shape. Kept as a separate, optional,
+# read-only step: generate_schema's default behavior (discovery=None) is
+# unchanged, so existing schema generation/extraction/validation/evolution
+# keep working exactly as before regardless of whether this ever runs. See
+# generate_schema's `discovery` param below for the one place the two
+# connect -- an opt-in hint, not a replacement.
+DISCOVERY_PROMPT = """You are a senior Ontology Architect and Knowledge Engineer. Discover a \
+candidate domain ontology from the document below -- you are NOT performing \
+final entity extraction. Identify the conceptual structure needed to \
+represent the document's meaning, suitable for knowledge graph \
+construction, GraphRAG, and question answering. The result is a candidate \
+ontology for a person to review and refine, not a final one.
+
+Follow these principles:
+- Model meaning, not vocabulary -- don't create a class just because a noun \
+appears often; only for concepts with independent semantic meaning.
+- Separate taxonomy relationships (isA/subClassOf/partOf) from business \
+relationships (covers/requires/pays/excludes/appliesTo/...); do not mix \
+them in one relationship.
+- Prefer meaningful directional relationship names (covers, requires, \
+triggers, causes, belongsTo, definedBy, derivedFrom, ...) over vague ones \
+(relatedTo, associatedWith, hasInformation) unless nothing better fits.
+- Note temporal semantics (effective/expiration dates, versions, event \
+sequence) and provenance wherever the document supports it.
+- Minimize unnecessary complexity -- a minimal but expressive ontology \
+beats a maximal one.
+- Do not invent classes, relationships, or business concepts the document \
+doesn't support; do not silently resolve ambiguity or merge concepts on \
+lexical similarity alone -- mark confidence UNKNOWN or add a warning \
+instead.
+
+For each candidate class, classify it as one of: CONCEPT, ENTITY, EVENT, \
+VALUE_OBJECT, ATTRIBUTE, DOCUMENT, RULE, RELATIONSHIP. For each candidate \
+relationship, classify it as TAXONOMY or BUSINESS. Generate 10-20 \
+competency questions the eventual ontology should be able to answer.
+
+Write every definition/description/rationale value in the same language as \
+the document.
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"domain_model": {{"domain": "...", "subdomains": ["..."], "document_types": \
+["..."], "business_processes": ["..."], "major_actors": ["..."]}}, "classes": \
+[{{"name": "...", "definition": "...", "category": \
+"CONCEPT|ENTITY|EVENT|VALUE_OBJECT|ATTRIBUTE|DOCUMENT|RULE|RELATIONSHIP", \
+"parent": "...", "rationale": "...", "confidence": \
+"HIGH|MEDIUM|LOW|UNKNOWN"}}], "relationships": [{{"name": "...", \
+"definition": "...", "source": "...", "target": "...", "category": \
+"TAXONOMY|BUSINESS", "rationale": "...", "confidence": \
+"HIGH|MEDIUM|LOW|UNKNOWN"}}], "attributes": [{{"name": "...", "defined_on": \
+"...", "definition": "...", "datatype": "...", "unit": "...", "required": \
+true/false, "rationale": "..."}}], "events": [{{"name": "...", "definition": \
+"...", "trigger": "...", "affected_entities": ["..."]}}], "rules": \
+[{{"name": "...", "description": "...", "conditions": ["..."], \
+"consequences": ["..."], "exceptions": ["..."]}}], "terminology": \
+[{{"canonical_term": "...", "synonyms": ["..."], "abbreviations": ["..."], \
+"source_terms": ["..."]}}], "competency_questions": ["..."], "warnings": \
+["..."]}}
+
+Document:
+{document}
+"""
+
+
+def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
+    _check_document_length(document_text, max_chars)
+    model = get_chat_model()
+    response = invoke_with_telemetry(
+        "ontology.discover_ontology", model, DISCOVERY_PROMPT.format(document=document_text)
+    )
+    report = parse_json_response(response.content)
+    if not isinstance(report.get("classes"), list):
+        raise ValueError("discovery JSON missing classes list")
+    return report
+
+
 def generate_schema(
-    document_text: str, document_type: str = "general", max_chars: int | None = None
+    document_text: str,
+    document_type: str = "general",
+    max_chars: int | None = None,
+    discovery: dict | None = None,
 ) -> dict:
     _check_document_length(document_text, max_chars)
     prompt_template = SCHEMA_PROMPTS.get(document_type)
     if prompt_template is None:
         raise ValueError(f"unknown document_type: {document_type!r}")
     model = get_chat_model()
-    response = invoke_with_telemetry(
-        "ontology.generate_schema", model, prompt_template.format(document=document_text)
-    )
+    prompt = prompt_template.format(document=document_text)
+    if discovery:
+        # Prepended, not merged into the template's own "Document:" section --
+        # keeps SCHEMA_PROMPT/LEGAL_SCHEMA_PROMPT completely unchanged when
+        # discovery is None (the default), which is the entire point: this is
+        # an optional hint layered on top of the existing prompt, not a
+        # replacement for it.
+        prompt = (
+            "Reference -- a prior ontology-discovery pass over this document already "
+            "proposed these candidate classes/relationships/terminology. Use them only "
+            "as a starting hint; the schema you propose must still be independently "
+            "grounded in the document text below, and you may diverge from this "
+            "reference where the document doesn't actually support it.\n"
+            f"{json.dumps(discovery)}\n\n"
+        ) + prompt
+    response = invoke_with_telemetry("ontology.generate_schema", model, prompt)
     schema = parse_json_response(response.content)
     if not isinstance(schema.get("node_types"), list) or not isinstance(
         schema.get("edge_types"), list
@@ -656,6 +753,27 @@ def save_document_manifest(stem: str, original_filename: str) -> None:
 
 def load_document_manifest(stem: str) -> dict | None:
     path = graph_dir_for(stem) / "manifest.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
+
+
+def discovery_path_for(stem: str) -> Path:
+    return graph_dir_for(stem) / "discovery.json"
+
+
+def save_discovery(stem: str, report: dict) -> None:
+    """One discovery report per document, not per schema version -- discovery
+    is an exploratory, re-runnable read of the document itself, not tied to
+    any particular schema/extraction attempt, so overwriting on every run
+    (rather than versioning it like schema_v{N}.json) is intentional."""
+    d = graph_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    discovery_path_for(stem).write_text(json.dumps(report))
+
+
+def load_discovery(stem: str) -> dict | None:
+    path = discovery_path_for(stem)
     if not path.is_file():
         return None
     return json.loads(path.read_text())

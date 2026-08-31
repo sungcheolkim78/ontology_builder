@@ -59,6 +59,11 @@ const acceptedChangeIds = ref(new Set())
 const isApplyingEvolution = ref(false)
 const evolutionApplyError = ref('')
 const evolutionApplyMessage = ref('')
+const isDiscovering = ref(false)
+const discoveryReport = ref(null)
+const discoveryError = ref('')
+const showDiscoveryReport = ref(false)
+const useDiscoveryForSchema = ref(false)
 const workflowMessage = ref('')
 const workflowError = ref('')
 const elapsedSeconds = ref(0)
@@ -82,10 +87,56 @@ const workflowProgress = computed(() => {
   if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
   if (isValidating.value) return `문서와 스키마, 추출된 그래프를 검토하여 보고서 작성 중... ${elapsedSeconds.value}초`
   if (isProposingEvolution.value) return `검증 보고서를 바탕으로 개선안을 도출하는 중... ${elapsedSeconds.value}초`
+  if (isDiscovering.value) return `문서에서 후보 온톨로지(개념/관계/속성/이벤트/규칙)를 발견하는 중... ${elapsedSeconds.value}초`
   return ''
 })
 
 onUnmounted(() => stopElapsedTimer())
+
+async function discoverOntology() {
+  if (!props.selectedFilename) return
+  isDiscovering.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  discoveryError.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/discover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_chars: maxSchemaChars.value }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    discoveryReport.value = await res.json()
+    useDiscoveryForSchema.value = true
+    showDiscoveryReport.value = true
+  } catch (err) {
+    discoveryError.value = '온톨로지 발견 실패: ' + err.message
+  } finally {
+    isDiscovering.value = false
+    stopElapsedTimer()
+  }
+}
+
+async function loadDiscovery() {
+  useDiscoveryForSchema.value = false
+  if (!props.selectedFilename) {
+    discoveryReport.value = null
+    return
+  }
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/discover`)
+    discoveryReport.value = res.ok ? await res.json() : null
+  } catch (err) {
+    discoveryReport.value = null
+  }
+}
+
+const discoveryClasses = computed(() => discoveryReport.value?.classes ?? [])
+const discoveryRelationships = computed(() => discoveryReport.value?.relationships ?? [])
 
 async function generateSchema() {
   if (!props.selectedFilename) return
@@ -100,6 +151,7 @@ async function generateSchema() {
       body: JSON.stringify({
         document_type: schemaDocumentType.value,
         max_chars: maxSchemaChars.value,
+        use_discovery: useDiscoveryForSchema.value && !!discoveryReport.value,
       }),
     })
     if (!res.ok) {
@@ -387,6 +439,7 @@ watch(
 
 watch(() => props.selectedFilename, loadSchemaVersions)
 watch(() => props.schemaVersion, loadSchemaVersions)
+watch(() => props.selectedFilename, loadDiscovery)
 
 async function loadSchemas() {
   try {
@@ -441,6 +494,7 @@ onMounted(async () => {
   await loadDocuments()
   await loadSchemas()
   await loadSchemaVersions()
+  await loadDiscovery()
 })
 
 watch(() => props.schemaVersion, () => {
@@ -605,6 +659,30 @@ function toggleEdgeType(type) {
             </p>
           </div>
 
+          <div>
+            <button
+              type="button"
+              class="btn w-full"
+              :disabled="!selectedFilename || isDiscovering"
+              @click="discoverOntology"
+            >
+              {{ isDiscovering ? '발견 중...' : '온톨로지 발견' }}
+            </button>
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              문서에서 후보 개념·관계·속성·이벤트·규칙을 탐색적으로 도출합니다. 스키마 생성과는 별개의
+              참고용 보고서이며, 자동으로 스키마에 반영되지 않습니다.
+            </p>
+            <p v-if="discoveryError" class="mt-1 text-[11px] text-red-400">{{ discoveryError }}</p>
+            <button
+              v-if="discoveryReport && !showDiscoveryReport"
+              type="button"
+              class="mt-1 text-[11px] text-accent hover:underline"
+              @click="showDiscoveryReport = true"
+            >
+              발견 결과 다시 보기
+            </button>
+          </div>
+
           <div class="flex items-center gap-1.5">
             <button
               type="button"
@@ -623,6 +701,17 @@ function toggleEdgeType(type) {
               <option value="legal">법률·보험</option>
             </select>
           </div>
+          <label
+            v-if="discoveryReport"
+            class="mt-1 flex items-center gap-1.5 text-[11px] text-ink-muted"
+          >
+            <input
+              type="checkbox"
+              v-model="useDiscoveryForSchema"
+              class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent"
+            />
+            발견 결과 참고하여 생성 (최종 판단은 문서 본문 기준)
+          </label>
           <p v-if="activeVersionLabel" class="mt-1 text-[11px] text-ink-faint">{{ activeVersionLabel }}</p>
 
           <button
@@ -1136,6 +1225,156 @@ function toggleEdgeType(type) {
           >
             {{ isApplyingEvolution ? '반영 중...' : '선택한 개선안 반영' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showDiscoveryReport && discoveryReport"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showDiscoveryReport = false"
+    >
+      <div class="flex max-h-[85vh] w-[760px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">온톨로지 발견 결과 (후보안)</h2>
+          <button type="button" class="btn" @click="showDiscoveryReport = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-5 overflow-y-auto p-4">
+          <div v-if="discoveryReport.domain_model">
+            <h3 class="section-label">도메인</h3>
+            <p class="mb-1 text-xs text-ink">{{ discoveryReport.domain_model.domain }}</p>
+            <div class="space-y-1 text-[11px] text-ink-muted">
+              <p v-if="discoveryReport.domain_model.subdomains?.length">
+                하위 도메인: {{ discoveryReport.domain_model.subdomains.join(', ') }}
+              </p>
+              <p v-if="discoveryReport.domain_model.document_types?.length">
+                문서 유형: {{ discoveryReport.domain_model.document_types.join(', ') }}
+              </p>
+              <p v-if="discoveryReport.domain_model.business_processes?.length">
+                업무 프로세스: {{ discoveryReport.domain_model.business_processes.join(', ') }}
+              </p>
+              <p v-if="discoveryReport.domain_model.major_actors?.length">
+                주요 행위자: {{ discoveryReport.domain_model.major_actors.join(', ') }}
+              </p>
+            </div>
+          </div>
+
+          <div v-if="discoveryClasses.length">
+            <h3 class="section-label">후보 클래스 ({{ discoveryClasses.length }}개)</h3>
+            <div class="space-y-1.5">
+              <div
+                v-for="(c, i) in discoveryClasses"
+                :key="i"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                  <span class="text-xs font-medium text-ink">{{ c.name }}</span>
+                  <span class="chip border-border bg-white/5 text-ink-muted">{{ c.category }}</span>
+                  <span v-if="c.parent" class="text-[10px] text-ink-faint">parent: {{ c.parent }}</span>
+                  <span class="text-[10px] text-ink-faint">{{ c.confidence }}</span>
+                </div>
+                <p class="text-[11px] text-ink-muted">{{ c.definition }}</p>
+                <p v-if="c.rationale" class="mt-1 text-[11px] italic text-ink-faint">{{ c.rationale }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="discoveryRelationships.length">
+            <h3 class="section-label">후보 관계 ({{ discoveryRelationships.length }}개)</h3>
+            <div class="space-y-1.5">
+              <div
+                v-for="(r, i) in discoveryRelationships"
+                :key="i"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                  <span class="text-xs font-medium text-ink">{{ r.source }} → {{ r.target }} ({{ r.name }})</span>
+                  <span class="chip border-border bg-white/5 text-ink-muted">{{ r.category }}</span>
+                  <span class="text-[10px] text-ink-faint">{{ r.confidence }}</span>
+                </div>
+                <p class="text-[11px] text-ink-muted">{{ r.definition }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="discoveryReport.attributes?.length">
+            <h3 class="section-label">후보 속성</h3>
+            <ul class="space-y-1 text-xs text-ink">
+              <li v-for="(a, i) in discoveryReport.attributes" :key="i">
+                <span class="font-medium">{{ a.defined_on }}.{{ a.name }}</span>
+                <span class="text-ink-muted"> ({{ a.datatype }}{{ a.unit ? `, ${a.unit}` : '' }}{{ a.required ? ', 필수' : '' }}) — {{ a.definition }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="discoveryReport.events?.length">
+            <h3 class="section-label">후보 이벤트</h3>
+            <ul class="space-y-1 text-xs text-ink">
+              <li v-for="(e, i) in discoveryReport.events" :key="i">
+                <span class="font-medium">{{ e.name }}</span>
+                <span class="text-ink-muted"> — {{ e.definition }}</span>
+                <span v-if="e.affected_entities?.length" class="text-[11px] text-ink-faint">
+                  ({{ e.affected_entities.join(', ') }})
+                </span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="discoveryReport.rules?.length">
+            <h3 class="section-label">후보 규칙</h3>
+            <div class="space-y-1.5">
+              <div
+                v-for="(r, i) in discoveryReport.rules"
+                :key="i"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <p class="text-xs font-medium text-ink">{{ r.name }}</p>
+                <p class="mt-1 text-[11px] text-ink-muted">{{ r.description }}</p>
+                <p v-if="r.conditions?.length" class="mt-1 text-[11px] text-ink-faint">조건: {{ r.conditions.join(', ') }}</p>
+                <p v-if="r.consequences?.length" class="mt-1 text-[11px] text-ink-faint">결과: {{ r.consequences.join(', ') }}</p>
+                <p v-if="r.exceptions?.length" class="mt-1 text-[11px] text-ink-faint">예외: {{ r.exceptions.join(', ') }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="discoveryReport.terminology?.length">
+            <h3 class="section-label">용어 매핑</h3>
+            <ul class="space-y-1 text-xs text-ink">
+              <li v-for="(t, i) in discoveryReport.terminology" :key="i">
+                <span class="font-medium">{{ t.canonical_term }}</span>
+                <span v-if="t.synonyms?.length" class="text-ink-muted"> = {{ t.synonyms.join(', ') }}</span>
+                <span v-if="t.abbreviations?.length" class="text-[11px] text-ink-faint"> ({{ t.abbreviations.join(', ') }})</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="discoveryReport.competency_questions?.length">
+            <h3 class="section-label">역량 질문</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-ink">
+              <li v-for="(q, i) in discoveryReport.competency_questions" :key="i">{{ q }}</li>
+            </ul>
+          </div>
+
+          <div v-if="discoveryReport.warnings?.length">
+            <h3 class="section-label">주의/검증 필요</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-400">
+              <li v-for="(w, i) in discoveryReport.warnings" :key="i">{{ w }}</li>
+            </ul>
+          </div>
+        </div>
+        <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <p class="text-[11px] leading-snug text-ink-faint">
+            이 결과는 후보안입니다. 아래에서 "발견 결과 참고하여 생성"을 켠 뒤 스키마 생성을 실행하면
+            참고 자료로만 반영되며, 최종 스키마는 여전히 문서 본문을 근거로 판단됩니다.
+          </p>
+          <label class="flex flex-shrink-0 items-center gap-1.5 text-[11px] text-ink-muted">
+            <input
+              type="checkbox"
+              v-model="useDiscoveryForSchema"
+              class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent"
+            />
+            참고하여 생성
+          </label>
         </div>
       </div>
     </div>

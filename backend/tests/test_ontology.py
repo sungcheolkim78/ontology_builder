@@ -133,6 +133,92 @@ def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
     assert response.status_code == 400
 
 
+def test_discover_endpoint_saves_and_returns_report(monkeypatch):
+    write_document()
+    report = {
+        "domain_model": {"domain": "insurance", "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
+        "classes": [{"name": "Policy", "definition": "a policy", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        "relationships": [],
+        "attributes": [],
+        "events": [],
+        "rules": [],
+        "terminology": [],
+        "competency_questions": ["What does this cover?"],
+        "warnings": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 200
+    assert response.json() == report
+
+    get_response = client.get("/api/ontology/doc_raw.md/discover")
+    assert get_response.status_code == 200
+    assert get_response.json() == report
+
+
+def test_discover_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/missing_raw.md/discover")
+
+    assert response.status_code == 404
+
+
+def test_discover_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 400
+
+
+def test_get_discovery_returns_404_when_none_saved():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 404
+
+
+def test_generate_schema_ignores_discovery_by_default(monkeypatch):
+    write_document()
+    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
+    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+
+    assert "Reference --" not in fake_model.prompts[0]
+
+
+def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
+    write_document()
+    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
+    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
+
+    assert response.status_code == 200
+    assert "Reference --" in fake_model.prompts[0]
+    assert "Policy" in fake_model.prompts[0]
+
+
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
     calls = []
 
