@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import DEFAULT_SCHEMA, GRAPH_DIR, embed_graph, embed_nodes
+from app.ontology import DEFAULT_SCHEMA, DOMAIN_SCHEMA_DIR, GRAPH_DIR, embed_graph, embed_nodes
 from app.parser import DATA_DIR
 
 
@@ -33,7 +33,7 @@ def stub_embedding_model(monkeypatch):
 def clean_dirs():
     from app import graphdb
     graphdb.reset_connection()
-    for d in (DATA_DIR, GRAPH_DIR):
+    for d in (DATA_DIR, GRAPH_DIR, DOMAIN_SCHEMA_DIR):
         if d.exists():
             shutil.rmtree(d)
     if graphdb.DB_PATH.exists():
@@ -44,7 +44,7 @@ def clean_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     yield
     graphdb.reset_connection()
-    for d in (DATA_DIR, GRAPH_DIR):
+    for d in (DATA_DIR, GRAPH_DIR, DOMAIN_SCHEMA_DIR):
         if d.exists():
             shutil.rmtree(d)
     if graphdb.DB_PATH.exists():
@@ -131,6 +131,92 @@ def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_discover_endpoint_saves_and_returns_report(monkeypatch):
+    write_document()
+    report = {
+        "domain_model": {"domain": "insurance", "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
+        "classes": [{"name": "Policy", "definition": "a policy", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        "relationships": [],
+        "attributes": [],
+        "events": [],
+        "rules": [],
+        "terminology": [],
+        "competency_questions": ["What does this cover?"],
+        "warnings": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 200
+    assert response.json() == report
+
+    get_response = client.get("/api/ontology/doc_raw.md/discover")
+    assert get_response.status_code == 200
+    assert get_response.json() == report
+
+
+def test_discover_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/missing_raw.md/discover")
+
+    assert response.status_code == 404
+
+
+def test_discover_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 400
+
+
+def test_get_discovery_returns_404_when_none_saved():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 404
+
+
+def test_generate_schema_ignores_discovery_by_default(monkeypatch):
+    write_document()
+    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
+    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+
+    assert "Reference --" not in fake_model.prompts[0]
+
+
+def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
+    write_document()
+    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
+    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
+
+    assert response.status_code == 200
+    assert "Reference --" in fake_model.prompts[0]
+    assert "Policy" in fake_model.prompts[0]
 
 
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
@@ -401,6 +487,87 @@ def test_use_schema_returns_404_when_source_missing():
     assert response.status_code == 404
 
 
+def _seed_schema_and_graph(stem="doc_raw"):
+    from app import graphdb
+    from app.ontology import create_schema_version
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    version = create_schema_version(stem, schema)
+    graphdb.write_graph(stem, [{"id": "n1", "label": "Alice", "type": "Person"}], [], version=version)
+    return schema
+
+
+def test_validate_endpoint_returns_report(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    report = {
+        "validation_summary": {
+            "ontology_valid": True,
+            "extraction_valid": True,
+            "provenance_valid": True,
+            "competency_questions_answerable": True,
+            "overall_quality": "good",
+        },
+        "issues": [],
+        "missing_elements": {"classes": [], "relationships": [], "attributes": [], "events": [], "rules": []},
+        "contradictions": [],
+        "ambiguities": [],
+        "competency_questions": [],
+        "recommended_changes": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 200
+    assert response.json() == report
+
+
+def test_validate_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/missing_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_404_when_schema_missing():
+    write_document()
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_404_when_graph_not_extracted():
+    from app.ontology import create_schema_version
+
+    write_document()
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 404
+
+
+def test_validate_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/validate")
+
+    assert response.status_code == 400
+
+
 def test_create_schema_version_increments_and_activates():
     from app.ontology import create_schema_version, get_active_version, list_versions
 
@@ -574,5 +741,912 @@ def test_delete_schema_version_endpoint_returns_404_for_unknown_version():
     client = TestClient(app)
 
     response = client.delete("/api/ontology/doc_raw.md/schema/versions/99")
+
+    assert response.status_code == 404
+
+
+def test_evolve_endpoint_returns_proposal(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    proposal = {
+        "evolution_summary": {"changes_proposed": 1, "human_review_required": False},
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+                "reason": "missing from schema",
+                "evidence": "Acme Corp",
+                "confidence": "HIGH",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(proposal))
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve",
+        json={"validation_report": {"issues": []}},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == proposal
+
+
+def test_evolve_returns_404_when_graph_not_extracted():
+    from app.ontology import create_schema_version
+
+    write_document()
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve", json={"validation_report": {}}
+    )
+
+    assert response.status_code == 404
+
+
+def test_evolve_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json")
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve", json={"validation_report": {}}
+    )
+
+    assert response.status_code == 400
+
+
+def test_apply_evolution_adds_node_type_and_node_creates_new_version():
+    from app.ontology import apply_evolution, get_active_version, load_schema
+
+    _seed_schema_and_graph()
+
+    changes = [
+        {
+            "change_id": "c1",
+            "decision": "ADD",
+            "element_type": "node_type",
+            "element": {"name": "Organization", "description": "an org"},
+        },
+        {
+            "change_id": "c2",
+            "decision": "ADD",
+            "element_type": "node",
+            "element": {"id": "n2", "label": "Acme", "type": "Organization", "detail": ""},
+        },
+    ]
+
+    result = apply_evolution("doc_raw", changes)
+
+    assert result["version"] == 2
+    assert get_active_version("doc_raw") == 2
+    schema_v2 = load_schema("doc_raw", 2)
+    assert {"name": "Organization", "description": "an org"} in schema_v2["node_types"]
+    assert result["node_count"] == 2  # original Alice node preserved + new one
+
+    from app import graphdb
+    graph_v2 = graphdb.load_graph("doc_raw", version=2)
+    ids = {n["id"] for n in graph_v2["nodes"]}
+    assert ids == {"n1", "n2"}
+
+
+def test_apply_evolution_deprecates_node_type_without_removing_it():
+    from app.ontology import apply_evolution, load_schema
+
+    _seed_schema_and_graph()
+
+    result = apply_evolution(
+        "doc_raw",
+        [
+            {
+                "change_id": "c1",
+                "decision": "DEPRECATE",
+                "element_type": "node_type",
+                "element": {"name": "Person", "description": "a person"},
+            }
+        ],
+    )
+
+    schema_v2 = load_schema("doc_raw", result["version"])
+    assert schema_v2["node_types"][0]["description"].startswith("[DEPRECATED]")
+
+
+def test_evolve_apply_endpoint_returns_404_when_no_schema():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/evolve/apply", json={"changes": []})
+
+    assert response.status_code == 404
+
+
+def test_evolve_apply_endpoint_bumps_version():
+    _seed_schema_and_graph()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve/apply",
+        json={
+            "changes": [
+                {
+                    "change_id": "c1",
+                    "decision": "ADD",
+                    "element_type": "edge_type",
+                    "element": {
+                        "name": "WORKS_AT",
+                        "description": "works at",
+                        "source": "Person",
+                        "target": "Person",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["version"] == 2
+
+
+class SequencedChatModel:
+    """Returns each response in order, one per invoke() call -- needed here
+    because converge_domain_schema makes multiple sequential LLM calls
+    (extract/validate/propose_evolution, per document) within one function
+    call, unlike the single-call tests above that get away with a fixed
+    FakeChatModel response."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def invoke(self, messages):
+        content = self.responses[self.calls]
+        self.calls += 1
+        return type("FakeResponse", (), {"content": content})()
+
+
+def _minimal_validation_report(issue_count=0):
+    return {
+        "validation_summary": {
+            "ontology_valid": True,
+            "extraction_valid": True,
+            "provenance_valid": True,
+            "competency_questions_answerable": True,
+            "overall_quality": "ok",
+        },
+        "issues": [{"severity": "LOW", "category": "x"} for _ in range(issue_count)],
+    }
+
+
+def test_converge_domain_schema_applies_auto_decisions_and_queues_review(monkeypatch):
+    from app.ontology import converge_domain_schema
+
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    extract_response = {"nodes": [{"id": "n1", "label": "Bob", "type": "Person"}], "edges": []}
+    validate_response = _minimal_validation_report(issue_count=1)
+    propose_response = {
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+                "reason": "missing from schema",
+                "evidence": "Acme",
+                "confidence": "HIGH",
+            },
+            {
+                "change_id": "c2",
+                "decision": "NEEDS_HUMAN_REVIEW",
+                "element_type": "edge_type",
+                "element": {
+                    "name": "WORKS_AT",
+                    "description": "works at",
+                    "source": "Person",
+                    "target": "Organization",
+                },
+                "reason": "ambiguous",
+                "evidence": "Bob works at Acme",
+                "confidence": "LOW",
+            },
+            {
+                "change_id": "c3",
+                "decision": "ADD",
+                "element_type": "node",
+                "element": {"id": "n2", "label": "Acme", "type": "Organization"},
+                "reason": "instance-level, should be ignored by schema convergence",
+                "evidence": "Acme",
+                "confidence": "HIGH",
+            },
+        ]
+    }
+    fake_model = SequencedChatModel(
+        [json.dumps(extract_response), json.dumps(validate_response), json.dumps(propose_response)]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = converge_domain_schema(
+        [{"stem": "doc2_raw", "text": "Bob works at Acme."}], seed_schema
+    )
+
+    node_type_names = {t["name"] for t in result["schema"]["node_types"]}
+    assert node_type_names == {"Person", "Organization"}
+    assert result["schema"]["edge_types"] == []  # NEEDS_HUMAN_REVIEW change not applied
+    assert len(result["iterations"]) == 1
+    assert result["iterations"][0]["stem"] == "doc2_raw"
+    assert result["iterations"][0]["issue_count"] == 1
+    assert [c["change_id"] for c in result["iterations"][0]["changes_applied"]] == ["c1"]
+    assert [c["change_id"] for c in result["pending_review"]] == ["c2"]
+    assert result["pending_review"][0]["stem"] == "doc2_raw"
+
+
+def test_converge_domain_schema_folds_multiple_documents_in_order(monkeypatch):
+    from app.ontology import converge_domain_schema
+
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    add_org = {
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+                "reason": "r",
+                "evidence": "e",
+                "confidence": "HIGH",
+            }
+        ]
+    }
+    add_edge = {
+        "changes": [
+            {
+                "change_id": "c2",
+                "decision": "MERGE",
+                "element_type": "edge_type",
+                "element": {
+                    "name": "WORKS_AT",
+                    "description": "works at",
+                    "source": "Person",
+                    "target": "Organization",
+                },
+                "reason": "r",
+                "evidence": "e",
+                "confidence": "HIGH",
+            }
+        ]
+    }
+    fake_model = SequencedChatModel(
+        [
+            json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_org),
+            json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_edge),
+        ]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = converge_domain_schema(
+        [
+            {"stem": "doc2_raw", "text": "doc2"},
+            {"stem": "doc3_raw", "text": "doc3"},
+        ],
+        seed_schema,
+    )
+
+    assert {t["name"] for t in result["schema"]["node_types"]} == {"Person", "Organization"}
+    assert {t["name"] for t in result["schema"]["edge_types"]} == {"WORKS_AT"}
+    assert [it["stem"] for it in result["iterations"]] == ["doc2_raw", "doc3_raw"]
+    assert result["pending_review"] == []
+
+
+def test_converge_domain_endpoint_returns_seed_schema_and_final_schema(monkeypatch):
+    write_document("doc_raw.md", "Alice works at Acme.")
+    write_document("doc2_raw.md", "Bob works at Acme too.")
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    add_org = {
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+                "reason": "r",
+                "evidence": "e",
+                "confidence": "HIGH",
+            }
+        ]
+    }
+    fake_model = SequencedChatModel(
+        [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_org)]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/converge",
+        json={"filenames": ["doc2_raw.md"], "seed_schema": seed_schema},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["seed_schema"] == seed_schema
+    assert {t["name"] for t in body["schema"]["node_types"]} == {"Person", "Organization"}
+    assert len(body["iterations"]) == 1
+
+
+def test_converge_domain_endpoint_returns_404_for_missing_document():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/converge",
+        json={"filenames": ["missing_raw.md"], "seed_schema": {"node_types": [], "edge_types": []}},
+    )
+
+    assert response.status_code == 404
+
+
+def test_converge_domain_endpoint_returns_400_for_empty_filenames():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/converge",
+        json={"filenames": [], "seed_schema": {"node_types": [], "edge_types": []}},
+    )
+
+    assert response.status_code == 400
+
+
+def test_converge_domain_endpoint_generates_seed_schema_when_none_given(monkeypatch):
+    write_document("doc_raw.md", "Alice works at Acme.")
+    write_document("doc2_raw.md", "Bob works at Acme too.")
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    no_changes = {"changes": []}
+    fake_model = SequencedChatModel(
+        [
+            json.dumps(seed_schema),  # generate_schema on doc_raw.md
+            json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes),
+        ]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/converge",
+        json={"filenames": ["doc_raw.md", "doc2_raw.md"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["seed_schema"] == seed_schema
+    assert len(body["iterations"]) == 1
+    assert body["iterations"][0]["stem"] == "doc2_raw"
+
+
+def _iteration(
+    stem,
+    doc_chars,
+    node_type_counts,
+    edge_type_counts=None,
+    issue_count=0,
+    missing_element_count=0,
+    competency_questions=None,
+):
+    return {
+        "stem": stem,
+        "changes_applied": [],
+        "changes_pending_review": [],
+        "validation_summary": {},
+        "issue_count": issue_count,
+        "doc_chars": doc_chars,
+        "missing_element_count": missing_element_count,
+        "node_type_counts": node_type_counts,
+        "edge_type_counts": edge_type_counts or {},
+        "competency_questions": competency_questions or [],
+    }
+
+
+def test_evaluate_domain_schema_computes_coverage_and_utilization():
+    from app.ontology import evaluate_domain_schema
+
+    schema = {
+        "node_types": [
+            {"name": "Person", "description": "a person"},
+            {"name": "Organization", "description": "an org"},
+        ],
+        "edge_types": [{"name": "WORKS_AT", "description": "works at"}],
+    }
+    iterations = [
+        _iteration("doc1", 1000, {"Person": 2}, {}, issue_count=1, missing_element_count=2),
+        _iteration("doc2", 1000, {"Person": 1, "Organization": 1}, {"WORKS_AT": 1}, issue_count=3),
+    ]
+
+    result = evaluate_domain_schema(schema, iterations)
+
+    assert result["coverage"] == {"avg_issue_count": 2.0, "avg_missing_element_count": 1.0}
+    assert result["type_utilization"] == {"Person": 1.0, "Organization": 0.5, "WORKS_AT": 0.5}
+    assert result["qa_success_rate"] is None
+
+
+def test_evaluate_domain_schema_consistency_is_zero_for_identical_density():
+    from app.ontology import evaluate_domain_schema
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    iterations = [
+        _iteration("doc1", 1000, {"Person": 1}),
+        _iteration("doc2", 2000, {"Person": 2}),  # same density: 1 per 1000 chars
+    ]
+
+    result = evaluate_domain_schema(schema, iterations)
+
+    assert result["consistency"]["Person"] == 0.0
+
+
+def test_evaluate_domain_schema_qa_success_rate_from_competency_questions():
+    from app.ontology import evaluate_domain_schema
+
+    schema = {"node_types": [], "edge_types": []}
+    iterations = [
+        _iteration(
+            "doc1", 1000, {},
+            competency_questions=[{"question": "q1", "answerable": True}, {"question": "q2", "answerable": False}],
+        ),
+        _iteration("doc2", 1000, {}, competency_questions=[{"question": "q3", "answerable": True}]),
+    ]
+
+    result = evaluate_domain_schema(schema, iterations)
+
+    assert result["qa_success_rate"] == pytest.approx(2 / 3)
+
+
+def test_evaluate_domain_schema_handles_empty_iterations():
+    from app.ontology import evaluate_domain_schema
+
+    result = evaluate_domain_schema({"node_types": [], "edge_types": []}, [])
+
+    assert result["type_utilization"] == {}
+    assert result["qa_success_rate"] is None
+
+
+def test_find_redundant_type_pairs_flags_near_duplicate_descriptions(monkeypatch):
+    from app.ontology import find_redundant_type_pairs
+
+    schema = {
+        "node_types": [
+            {"name": "Customer", "description": "a paying customer"},
+            {"name": "Client", "description": "a paying customer"},
+            {"name": "Product", "description": "something sold"},
+        ],
+        "edge_types": [],
+    }
+
+    class FakeEmbeddingModel:
+        def embed_documents(self, texts):
+            # Customer/Client get identical vectors; Product gets an
+            # orthogonal one, so only the first pair should pass threshold.
+            vectors = []
+            for text in texts:
+                if text.startswith("Product"):
+                    vectors.append([0.0, 1.0])
+                else:
+                    vectors.append([1.0, 0.0])
+            return vectors
+
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+
+    pairs = find_redundant_type_pairs(schema, threshold=0.9)
+
+    assert pairs == [{"element_type": "node_type", "a": "Customer", "b": "Client", "similarity": pytest.approx(1.0)}]
+
+
+def test_find_redundant_type_pairs_skips_types_with_fewer_than_two_entries():
+    from app.ontology import find_redundant_type_pairs
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+
+    pairs = find_redundant_type_pairs(schema)
+
+    assert pairs == []
+
+
+def test_measure_schema_stability_perfect_agreement_across_runs(monkeypatch):
+    from app.ontology import measure_schema_stability
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+
+    result = measure_schema_stability("some document text", runs=3)
+
+    assert result["avg_jaccard_similarity"] == 1.0
+    assert result["type_name_sets"] == [["Person"]] * 3
+
+
+def test_measure_schema_stability_disagreement_lowers_similarity(monkeypatch):
+    from app.ontology import measure_schema_stability
+
+    schemas = [
+        {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []},
+        {"node_types": [{"name": "Individual", "description": "a person"}], "edge_types": []},
+    ]
+    fake_model = SequencedChatModel([json.dumps(s) for s in schemas])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = measure_schema_stability("some document text", runs=2)
+
+    assert result["avg_jaccard_similarity"] == 0.0
+
+
+def test_measure_schema_stability_raises_for_fewer_than_two_runs():
+    from app.ontology import measure_schema_stability
+
+    with pytest.raises(ValueError):
+        measure_schema_stability("doc", runs=1)
+
+
+def test_converge_endpoint_includes_evaluation(monkeypatch):
+    write_document("doc2_raw.md", "Bob works at Acme too.")
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    no_changes = {"changes": []}
+    fake_model = SequencedChatModel(
+        [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes)]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/converge",
+        json={"filenames": ["doc2_raw.md"], "seed_schema": seed_schema},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "evaluation" in body
+    assert body["evaluation"]["type_utilization"] == {"Person": 0.0}
+
+
+def test_redundant_types_endpoint(monkeypatch):
+    class FakeEmbeddingModel:
+        def embed_documents(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    client = TestClient(app)
+    schema = {
+        "node_types": [
+            {"name": "Customer", "description": "a customer"},
+            {"name": "Client", "description": "a customer"},
+        ],
+        "edge_types": [],
+    }
+
+    response = client.post("/api/ontology/domain-schema/redundant-types", json=schema)
+
+    assert response.status_code == 200
+    assert response.json()["pairs"][0]["a"] == "Customer"
+
+
+def test_schema_stability_endpoint(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/schema/stability", json={"runs": 2})
+
+    assert response.status_code == 200
+    assert response.json()["avg_jaccard_similarity"] == 1.0
+
+
+def test_schema_stability_endpoint_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/missing_raw.md/schema/stability")
+
+    assert response.status_code == 404
+
+
+def test_run_domain_convergence_seeds_from_first_document_when_domain_is_new(monkeypatch):
+    from app.ontology import domain_calibration_stems, domain_convergence_history, load_domain_schema, run_domain_convergence
+
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    no_changes = {"changes": []}
+    fake_model = SequencedChatModel(
+        [
+            json.dumps(seed_schema),  # generate_schema seeds from doc1
+            json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes),  # doc2
+        ]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = run_domain_convergence(
+        "insurance_policy",
+        [{"stem": "doc1_raw", "text": "doc1"}, {"stem": "doc2_raw", "text": "doc2"}],
+    )
+
+    assert result["domain"] == "insurance_policy"
+    assert result["seed_schema"] == seed_schema
+    assert load_domain_schema("insurance_policy") == seed_schema
+    assert domain_calibration_stems("insurance_policy") == ["doc1_raw", "doc2_raw"]
+    history = domain_convergence_history("insurance_policy")
+    assert len(history) == 1
+    assert history[0]["stems"] == ["doc1_raw", "doc2_raw"]
+
+
+def test_run_domain_convergence_reuses_existing_domain_schema_as_seed(monkeypatch):
+    from app.ontology import domain_calibration_stems, run_domain_convergence, save_domain_schema
+
+    existing_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    save_domain_schema("insurance_policy", existing_schema)
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    no_changes = {"changes": []}
+    fake_model = SequencedChatModel(
+        [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes)]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = run_domain_convergence("insurance_policy", [{"stem": "doc3_raw", "text": "doc3"}])
+
+    # Only one document's worth of calls consumed -- existing_schema was the
+    # seed, doc3 was the only one folded in (no seed-generation call spent).
+    assert fake_model.calls == 3
+    assert result["seed_schema"] == existing_schema
+    assert domain_calibration_stems("insurance_policy") == ["doc3_raw"]
+
+
+def test_run_domain_convergence_raises_when_no_schema_and_no_documents():
+    from app.ontology import run_domain_convergence
+
+    with pytest.raises(ValueError):
+        run_domain_convergence("insurance_policy", [])
+
+
+def test_run_domain_convergence_accumulates_pending_review_across_calls(monkeypatch):
+    from app.ontology import load_domain_pending_review, run_domain_convergence, save_domain_schema
+
+    save_domain_schema("insurance_policy", {"node_types": [], "edge_types": []})
+    empty_graph = {"nodes": [], "edges": []}
+    validate_response = _minimal_validation_report()
+    review_change = {
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "NEEDS_HUMAN_REVIEW",
+                "element_type": "node_type",
+                "element": {"name": "Ambiguous", "description": "?"},
+                "reason": "r",
+                "evidence": "e",
+                "confidence": "LOW",
+            }
+        ]
+    }
+    fake_model = SequencedChatModel(
+        [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(review_change)]
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    run_domain_convergence("insurance_policy", [{"stem": "doc1_raw", "text": "doc1"}])
+
+    pending = load_domain_pending_review("insurance_policy")
+    assert len(pending) == 1
+    assert pending[0]["change_id"] == "c1"
+    assert pending[0]["stem"] == "doc1_raw"
+
+
+def test_apply_domain_schema_changes_applies_and_clears_pending_review():
+    from app.ontology import apply_domain_schema_changes, load_domain_schema, save_domain_schema
+    from app.ontology import _save_domain_pending_review
+
+    save_domain_schema("insurance_policy", {"node_types": [], "edge_types": []})
+    _save_domain_pending_review(
+        "insurance_policy",
+        [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+            }
+        ],
+    )
+
+    result = apply_domain_schema_changes(
+        "insurance_policy",
+        [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+            }
+        ],
+    )
+
+    assert {t["name"] for t in result["schema"]["node_types"]} == {"Organization"}
+    assert result["pending_review"] == []
+    assert load_domain_schema("insurance_policy")["node_types"][0]["name"] == "Organization"
+
+
+def test_apply_domain_schema_changes_raises_when_domain_missing():
+    from app.ontology import apply_domain_schema_changes
+
+    with pytest.raises(ValueError):
+        apply_domain_schema_changes("missing_domain", [])
+
+
+def test_use_domain_schema_creates_new_version_for_document(monkeypatch):
+    from app.ontology import get_active_version, load_schema, save_domain_schema, use_domain_schema
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    save_domain_schema("insurance_policy", schema)
+
+    version = use_domain_schema("doc_raw", "insurance_policy", document_type="insurance")
+
+    assert version == 1
+    assert get_active_version("doc_raw") == 1
+    assert load_schema("doc_raw", 1) == schema
+
+
+def test_use_domain_schema_raises_when_domain_missing():
+    from app.ontology import use_domain_schema
+
+    with pytest.raises(ValueError):
+        use_domain_schema("doc_raw", "missing_domain")
+
+
+def test_list_domains_returns_only_domains_with_a_saved_schema():
+    from app.ontology import list_domains, save_domain_schema
+
+    assert list_domains() == []
+    save_domain_schema("insurance_policy", {"node_types": [], "edge_types": []})
+    save_domain_schema("hr_contract", {"node_types": [], "edge_types": []})
+
+    assert list_domains() == ["hr_contract", "insurance_policy"]
+
+
+def test_list_domain_schemas_endpoint():
+    from app.ontology import save_domain_schema
+
+    save_domain_schema("insurance_policy", {"node_types": [], "edge_types": []})
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/domain-schemas")
+
+    assert response.status_code == 200
+    assert response.json() == {"domains": ["insurance_policy"]}
+
+
+def test_get_domain_schema_endpoint_returns_schema_and_metadata():
+    from app.ontology import save_domain_schema
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    save_domain_schema("insurance_policy", schema)
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/domain-schema/insurance_policy")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["node_types"] == schema["node_types"]
+    assert body["calibration_stems"] == []
+    assert body["history"] == []
+    assert body["pending_review"] == []
+
+
+def test_get_domain_schema_endpoint_returns_404_when_missing():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/domain-schema/missing_domain")
+
+    assert response.status_code == 404
+
+
+def test_converge_domain_persisted_endpoint(monkeypatch):
+    write_document("doc_raw.md", "Alice works at Acme.")
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(seed_schema)))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/insurance_policy/converge",
+        json={"filenames": ["doc_raw.md"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["domain"] == "insurance_policy"
+    assert body["schema"] == seed_schema
+    assert "evaluation" in body
+
+
+def test_converge_domain_persisted_endpoint_returns_400_for_empty_filenames():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/insurance_policy/converge", json={"filenames": []}
+    )
+
+    assert response.status_code == 400
+
+
+def test_apply_domain_pending_review_endpoint(monkeypatch):
+    from app.ontology import save_domain_schema
+    from app.ontology import _save_domain_pending_review
+
+    save_domain_schema("insurance_policy", {"node_types": [], "edge_types": []})
+    _save_domain_pending_review(
+        "insurance_policy",
+        [{"change_id": "c1", "decision": "ADD", "element_type": "node_type", "element": {"name": "Organization", "description": "an org"}}],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/insurance_policy/pending-review/apply",
+        json={
+            "changes": [
+                {
+                    "change_id": "c1",
+                    "decision": "ADD",
+                    "element_type": "node_type",
+                    "element": {"name": "Organization", "description": "an org"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["pending_review"] == []
+
+
+def test_apply_domain_pending_review_endpoint_returns_404_when_domain_missing():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/missing_domain/pending-review/apply", json={"changes": []}
+    )
+
+    assert response.status_code == 404
+
+
+def test_use_domain_schema_endpoint():
+    from app.ontology import save_domain_schema
+
+    write_document()
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    save_domain_schema("insurance_policy", schema)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/schema/use-domain",
+        json={"domain": "insurance_policy"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version"] == 1
+    assert body["node_types"] == schema["node_types"]
+
+
+def test_use_domain_schema_endpoint_returns_404_when_domain_missing():
+    write_document()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/schema/use-domain", json={"domain": "missing_domain"}
+    )
 
     assert response.status_code == 404

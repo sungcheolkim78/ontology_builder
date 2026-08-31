@@ -97,63 +97,69 @@ async function sendMessage() {
 
 <template>
   <section class="flex h-full min-w-0 flex-col">
-    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">Chat</h2>
+    <div class="panel-header">
+      <span>Chat</span>
+    </div>
 
-    <div class="flex-1 min-h-0 flex flex-col p-4">
-      <div class="mb-4 flex-1 overflow-y-auto rounded-lg border border-slate-200 p-4">
+    <div class="flex min-h-0 flex-1 flex-col gap-3 p-3">
+      <div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-lg border border-border bg-surface-sunken p-3">
         <div
           v-for="(msg, i) in messages"
           :key="i"
-          class="message mb-3 rounded-lg px-3 py-2"
-          :class="msg.role === 'user' ? 'bg-indigo-100 text-right' : 'bg-slate-100'"
+          class="max-w-[92%] rounded-lg px-3 py-2 text-[13px] leading-relaxed"
+          :class="msg.role === 'user'
+            ? 'self-end bg-accent/20 text-ink'
+            : 'self-start bg-surface-raised text-ink border border-border'"
         >
-          <strong>{{ msg.role === 'user' ? '나' : '챗봇' }}</strong>
+          <div class="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            {{ msg.role === 'user' ? '나' : '챗봇' }}
+          </div>
           <div
             v-if="(msg.nodeTypes && msg.nodeTypes.length) || (msg.edgeTypes && msg.edgeTypes.length)"
-            class="mt-1 mb-4 border-b border-dashed border-slate-300 pb-2"
+            class="mb-2 space-y-1 border-b border-dashed border-border pb-2"
           >
-            <div class="mb-1 flex flex-wrap items-center gap-1.5">
-              <span class="text-xs text-slate-500">노드:</span>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] text-ink-faint">노드:</span>
               <template v-if="msg.nodeTypes.length">
                 <button
                   v-for="type in msg.nodeTypes"
                   :key="'n-' + type"
                   type="button"
-                  class="cursor-pointer rounded-full border border-emerald-600 bg-white px-2.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                  class="chip border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white"
                   :class="{ 'opacity-40 line-through': !enabledTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'node', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="text-xs text-slate-400">없음</span>
+              <span v-else class="text-[10px] text-ink-faint">없음</span>
             </div>
             <div class="flex flex-wrap items-center gap-1.5">
-              <span class="text-xs text-slate-500">엣지:</span>
+              <span class="text-[10px] text-ink-faint">엣지:</span>
               <template v-if="msg.edgeTypes.length">
                 <button
                   v-for="type in msg.edgeTypes"
                   :key="'e-' + type"
                   type="button"
-                  class="cursor-pointer rounded-full border border-amber-800 bg-white px-2.5 py-0.5 text-xs text-amber-800 hover:bg-amber-800 hover:text-white"
+                  class="chip border-amber-500/50 text-amber-400 hover:bg-amber-500 hover:text-white"
                   :class="{ 'opacity-40 line-through': !enabledEdgeTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'edge', type })"
                 >
                   {{ type }}
                 </button>
               </template>
-              <span v-else class="text-xs text-slate-400">없음</span>
+              <span v-else class="text-[10px] text-ink-faint">없음</span>
             </div>
           </div>
-          <div v-if="renderMarkdown" class="markdown mt-1" v-html="marked.parse(msg.content)"></div>
-          <p v-else class="mt-1 whitespace-pre-wrap">{{ msg.content }}</p>
+          <div v-if="renderMarkdown" class="markdown" v-html="marked.parse(msg.content)"></div>
+          <p v-else class="whitespace-pre-wrap">{{ msg.content }}</p>
           <div v-if="msg.relatedNodes && msg.relatedNodes.length" class="mt-2 flex flex-wrap items-center gap-1.5">
-            <span class="text-xs text-slate-500">관련 노드:</span>
+            <span class="text-[10px] text-ink-faint">관련 노드:</span>
             <button
               v-for="node in msg.relatedNodes"
               :key="node.id"
               type="button"
-              class="cursor-pointer rounded-full border border-[var(--chip-color)] bg-white px-2.5 py-0.5 text-xs text-[var(--chip-color)] hover:bg-[var(--chip-color)] hover:text-white"
+              class="chip border-[color:var(--chip-color)] text-[color:var(--chip-color)] hover:bg-[color:var(--chip-color)] hover:text-white"
               :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
               @click="emit('highlight-nodes', [node.id])"
             >
@@ -161,63 +167,49 @@ async function sendMessage() {
             </button>
           </div>
         </div>
-        <p v-if="isLoading" class="text-sm text-slate-500">응답 중... (ESC로 취소)</p>
-        <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+        <p v-if="isLoading" class="text-xs italic text-ink-faint">응답 중... (ESC로 취소)</p>
+        <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
       </div>
 
-      <form class="flex gap-2" @submit.prevent="sendMessage">
+      <form class="flex flex-shrink-0 gap-2" @submit.prevent="sendMessage">
         <input
           v-model="input"
           type="text"
           placeholder="메시지를 입력하세요"
-          class="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          class="field flex-1 py-2"
         />
-        <button
-          type="submit"
-          :disabled="isLoading"
-          class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-indigo-600"
-        >전송</button>
+        <button type="submit" class="btn-primary px-4" :disabled="isLoading">전송</button>
       </form>
     </div>
   </section>
 </template>
 
 <style scoped>
-.message .markdown :deep(p) {
+.markdown :deep(p) {
   margin: 0.25rem 0;
 }
-.message .markdown :deep(h1) {
-  font-size: 1.15rem;
-  font-weight: 700;
-  margin: 0.5rem 0 0.3rem;
-}
-.message .markdown :deep(h2) {
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 0.5rem 0 0.3rem;
-}
-.message .markdown :deep(h3) {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0.4rem 0 0.25rem;
-}
-.message .markdown :deep(h4) {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin: 0.4rem 0 0.25rem;
-}
-.message .markdown :deep(ul),
-.message .markdown :deep(ol) {
-  list-style: revert;
-  padding-left: 1.4em;
-  margin: 0.25rem 0;
-}
-.message .markdown :deep(table) {
+.markdown :deep(table) {
   border-collapse: collapse;
+  margin: 0.25rem 0;
 }
-.message .markdown :deep(td),
-.message .markdown :deep(th) {
-  border: 1px solid #e2e8f0;
+.markdown :deep(td),
+.markdown :deep(th) {
+  border: 1px solid theme('colors.border.DEFAULT');
   padding: 0.25rem 0.5rem;
+}
+.markdown :deep(code) {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.markdown :deep(pre) {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.5rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown :deep(a) {
+  color: theme('colors.accent.DEFAULT');
 }
 </style>

@@ -10,6 +10,9 @@ node_modules/
 backend/data/*
 !backend/data/.gitkeep
 
+# Downloaded/converted raw source data (see scripts/data_prep, Makefile)
+/data/
+
 # Local backend/data snapshots (see scripts/backup_data.sh)
 backups/
 

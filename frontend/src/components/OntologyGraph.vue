@@ -319,6 +319,7 @@ const configs = computed(() => ({
     label: {
       visible: showNodeLabels.value,
       text: 'name',
+      color: '#c7ccd6',
       fontSize: () => 10 / zoomLevel.value,
     },
   },
@@ -338,7 +339,7 @@ const configs = computed(() => ({
     gap: 12,
     label: {
       fontSize: () => 11 / zoomLevel.value,
-      color: '#555',
+      color: '#9aa1b2',
     },
   },
 }))
@@ -376,6 +377,142 @@ function focusOnNodes(ids) {
 async function fitSoon() {
   await nextTick()
   graphRef.value?.fitToContents()
+}
+
+// --- export as SVG / JPG ---
+// Matches tailwind.config.js's `canvas` token -- the graph viewport itself
+// has no background of its own (it shows the dark page background through),
+// so a plain serialization of the live SVG would export transparent/white
+// instead of matching what's actually on screen.
+const GRAPH_EXPORT_BACKGROUND = '#0b0d12'
+
+// v-network-graph styles nodes/edges/labels per-instance via the `configs`
+// object above (colors, widths, font sizes), which it applies as inline SVG
+// attributes -- but its own bundled stylesheet (imported as
+// 'v-network-graph/lib/style.css') still carries some baseline rules (e.g.
+// marker/line defaults) under `.v-ng-*` classes. Those classes exist only in
+// the live page's stylesheets; a cloned SVG serialized on its own and opened
+// standalone (or drawn into an off-page <img> for the JPG path below) has no
+// access to them. Copying just the `.v-ng-*` rules into an inline <style>
+// inside the exported SVG is what keeps the exported file looking the same
+// as what's on screen, regardless of whether this rule ended up in the
+// document via Vite's dev-time <style> injection or a bundled prod CSS file.
+function collectGraphCss() {
+  let css = ''
+  for (const sheet of document.styleSheets) {
+    let rules
+    try {
+      rules = sheet.cssRules
+    } catch (err) {
+      continue // inaccessible (e.g. cross-origin) stylesheet -- nothing we can copy from it
+    }
+    if (!rules) continue
+    for (const rule of rules) {
+      if (rule.selectorText?.includes('v-ng')) {
+        css += rule.cssText + '\n'
+      }
+    }
+  }
+  return css
+}
+
+// Builds a standalone, self-contained copy of the currently rendered graph
+// SVG (current pan/zoom framing included, since that's already baked into
+// the live element's own viewBox) -- shared by both exportSvg and
+// exportJpg, since the JPG path is just "render this same SVG into a
+// canvas".
+function buildExportSvg() {
+  const root = graphRef.value?.$el
+  const svg = root && (root.tagName === 'svg' ? root : root.querySelector('svg'))
+  if (!svg) return null
+
+  const rect = svg.getBoundingClientRect()
+  const width = Math.round(rect.width)
+  const height = Math.round(rect.height)
+  const viewBox = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
+  const [vx, vy, vw, vh] = viewBox.split(/\s+/).map(Number)
+
+  const clone = svg.cloneNode(true)
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+  clone.setAttribute('width', String(width))
+  clone.setAttribute('height', String(height))
+  clone.setAttribute('viewBox', viewBox)
+
+  const styleCss = collectGraphCss()
+  if (styleCss) {
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+    style.textContent = styleCss
+    clone.insertBefore(style, clone.firstChild)
+  }
+
+  const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  background.setAttribute('x', String(vx))
+  background.setAttribute('y', String(vy))
+  background.setAttribute('width', String(vw))
+  background.setAttribute('height', String(vh))
+  background.setAttribute('fill', GRAPH_EXPORT_BACKGROUND)
+  clone.insertBefore(background, clone.firstChild)
+
+  const markup = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`
+  return { markup, width, height }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+const exportBaseName = computed(() => {
+  const stem = (props.file?.filename ?? 'ontology-graph').replace(/\.[^./]+$/, '')
+  return `${stem}_${displayMode.value === 'schema' ? 'schema' : 'graph'}`
+})
+
+const exportError = ref('')
+
+function exportSvg() {
+  exportError.value = ''
+  const built = buildExportSvg()
+  if (!built) return
+  const blob = new Blob([built.markup], { type: 'image/svg+xml;charset=utf-8' })
+  downloadBlob(blob, `${exportBaseName.value}.svg`)
+}
+
+async function exportJpg() {
+  exportError.value = ''
+  const built = buildExportSvg()
+  if (!built) return
+  const url = URL.createObjectURL(new Blob([built.markup], { type: 'image/svg+xml;charset=utf-8' }))
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('SVG를 이미지로 변환하지 못했습니다'))
+      img.src = url
+    })
+    // Rendered at 2x the on-screen size for a sharper export than a raw
+    // screen-resolution capture would give.
+    const scale = 2
+    const canvas = document.createElement('canvas')
+    canvas.width = built.width * scale
+    canvas.height = built.height * scale
+    const ctx = canvas.getContext('2d')
+    ctx.scale(scale, scale)
+    ctx.drawImage(image, 0, 0, built.width, built.height)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+    if (!blob) throw new Error('JPG 변환에 실패했습니다')
+    downloadBlob(blob, `${exportBaseName.value}.jpg`)
+  } catch (err) {
+    exportError.value = '내보내기 실패: ' + err.message
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 // --- data loading ---
@@ -428,6 +565,39 @@ async function loadGraph(file) {
   fitSoon()
 }
 
+// Explicit refresh for the "그래프 보기" button -- re-reads this document's
+// nodes/edges straight from LadybugDB (via GET /api/ontology/{filename}, the
+// same endpoint loadGraph uses) rather than trusting whatever this component
+// already has in memory, since schema/graph changes made elsewhere (schema
+// version activation, ontology evolution apply) don't otherwise trigger a
+// reload here unless they happen to also bump schemaRefreshRequest. Leaves
+// layouts/selectedNodes alone (unlike loadGraph's full reset for a brand new
+// file) so nodes that still exist keep their on-screen position across a
+// refresh; the [visibleNodes, visibleEdges] watch below already knows how to
+// carry over existing positions and settle new nodes into place.
+async function viewGraph() {
+  if (!props.file) return
+  showSchemaPreview.value = false
+  error.value = ''
+  status.value = 'loading'
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}`)
+    if (res.status === 404) {
+      status.value = 'no-graph'
+      return
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    nodes.value = data.nodes
+    edges.value = data.edges
+    status.value = 'ready'
+  } catch (err) {
+    status.value = 'error'
+    error.value = '온톨로지를 불러오지 못했습니다: ' + err.message
+  }
+  fitSoon()
+}
+
 watch(() => props.file, loadGraph, { immediate: true })
 
 // A single consolidated trigger for every backend-side change SettingsPanel's
@@ -447,47 +617,56 @@ watch(
 
 <template>
   <section class="flex h-full flex-col">
-    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">온톨로지 그래프</h2>
+    <div class="panel-header">
+      <span>온톨로지 그래프</span>
+    </div>
 
-    <div class="flex-1 min-h-0 flex flex-col p-4">
-      <p v-if="status === 'empty'" class="shrink-0 text-sm text-slate-500">문서를 선택하세요</p>
+    <div class="flex min-h-0 flex-1 flex-col p-3">
+      <p v-if="status === 'empty'" class="flex-shrink-0 text-xs text-ink-faint">문서를 선택하세요</p>
 
       <template v-else-if="status === 'no-graph' || status === 'ready'">
-        <div class="mb-3 flex shrink-0 items-center gap-2">
+        <div class="mb-2.5 flex flex-shrink-0 items-center gap-2">
           <button
-            v-if="status === 'ready' && schema && schema.node_types.length > 0"
+            v-if="schema && schema.node_types.length > 0"
             type="button"
-            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            @click="showSchemaPreview = !showSchemaPreview"
+            class="btn"
+            :class="{ 'ring-1 ring-accent': showSchemaPreview }"
+            @click="showSchemaPreview = true"
           >
-            {{ showSchemaPreview ? '추출된 그래프 보기' : '스키마 미리보기' }}
+            스키마 미리보기
           </button>
           <button
-            v-if="displayMode !== 'none'"
             type="button"
-            class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            @click="resetView"
-          >리셋</button>
-          <label class="ml-1 flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
-            <input type="checkbox" class="accent-indigo-600" v-model="showNodeLabels" />
+            class="btn"
+            :class="{ 'ring-1 ring-accent': !showSchemaPreview }"
+            @click="viewGraph"
+          >
+            그래프 보기
+          </button>
+          <button v-if="displayMode !== 'none'" class="btn" @click="resetView">리셋</button>
+          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportSvg">SVG로 내보내기</button>
+          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportJpg">JPG로 내보내기</button>
+          <label class="ml-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted">
+            <input type="checkbox" v-model="showNodeLabels" class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent" />
             Node Label
           </label>
-          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
-            <input type="checkbox" class="accent-indigo-600" v-model="showEdgeLabels" />
+          <label class="flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted">
+            <input type="checkbox" v-model="showEdgeLabels" class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent" />
             Edge Label
           </label>
         </div>
-        <p v-if="error" class="shrink-0 text-sm text-red-600">{{ error }}</p>
-        <p v-if="displayMode === 'none' && !error" class="shrink-0 text-sm text-slate-500">
+        <p v-if="exportError" class="flex-shrink-0 text-xs text-red-400">{{ exportError }}</p>
+        <p v-if="error" class="flex-shrink-0 text-xs text-red-400">{{ error }}</p>
+        <p v-if="displayMode === 'none' && !error" class="flex-shrink-0 text-xs text-ink-faint">
           스키마를 생성하거나 라이브러리에서 선택하세요
         </p>
       </template>
 
-      <p v-else-if="status === 'error'" class="shrink-0 text-sm text-red-600">{{ error }}</p>
+      <p v-else-if="status === 'error'" class="flex-shrink-0 text-xs text-red-400">{{ error }}</p>
 
       <div
         v-if="displayMode !== 'none'"
-        class="relative flex-1 min-h-0 w-full rounded-lg shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08),0_1px_4px_rgba(0,0,0,0.12)]"
+        class="relative min-h-0 w-full flex-1 rounded-lg ring-1 ring-inset ring-border"
         @mousemove="onNodePointerMove"
       >
         <v-network-graph
@@ -507,12 +686,12 @@ watch(
 
         <div
           v-if="hoveredNode"
-          class="pointer-events-none fixed z-[2000] max-w-[260px] rounded-md bg-slate-800 px-[0.65rem] py-2 text-sm leading-snug text-white shadow-lg"
+          class="pointer-events-none fixed z-[2000] max-w-[260px] rounded-md border border-border bg-surface-raised px-2.5 py-2 text-xs leading-relaxed text-ink shadow-2xl"
           :style="{ left: tooltipPos.x + 12 + 'px', top: tooltipPos.y + 12 + 'px' }"
         >
-          <div class="mb-0.5 text-xs uppercase tracking-wide text-slate-400">{{ hoveredNode.type }}</div>
-          <div class="mb-0.5 font-semibold">{{ hoveredNode.name }}</div>
-          <div v-if="hoveredNode.detail" class="text-slate-300">{{ hoveredNode.detail }}</div>
+          <div class="mb-0.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ hoveredNode.type }}</div>
+          <div class="font-semibold text-ink">{{ hoveredNode.name }}</div>
+          <div v-if="hoveredNode.detail" class="mt-0.5 text-ink-muted">{{ hoveredNode.detail }}</div>
         </div>
       </div>
     </div>

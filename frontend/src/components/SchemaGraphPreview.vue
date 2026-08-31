@@ -63,72 +63,77 @@ const statusText = computed(() => {
 
 <template>
   <section class="flex h-full flex-col">
-    <h2 class="shrink-0 border-b border-slate-200 px-4 py-3 text-base font-semibold text-slate-900">스키마 / 그래프DB</h2>
-    <div class="flex-1 min-h-0 flex flex-col p-4">
-      <p v-if="!file" class="text-sm text-slate-500">문서를 선택하세요</p>
+    <div class="panel-header">
+      <span>스키마 / 그래프DB</span>
+    </div>
+    <div class="flex min-h-0 flex-1 flex-col p-3">
+      <p v-if="!file" class="text-xs text-ink-faint">문서를 선택하세요</p>
       <template v-else>
-        <div class="mb-3 flex shrink-0 gap-2">
+        <div class="mb-2.5 flex flex-shrink-0 gap-1.5">
           <button
-            type="button"
-            class="rounded-md border px-3 py-1 text-sm"
-            :class="activeTab === 'schema' ? 'border-indigo-600 bg-indigo-100 text-indigo-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'"
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'schema'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
             @click="activeTab = 'schema'"
           >스키마</button>
           <button
-            type="button"
-            class="rounded-md border px-3 py-1 text-sm"
-            :class="activeTab === 'nodes' ? 'border-indigo-600 bg-indigo-100 text-indigo-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'"
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'nodes'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
             @click="activeTab = 'nodes'"
           >Nodes</button>
           <button
-            type="button"
-            class="rounded-md border px-3 py-1 text-sm"
-            :class="activeTab === 'edges' ? 'border-indigo-600 bg-indigo-100 text-indigo-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'"
+            class="rounded-md border px-2.5 py-1 text-xs transition-colors"
+            :class="activeTab === 'edges'
+              ? 'border-accent/50 bg-accent/20 text-ink'
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
             @click="activeTab = 'edges'"
           >Edges</button>
         </div>
 
-        <div class="flex-1 min-h-0 flex flex-col">
+        <div class="flex min-h-0 flex-1 flex-col">
           <template v-if="activeTab === 'schema'">
-            <p v-if="!schema" class="text-sm text-slate-500">아직 데이터가 없습니다</p>
-            <div v-else class="flex-1 min-h-0 flex flex-col gap-3">
-              <div class="flex-1 min-h-0 flex flex-col">
-                <h4 class="mb-1 shrink-0 text-xs font-bold uppercase tracking-wide text-slate-500">node_types</h4>
-                <div class="schema-scroll flex-1 min-h-0 overflow-auto rounded-md border border-slate-200">
-                  <table class="w-full border-collapse text-sm">
+            <p v-if="!schema" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
+            <div v-else class="flex min-h-0 flex-1 flex-col gap-3">
+              <div class="flex min-h-0 flex-1 flex-col">
+                <h4 class="table-label">node_types</h4>
+                <div class="table-wrap">
+                  <table class="data-table">
                     <thead>
                       <tr>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Name</th>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Description</th>
+                        <th>Name</th>
+                        <th>Description</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="nt in schema.node_types" :key="nt.name" class="hover:bg-slate-50">
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ nt.name }}</td>
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ nt.description }}</td>
+                      <tr v-for="nt in schema.node_types" :key="nt.name">
+                        <td>{{ nt.name }}</td>
+                        <td>{{ nt.description }}</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
               </div>
-              <div class="flex-1 min-h-0 flex flex-col">
-                <h4 class="mb-1 shrink-0 text-xs font-bold uppercase tracking-wide text-slate-500">edge_types</h4>
-                <div class="schema-scroll flex-1 min-h-0 overflow-auto rounded-md border border-slate-200">
-                  <table class="w-full border-collapse text-sm">
+              <div class="flex min-h-0 flex-1 flex-col">
+                <h4 class="table-label">edge_types</h4>
+                <div class="table-wrap">
+                  <table class="data-table">
                     <thead>
                       <tr>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Name</th>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Description</th>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Source</th>
-                        <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Target</th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Source</th>
+                        <th>Target</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="et in schema.edge_types" :key="et.name" class="hover:bg-slate-50">
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ et.name }}</td>
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ et.description }}</td>
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ et.source }}</td>
-                        <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ et.target }}</td>
+                      <tr v-for="et in schema.edge_types" :key="et.name">
+                        <td>{{ et.name }}</td>
+                        <td>{{ et.description }}</td>
+                        <td>{{ et.source }}</td>
+                        <td>{{ et.target }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -138,23 +143,23 @@ const statusText = computed(() => {
           </template>
 
           <template v-else-if="activeTab === 'nodes'">
-            <p v-if="nodeRows.length === 0" class="text-sm text-slate-500">아직 데이터가 없습니다</p>
-            <div v-else class="schema-scroll flex-1 min-h-0 overflow-auto rounded-md border border-slate-200">
-              <table class="w-full border-collapse text-sm">
+            <p v-if="nodeRows.length === 0" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
+            <div v-else class="table-wrap">
+              <table class="data-table">
                 <thead>
                   <tr>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">ID</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Label</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Type</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Detail</th>
+                    <th>ID</th>
+                    <th>Label</th>
+                    <th>Type</th>
+                    <th>Detail</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="n in nodeRows" :key="n.id" class="hover:bg-slate-50">
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ n.id }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ n.label }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ n.type }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ n.detail }}</td>
+                  <tr v-for="n in nodeRows" :key="n.id">
+                    <td>{{ n.id }}</td>
+                    <td>{{ n.label }}</td>
+                    <td>{{ n.type }}</td>
+                    <td>{{ n.detail }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -162,23 +167,23 @@ const statusText = computed(() => {
           </template>
 
           <template v-else-if="activeTab === 'edges'">
-            <p v-if="edgeRows.length === 0" class="text-sm text-slate-500">아직 데이터가 없습니다</p>
-            <div v-else class="schema-scroll flex-1 min-h-0 overflow-auto rounded-md border border-slate-200">
-              <table class="w-full border-collapse text-sm">
+            <p v-if="edgeRows.length === 0" class="text-xs text-ink-faint">아직 데이터가 없습니다</p>
+            <div v-else class="table-wrap">
+              <table class="data-table">
                 <thead>
                   <tr>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Source</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Target</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Type</th>
-                    <th class="sticky top-0 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left font-semibold">Detail</th>
+                    <th>Source</th>
+                    <th>Target</th>
+                    <th>Type</th>
+                    <th>Detail</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(e, i) in edgeRows" :key="i" class="hover:bg-slate-50">
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ e.source }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ e.target }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ e.type }}</td>
-                    <td class="whitespace-nowrap border-b border-slate-100 px-2.5 py-1.5">{{ e.detail }}</td>
+                  <tr v-for="(e, i) in edgeRows" :key="i">
+                    <td>{{ e.source }}</td>
+                    <td>{{ e.target }}</td>
+                    <td>{{ e.type }}</td>
+                    <td>{{ e.detail }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -186,26 +191,50 @@ const statusText = computed(() => {
           </template>
         </div>
 
-        <p class="mt-2 shrink-0 border-t border-slate-200 pt-2 text-sm text-slate-600">{{ statusText }}</p>
+        <p class="mt-2 flex-shrink-0 border-t border-border pt-2 text-[11px] text-ink-muted">{{ statusText }}</p>
       </template>
     </div>
   </section>
 </template>
 
 <style scoped>
-.schema-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: #b0b0b0 #f0f0f0;
+.table-label {
+  flex-shrink: 0;
+  margin: 0 0 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: theme('colors.ink.faint');
 }
-.schema-scroll::-webkit-scrollbar {
-  width: 10px;
-}
-.schema-scroll::-webkit-scrollbar-track {
-  background: #f0f0f0;
-}
-.schema-scroll::-webkit-scrollbar-thumb {
-  background-color: #b0b0b0;
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid theme('colors.border.DEFAULT');
   border-radius: 6px;
-  border: 2px solid #f0f0f0;
+}
+.data-table {
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  width: 100%;
+}
+.data-table th,
+.data-table td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid theme('colors.border.subtle');
+  text-align: left;
+  white-space: nowrap;
+  color: theme('colors.ink.DEFAULT');
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  background: theme('colors.surface.raised');
+  color: theme('colors.ink.muted');
+  font-weight: 600;
+}
+.data-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>
