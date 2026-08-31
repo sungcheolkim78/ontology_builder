@@ -51,6 +51,14 @@ const isValidating = ref(false)
 const validationReport = ref(null)
 const validationError = ref('')
 const showValidationReport = ref(false)
+const isProposingEvolution = ref(false)
+const evolutionProposal = ref(null)
+const evolutionError = ref('')
+const showEvolutionReview = ref(false)
+const acceptedChangeIds = ref(new Set())
+const isApplyingEvolution = ref(false)
+const evolutionApplyError = ref('')
+const evolutionApplyMessage = ref('')
 const workflowMessage = ref('')
 const workflowError = ref('')
 const elapsedSeconds = ref(0)
@@ -73,6 +81,7 @@ const workflowProgress = computed(() => {
   if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
   if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
   if (isValidating.value) return `문서와 스키마, 추출된 그래프를 검토하여 보고서 작성 중... ${elapsedSeconds.value}초`
+  if (isProposingEvolution.value) return `검증 보고서를 바탕으로 개선안을 도출하는 중... ${elapsedSeconds.value}초`
   return ''
 })
 
@@ -182,6 +191,109 @@ async function validateOntology() {
     isValidating.value = false
     stopElapsedTimer()
   }
+}
+
+// Only ADD/MODIFY/MERGE/DEPRECATE are pre-checked -- REJECT has nothing to
+// apply, and NEEDS_HUMAN_REVIEW must never be auto-selected (the person
+// reviewing has to deliberately check it themselves) per
+// docs/ontology/ontology_evolution_prompt.md's governance rule.
+const AUTO_ACCEPT_DECISIONS = new Set(['ADD', 'MODIFY', 'MERGE', 'DEPRECATE'])
+
+async function proposeEvolution() {
+  if (!props.selectedFilename || !validationReport.value) return
+  isProposingEvolution.value = true
+  workflowError.value = ''
+  workflowMessage.value = ''
+  evolutionError.value = ''
+  evolutionApplyError.value = ''
+  evolutionApplyMessage.value = ''
+  startElapsedTimer()
+  try {
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/evolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        validation_report: validationReport.value,
+        max_chars: maxSchemaChars.value,
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    evolutionProposal.value = await res.json()
+    acceptedChangeIds.value = new Set(
+      evolutionProposal.value.changes
+        .filter((c) => AUTO_ACCEPT_DECISIONS.has(c.decision))
+        .map((c) => c.change_id)
+    )
+    showValidationReport.value = false
+    showEvolutionReview.value = true
+  } catch (err) {
+    evolutionError.value = '개선안 도출 실패: ' + err.message
+  } finally {
+    isProposingEvolution.value = false
+    stopElapsedTimer()
+  }
+}
+
+function toggleChangeAccepted(changeId) {
+  const next = new Set(acceptedChangeIds.value)
+  if (next.has(changeId)) {
+    next.delete(changeId)
+  } else {
+    next.add(changeId)
+  }
+  acceptedChangeIds.value = next
+}
+
+async function applyEvolution() {
+  if (!props.selectedFilename || !evolutionProposal.value) return
+  isApplyingEvolution.value = true
+  evolutionApplyError.value = ''
+  evolutionApplyMessage.value = ''
+  try {
+    const changes = evolutionProposal.value.changes.filter((c) => acceptedChangeIds.value.has(c.change_id))
+    const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.selectedFilename)}/evolve/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changes }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const result = await res.json()
+    evolutionApplyMessage.value = `v${result.version}로 반영 완료 (노드 ${result.node_count}개, 엣지 ${result.edge_count}개)`
+    evolutionProposal.value = null
+    validationReport.value = null
+    emit('graph-extracted')
+  } catch (err) {
+    evolutionApplyError.value = '개선안 반영 실패: ' + err.message
+  } finally {
+    isApplyingEvolution.value = false
+  }
+}
+
+const DECISION_STYLES = {
+  ADD: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400',
+  MODIFY: 'border-sky-500/50 bg-sky-500/15 text-sky-400',
+  MERGE: 'border-violet-500/50 bg-violet-500/15 text-violet-400',
+  DEPRECATE: 'border-amber-500/50 bg-amber-500/15 text-amber-400',
+  REJECT: 'border-border bg-white/5 text-ink-faint',
+  NEEDS_HUMAN_REVIEW: 'border-red-500/50 bg-red-500/15 text-red-400',
+}
+
+function decisionClass(decision) {
+  return DECISION_STYLES[decision] ?? DECISION_STYLES.REJECT
+}
+
+function changeSummary(change) {
+  const el = change.element ?? {}
+  if (change.element_type === 'node_type' || change.element_type === 'edge_type') return el.name
+  if (change.element_type === 'node') return `${el.label} (${el.type})`
+  if (change.element_type === 'edge') return `${el.source} → ${el.target} (${el.type})`
+  return ''
 }
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
@@ -952,6 +1064,78 @@ function toggleEdgeType(type) {
               <li v-for="(c, i) in validationReport.recommended_changes" :key="i">{{ c }}</li>
             </ul>
           </div>
+        </div>
+        <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <p v-if="evolutionError" class="text-[11px] text-red-400">{{ evolutionError }}</p>
+          <span v-else></span>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="isProposingEvolution"
+            @click="proposeEvolution"
+          >
+            {{ isProposingEvolution ? '개선안 도출 중...' : '이 보고서로 개선안 도출' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showEvolutionReview && evolutionProposal"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showEvolutionReview = false"
+    >
+      <div class="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">스키마/그래프 개선안 검토</h2>
+          <button type="button" class="btn" @click="showEvolutionReview = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-2 overflow-y-auto p-4">
+          <p class="mb-1 text-[11px] leading-snug text-ink-faint">
+            체크한 항목만 새 스키마 버전으로 반영됩니다. 기존 버전은 그대로 남아 언제든 되돌릴 수 있습니다.
+            {{ evolutionProposal.evolution_summary?.human_review_required
+              ? '검토가 필요한(NEEDS_HUMAN_REVIEW) 항목은 기본적으로 선택되어 있지 않습니다.'
+              : '' }}
+          </p>
+          <div
+            v-for="change in evolutionProposal.changes"
+            :key="change.change_id"
+            class="rounded-md border border-border bg-surface-sunken p-2.5"
+          >
+            <label class="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                :checked="acceptedChangeIds.has(change.change_id)"
+                @change="toggleChangeAccepted(change.change_id)"
+                class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 rounded border-border bg-surface-sunken accent-accent"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                  <span class="chip" :class="decisionClass(change.decision)">{{ change.decision }}</span>
+                  <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ change.element_type }}</span>
+                  <span class="text-[10px] text-ink-faint">{{ change.confidence }}</span>
+                </div>
+                <p class="text-xs font-medium text-ink">{{ changeSummary(change) }}</p>
+                <p v-if="change.reason" class="mt-1 text-[11px] text-ink-muted">{{ change.reason }}</p>
+                <p v-if="change.evidence" class="mt-1 text-[11px] italic text-ink-faint">"{{ change.evidence }}"</p>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <div class="min-w-0">
+            <p v-if="evolutionApplyError" class="text-[11px] text-red-400">{{ evolutionApplyError }}</p>
+            <p v-else-if="evolutionApplyMessage" class="text-[11px] text-emerald-400">{{ evolutionApplyMessage }}</p>
+            <p v-else class="text-[11px] text-ink-faint">{{ acceptedChangeIds.size }}개 선택됨</p>
+          </div>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="isApplyingEvolution || acceptedChangeIds.size === 0"
+            @click="applyEvolution"
+          >
+            {{ isApplyingEvolution ? '반영 중...' : '선택한 개선안 반영' }}
+          </button>
         </div>
       </div>
     </div>

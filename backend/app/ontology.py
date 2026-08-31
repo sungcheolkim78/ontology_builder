@@ -383,6 +383,182 @@ def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: 
     return report
 
 
+# Adapted from docs/ontology/ontology_evolution_prompt.md (the team's
+# ontology-evolution agent spec) into a single-call JSON-output prompt. Takes
+# a validation report as input rather than re-discovering problems itself, so
+# it only proposes changes for issues already found -- a targeted patch, not
+# a from-scratch schema/extraction redo. Mirrors the spec's decision set
+# (ADD/MODIFY/MERGE/DEPRECATE/REJECT/NEEDS_HUMAN_REVIEW) and its governance
+# rule that anything with material business/semantic impact must not be
+# applied automatically -- this module only ever proposes; apply_evolution
+# below applies whatever the caller (after human review) actually sends back.
+EVOLUTION_PROMPT = """You are a senior Ontology Governance and Evolution Architect. The \
+existing ontology schema below is authoritative -- do not propose changing it \
+just because a new term appears in the document. Given the document, its \
+current schema, its current extracted knowledge graph, and a validation \
+report that already found problems, propose a minimal, disciplined set of \
+changes that fix flagged issues and fill genuinely missing pieces -- not a \
+redo from scratch.
+
+For every schema-level candidate (a node_type or edge_type to add, fix, or \
+retire) and every instance-level candidate (a specific node or edge to add \
+to the graph, grounded in the document, to fill a MISSING_ENTITY/ \
+MISSING_RELATIONSHIP/MISSING_ATTRIBUTE/MISSING_EVENT/MISSING_RULE the \
+validation report flagged), choose exactly one decision:
+
+ADD -- the new element has independent meaning, cannot be represented by an \
+existing element, occurs in meaningful context, and is supported by evidence.
+MODIFY -- an existing element's definition is demonstrably incomplete or \
+incorrect; state what it was and what it becomes.
+MERGE -- two elements are semantically identical, not just lexically \
+similar; name the merge target.
+DEPRECATE -- an existing element is obsolete; never propose deleting it \
+outright.
+REJECT -- a document-specific one-off phrase, an already-covered synonym, \
+insufficient evidence, or something that would add complexity without \
+improving the ontology.
+NEEDS_HUMAN_REVIEW -- the change would materially affect business \
+semantics, regulatory/contractual interpretation, class hierarchy, \
+relationship semantics, or cardinality -- these must never be applied \
+automatically.
+
+Only propose ADD for a graph instance (a node or edge) when you can point \
+to the specific document text that supports it -- put that text in \
+"evidence". Do not propose MERGE or DEPRECATE for a graph instance unless \
+the validation report specifically flagged a duplicate or contradiction; \
+prefer schema-level changes over expanding the graph indiscriminately.
+
+Write every reason/evidence value in the same language as the document.
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"evolution_summary": {{"changes_proposed": <int>, "human_review_required": \
+true/false}}, "changes": [{{"change_id": "...", "decision": \
+"ADD|MODIFY|MERGE|DEPRECATE|REJECT|NEEDS_HUMAN_REVIEW", "element_type": \
+"node_type|edge_type|node|edge", "element": {{...}}, "reason": "...", \
+"evidence": "...", "confidence": "HIGH|MEDIUM|LOW"}}]}}
+
+For element_type "node_type": element is {{"name": "...", "description": "..."}}.
+For element_type "edge_type": element is {{"name": "...", "description": \
+"...", "source": "<node type name>", "target": "<node type name>"}}.
+For element_type "node": element is {{"id": "...", "label": "...", "type": \
+"<a node type name from the schema, existing or newly proposed>", "detail": "..."}}.
+For element_type "edge": element is {{"source": "<node id, existing or one \
+you're adding in this same response>", "target": "<node id>", "type": "<an \
+edge type name>", "detail": "..."}}.
+
+Current ontology schema:
+{schema}
+
+Current extracted graph (nodes and edges):
+{graph}
+
+Validation report:
+{validation_report}
+
+Document:
+{document}
+"""
+
+
+def propose_evolution(
+    document_text: str,
+    schema: dict,
+    graph: dict,
+    validation_report: dict,
+    max_chars: int | None = None,
+) -> dict:
+    _check_document_length(document_text, max_chars)
+    model = get_chat_model()
+    prompt = EVOLUTION_PROMPT.format(
+        schema=json.dumps(schema),
+        graph=json.dumps(graph),
+        validation_report=json.dumps(validation_report),
+        document=document_text,
+    )
+    response = invoke_with_telemetry("ontology.propose_evolution", model, prompt)
+    proposal = parse_json_response(response.content)
+    if not isinstance(proposal.get("changes"), list):
+        raise ValueError("evolution JSON missing changes list")
+    for change in proposal["changes"]:
+        if not {"decision", "element_type", "element"} <= change.keys():
+            raise ValueError("evolution change missing decision/element_type/element")
+    return proposal
+
+
+def _apply_type_change(type_list: list, element: dict, decision: str) -> None:
+    idx = next((i for i, t in enumerate(type_list) if t["name"] == element["name"]), None)
+    if decision == "DEPRECATE":
+        if idx is not None:
+            type_list[idx] = {**type_list[idx], "description": f"[DEPRECATED] {type_list[idx]['description']}"}
+    elif idx is not None:
+        type_list[idx] = element
+    else:
+        type_list.append(element)
+
+
+def apply_evolution(stem: str, changes: list) -> dict:
+    """Applies an already-human-reviewed subset of a propose_evolution() proposal
+    (the caller is expected to have filtered `changes` down to only what a
+    person accepted -- this function has no opinion on `decision` beyond how
+    to mutate schema/graph, per docs/ontology/ontology_evolution_prompt.md's
+    rule that evolution must never be fully automatic). Writes the result as
+    a NEW schema version (preserving every prior version untouched, per that
+    spec's "preserve backward compatibility" principle) rather than mutating
+    the active one in place."""
+    version = get_active_version(stem)
+    if version is None:
+        raise ValueError(f"no active schema version for {stem!r}")
+    schema = load_schema(stem, version)
+    graph = graphdb.load_graph(stem, version=version) or {"nodes": [], "edges": []}
+    document_type = next(
+        (v["document_type"] for v in list_versions(stem) if v["version"] == version),
+        "general",
+    )
+
+    new_node_types = list(schema["node_types"])
+    new_edge_types = list(schema["edge_types"])
+    nodes_by_id = {n["id"]: n for n in graph["nodes"]}
+    edges = list(graph["edges"])
+
+    for change in changes:
+        element_type = change["element_type"]
+        decision = change["decision"]
+        element = change["element"]
+        if element_type == "node_type":
+            _apply_type_change(new_node_types, element, decision)
+        elif element_type == "edge_type":
+            _apply_type_change(new_edge_types, element, decision)
+        elif element_type == "node":
+            if decision == "DEPRECATE":
+                nodes_by_id.pop(element["id"], None)
+            else:
+                nodes_by_id[element["id"]] = element
+        elif element_type == "edge":
+            if decision == "DEPRECATE":
+                edges = [
+                    e
+                    for e in edges
+                    if not (
+                        e["source"] == element["source"]
+                        and e["target"] == element["target"]
+                        and e["type"] == element["type"]
+                    )
+                ]
+            else:
+                edges.append(element)
+
+    new_schema = {"node_types": new_node_types, "edge_types": new_edge_types}
+    new_version = create_schema_version(stem, new_schema, document_type=document_type)
+    new_nodes = list(nodes_by_id.values())
+    graphdb.write_graph(stem, new_nodes, edges, version=new_version)
+    return {
+        "version": new_version,
+        "schema": new_schema,
+        "node_count": len(new_nodes),
+        "edge_count": len(edges),
+    }
+
+
 def graph_dir_for(stem: str) -> Path:
     return GRAPH_DIR / stem
 

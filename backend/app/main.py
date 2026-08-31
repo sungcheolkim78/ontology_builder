@@ -13,6 +13,7 @@ from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
     activate_version,
+    apply_evolution,
     create_schema_version,
     delete_version,
     embed_graph,
@@ -24,6 +25,7 @@ from app.ontology import (
     load_document_manifest,
     load_graph,
     load_schema,
+    propose_evolution,
     save_document_manifest,
     save_graph,
     validate_ontology,
@@ -307,6 +309,49 @@ def validate(filename: str, request: ValidateRequest | None = None):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return report
+
+
+class EvolveRequest(BaseModel):
+    validation_report: dict
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/{filename}/evolve")
+def evolve(filename: str, request: EvolveRequest):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    stem = _stem(filename)
+    version = get_active_version(stem)
+    if version is None:
+        raise HTTPException(status_code=404, detail="schema not found")
+    schema = load_schema(stem, version)
+    graph = load_graph(stem, version=version)
+    if graph is None:
+        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    try:
+        proposal = propose_evolution(
+            doc_path.read_text(), schema, graph, request.validation_report, max_chars=request.max_chars
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return proposal
+
+
+class EvolveApplyRequest(BaseModel):
+    changes: list[dict]
+
+
+@app.post("/api/ontology/{filename}/evolve/apply")
+def evolve_apply(filename: str, request: EvolveApplyRequest):
+    stem = _stem(filename)
+    if get_active_version(stem) is None:
+        raise HTTPException(status_code=404, detail="schema not found")
+    try:
+        result = apply_evolution(stem, request.changes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
 
 
 @app.get("/api/ontology/{filename}")

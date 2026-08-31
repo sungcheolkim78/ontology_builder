@@ -657,3 +657,153 @@ def test_delete_schema_version_endpoint_returns_404_for_unknown_version():
     response = client.delete("/api/ontology/doc_raw.md/schema/versions/99")
 
     assert response.status_code == 404
+
+
+def test_evolve_endpoint_returns_proposal(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    proposal = {
+        "evolution_summary": {"changes_proposed": 1, "human_review_required": False},
+        "changes": [
+            {
+                "change_id": "c1",
+                "decision": "ADD",
+                "element_type": "node_type",
+                "element": {"name": "Organization", "description": "an org"},
+                "reason": "missing from schema",
+                "evidence": "Acme Corp",
+                "confidence": "HIGH",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(proposal))
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve",
+        json={"validation_report": {"issues": []}},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == proposal
+
+
+def test_evolve_returns_404_when_graph_not_extracted():
+    from app.ontology import create_schema_version
+
+    write_document()
+    create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve", json={"validation_report": {}}
+    )
+
+    assert response.status_code == 404
+
+
+def test_evolve_returns_400_on_invalid_json(monkeypatch):
+    write_document()
+    _seed_schema_and_graph()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("not json")
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve", json={"validation_report": {}}
+    )
+
+    assert response.status_code == 400
+
+
+def test_apply_evolution_adds_node_type_and_node_creates_new_version():
+    from app.ontology import apply_evolution, get_active_version, load_schema
+
+    _seed_schema_and_graph()
+
+    changes = [
+        {
+            "change_id": "c1",
+            "decision": "ADD",
+            "element_type": "node_type",
+            "element": {"name": "Organization", "description": "an org"},
+        },
+        {
+            "change_id": "c2",
+            "decision": "ADD",
+            "element_type": "node",
+            "element": {"id": "n2", "label": "Acme", "type": "Organization", "detail": ""},
+        },
+    ]
+
+    result = apply_evolution("doc_raw", changes)
+
+    assert result["version"] == 2
+    assert get_active_version("doc_raw") == 2
+    schema_v2 = load_schema("doc_raw", 2)
+    assert {"name": "Organization", "description": "an org"} in schema_v2["node_types"]
+    assert result["node_count"] == 2  # original Alice node preserved + new one
+
+    from app import graphdb
+    graph_v2 = graphdb.load_graph("doc_raw", version=2)
+    ids = {n["id"] for n in graph_v2["nodes"]}
+    assert ids == {"n1", "n2"}
+
+
+def test_apply_evolution_deprecates_node_type_without_removing_it():
+    from app.ontology import apply_evolution, load_schema
+
+    _seed_schema_and_graph()
+
+    result = apply_evolution(
+        "doc_raw",
+        [
+            {
+                "change_id": "c1",
+                "decision": "DEPRECATE",
+                "element_type": "node_type",
+                "element": {"name": "Person", "description": "a person"},
+            }
+        ],
+    )
+
+    schema_v2 = load_schema("doc_raw", result["version"])
+    assert schema_v2["node_types"][0]["description"].startswith("[DEPRECATED]")
+
+
+def test_evolve_apply_endpoint_returns_404_when_no_schema():
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/evolve/apply", json={"changes": []})
+
+    assert response.status_code == 404
+
+
+def test_evolve_apply_endpoint_bumps_version():
+    _seed_schema_and_graph()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/doc_raw.md/evolve/apply",
+        json={
+            "changes": [
+                {
+                    "change_id": "c1",
+                    "decision": "ADD",
+                    "element_type": "edge_type",
+                    "element": {
+                        "name": "WORKS_AT",
+                        "description": "works at",
+                        "source": "Person",
+                        "target": "Person",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["version"] == 2
