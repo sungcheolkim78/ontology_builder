@@ -64,6 +64,21 @@ const discoveryReport = ref(null)
 const discoveryError = ref('')
 const showDiscoveryReport = ref(false)
 const useDiscoveryForSchema = ref(false)
+const showDomainSchema = ref(false)
+const domains = ref([])
+const selectedDomain = ref('')
+const newDomainName = ref('')
+const domainSchema = ref(null)
+const selectedCalibrationFiles = ref(new Set())
+const isConverging = ref(false)
+const convergeError = ref('')
+const convergeMessage = ref('')
+const domainEvaluation = ref(null)
+const acceptedDomainReviewIds = ref(new Set())
+const isApplyingDomainReview = ref(false)
+const domainReviewError = ref('')
+const isUsingDomainSchema = ref(false)
+const domainUseError = ref('')
 const workflowMessage = ref('')
 const workflowError = ref('')
 const elapsedSeconds = ref(0)
@@ -495,6 +510,7 @@ onMounted(async () => {
   await loadSchemas()
   await loadSchemaVersions()
   await loadDiscovery()
+  await loadDomains()
 })
 
 watch(() => props.schemaVersion, () => {
@@ -567,6 +583,145 @@ async function deleteVersion(version) {
     emit('graph-extracted')
   } catch (err) {
     versionActionError.value = '버전 삭제 실패: ' + err.message
+  }
+}
+
+async function loadDomains() {
+  try {
+    const res = await apiFetch('/api/ontology/domain-schemas')
+    const data = await res.json()
+    domains.value = data.domains
+  } catch (err) {
+    // domain list is best-effort; leave as-is on failure
+  }
+}
+
+async function loadDomainSchema(domain) {
+  if (!domain) {
+    domainSchema.value = null
+    return
+  }
+  try {
+    const res = await apiFetch(`/api/ontology/domain-schema/${encodeURIComponent(domain)}`)
+    domainSchema.value = res.ok ? await res.json() : null
+  } catch (err) {
+    domainSchema.value = null
+  }
+}
+
+function onSelectDomain() {
+  domainEvaluation.value = null
+  acceptedDomainReviewIds.value = new Set()
+  convergeMessage.value = ''
+  convergeError.value = ''
+  loadDomainSchema(selectedDomain.value)
+}
+
+function toggleCalibrationFile(filename) {
+  const next = new Set(selectedCalibrationFiles.value)
+  if (next.has(filename)) {
+    next.delete(filename)
+  } else {
+    next.add(filename)
+  }
+  selectedCalibrationFiles.value = next
+}
+
+async function runDomainConvergence() {
+  const domain = selectedDomain.value || newDomainName.value.trim()
+  if (!domain || selectedCalibrationFiles.value.size === 0) return
+  isConverging.value = true
+  convergeError.value = ''
+  convergeMessage.value = ''
+  try {
+    const res = await apiFetch(`/api/ontology/domain-schema/${encodeURIComponent(domain)}/converge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames: [...selectedCalibrationFiles.value] }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const result = await res.json()
+    domainEvaluation.value = result.evaluation
+    convergeMessage.value =
+      `수렴 완료 (노드 타입 ${result.schema.node_types.length}개, ` +
+      `엣지 타입 ${result.schema.edge_types.length}개, 검토 대기 ${result.pending_review.length}건)`
+    selectedDomain.value = domain
+    newDomainName.value = ''
+    selectedCalibrationFiles.value = new Set()
+    await loadDomains()
+    await loadDomainSchema(domain)
+  } catch (err) {
+    convergeError.value = '수렴 실행 실패: ' + err.message
+  } finally {
+    isConverging.value = false
+  }
+}
+
+function toggleDomainReviewAccepted(changeId) {
+  const next = new Set(acceptedDomainReviewIds.value)
+  if (next.has(changeId)) {
+    next.delete(changeId)
+  } else {
+    next.add(changeId)
+  }
+  acceptedDomainReviewIds.value = next
+}
+
+async function applyDomainReview() {
+  if (!selectedDomain.value || !domainSchema.value) return
+  isApplyingDomainReview.value = true
+  domainReviewError.value = ''
+  try {
+    const changes = domainSchema.value.pending_review.filter((c) =>
+      acceptedDomainReviewIds.value.has(c.change_id)
+    )
+    const res = await apiFetch(
+      `/api/ontology/domain-schema/${encodeURIComponent(selectedDomain.value)}/pending-review/apply`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changes }),
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    acceptedDomainReviewIds.value = new Set()
+    await loadDomainSchema(selectedDomain.value)
+  } catch (err) {
+    domainReviewError.value = '변경 반영 실패: ' + err.message
+  } finally {
+    isApplyingDomainReview.value = false
+  }
+}
+
+async function useDomainSchemaForCurrentFile() {
+  if (!props.selectedFilename || !selectedDomain.value) return
+  isUsingDomainSchema.value = true
+  domainUseError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/ontology/${encodeURIComponent(props.selectedFilename)}/schema/use-domain`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain: selectedDomain.value }),
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    emit('schema-used')
+    showDomainSchema.value = false
+  } catch (err) {
+    domainUseError.value = '스키마 적용 실패: ' + err.message
+  } finally {
+    isUsingDomainSchema.value = false
   }
 }
 
@@ -681,6 +836,16 @@ function toggleEdgeType(type) {
             >
               발견 결과 다시 보기
             </button>
+          </div>
+
+          <div>
+            <button type="button" class="btn w-full" @click="showDomainSchema = true">
+              도메인 스키마
+            </button>
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              보험 약관처럼 같은 도메인의 여러 문서에 공통으로 쓸 스키마를 문서별로 따로 만들지 않고
+              점진적으로 수렴시키고, 그 결과를 문서에 재사용합니다.
+            </p>
           </div>
 
           <div class="flex items-center gap-1.5">
@@ -1375,6 +1540,185 @@ function toggleEdgeType(type) {
             />
             참고하여 생성
           </label>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showDomainSchema"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showDomainSchema = false"
+    >
+      <div class="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">도메인 스키마</h2>
+          <button type="button" class="btn" @click="showDomainSchema = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-5 overflow-y-auto p-4">
+          <section>
+            <h3 class="section-label">도메인 선택</h3>
+            <select v-model="selectedDomain" class="field w-full" @change="onSelectDomain">
+              <option value="">새 도메인...</option>
+              <option v-for="d in domains" :key="d" :value="d">{{ d }}</option>
+            </select>
+            <input
+              v-if="!selectedDomain"
+              v-model="newDomainName"
+              type="text"
+              placeholder="새 도메인 이름 (예: insurance_policy)"
+              class="field mt-1.5 w-full"
+            />
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              기존 도메인을 고르면 저장된 스키마를 시드로 계속 다듬고, 새 도메인 이름을 입력하면
+              아래에서 고른 첫 문서로 새로 시작합니다.
+            </p>
+          </section>
+
+          <section v-if="selectedDomain && domainSchema">
+            <h3 class="section-label">현재 도메인 스키마</h3>
+            <p class="mb-1.5 text-[11px] text-ink-faint">
+              캘리브레이션 문서 {{ domainSchema.calibration_stems.length }}개 · 실행 이력
+              {{ domainSchema.history.length }}회
+            </p>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="t in domainSchema.node_types"
+                :key="t.name"
+                class="chip border-border bg-white/5 text-ink-muted"
+              >{{ t.name }}</span>
+              <span
+                v-for="t in domainSchema.edge_types"
+                :key="t.name"
+                class="chip border-sky-500/40 bg-sky-500/10 text-sky-400"
+              >{{ t.name }}</span>
+            </div>
+          </section>
+
+          <section>
+            <h3 class="section-label">캘리브레이션 문서 선택</h3>
+            <p v-if="files.length === 0" class="text-[11px] text-ink-faint">문서가 없습니다</p>
+            <ul v-else class="max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border p-1.5">
+              <li v-for="f in files" :key="f.filename">
+                <label class="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-white/5">
+                  <input
+                    type="checkbox"
+                    :checked="selectedCalibrationFiles.has(f.filename)"
+                    @change="toggleCalibrationFile(f.filename)"
+                    class="h-3.5 w-3.5 flex-shrink-0 rounded border-border bg-surface-sunken accent-accent"
+                  />
+                  <span class="break-all text-ink-muted">{{ f.original_filename }}</span>
+                </label>
+              </li>
+            </ul>
+            <button
+              type="button"
+              class="btn-primary mt-2 w-full"
+              :disabled="isConverging || selectedCalibrationFiles.size === 0 || (!selectedDomain && !newDomainName.trim())"
+              @click="runDomainConvergence"
+            >
+              {{ isConverging ? '수렴 실행 중...' : '선택한 문서로 수렴 실행' }}
+            </button>
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              체크한 문서를 순서대로 반영해 도메인 스키마를 진화시킵니다. 문서 수가 많을수록 LLM
+              호출이 문서당 여러 번 발생하니 대표 문서 위주로 고르세요.
+            </p>
+            <p v-if="convergeError" class="mt-1 text-[11px] text-red-400">{{ convergeError }}</p>
+            <p v-if="convergeMessage" class="mt-1 text-[11px] text-emerald-400">{{ convergeMessage }}</p>
+          </section>
+
+          <section v-if="domainEvaluation">
+            <h3 class="section-label">평가 지표</h3>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+              <div>
+                평균 이슈 수:
+                <span class="text-ink">{{ domainEvaluation.coverage.avg_issue_count.toFixed(2) }}</span>
+              </div>
+              <div>
+                평균 누락 요소 수:
+                <span class="text-ink">{{ domainEvaluation.coverage.avg_missing_element_count.toFixed(2) }}</span>
+              </div>
+              <div>
+                QA 성공률:
+                <span class="text-ink">
+                  {{ domainEvaluation.qa_success_rate != null
+                    ? (domainEvaluation.qa_success_rate * 100).toFixed(0) + '%'
+                    : '—' }}
+                </span>
+              </div>
+            </div>
+            <div v-if="Object.keys(domainEvaluation.type_utilization).length" class="mt-2">
+              <h4 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">
+                타입 활용도 (해당 타입이 인스턴스를 가진 캘리브레이션 문서 비율)
+              </h4>
+              <div class="space-y-0.5">
+                <div
+                  v-for="(v, name) in domainEvaluation.type_utilization"
+                  :key="name"
+                  class="flex items-center justify-between text-[11px]"
+                >
+                  <span class="text-ink-muted">{{ name }}</span>
+                  <span class="text-ink">{{ (v * 100).toFixed(0) }}%</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="domainSchema?.pending_review?.length">
+            <h3 class="section-label">검토 대기 중인 변경 ({{ domainSchema.pending_review.length }}건)</h3>
+            <p class="mb-1.5 text-[11px] leading-snug text-ink-faint">
+              사람의 검토가 필요하다고 판단된(NEEDS_HUMAN_REVIEW) 변경입니다. 체크한 항목만 도메인
+              스키마에 반영됩니다.
+            </p>
+            <div class="space-y-2">
+              <div
+                v-for="change in domainSchema.pending_review"
+                :key="change.change_id"
+                class="rounded-md border border-border bg-surface-sunken p-2.5"
+              >
+                <label class="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    :checked="acceptedDomainReviewIds.has(change.change_id)"
+                    @change="toggleDomainReviewAccepted(change.change_id)"
+                    class="mt-0.5 h-3.5 w-3.5 flex-shrink-0 rounded border-border bg-surface-sunken accent-accent"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <div class="mb-1 flex flex-wrap items-center gap-1.5">
+                      <span class="chip" :class="decisionClass(change.decision)">{{ change.decision }}</span>
+                      <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ change.element_type }}</span>
+                      <span class="text-[10px] text-ink-faint">출처: {{ change.stem }}</span>
+                    </div>
+                    <p class="text-xs font-medium text-ink">{{ changeSummary(change) }}</p>
+                    <p v-if="change.reason" class="mt-1 text-[11px] text-ink-muted">{{ change.reason }}</p>
+                    <p v-if="change.evidence" class="mt-1 text-[11px] italic text-ink-faint">"{{ change.evidence }}"</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn-primary mt-2"
+              :disabled="isApplyingDomainReview || acceptedDomainReviewIds.size === 0"
+              @click="applyDomainReview"
+            >
+              {{ isApplyingDomainReview ? '반영 중...' : '선택한 변경 반영' }}
+            </button>
+            <p v-if="domainReviewError" class="mt-1 text-[11px] text-red-400">{{ domainReviewError }}</p>
+          </section>
+        </div>
+        <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <p v-if="domainUseError" class="text-[11px] text-red-400">{{ domainUseError }}</p>
+          <p v-else class="text-[11px] text-ink-faint">
+            {{ selectedFilename ? '' : '문서를 먼저 선택하면 이 도메인 스키마를 적용할 수 있습니다' }}
+          </p>
+          <button
+            type="button"
+            class="btn-primary"
+            :disabled="!selectedFilename || !selectedDomain || isUsingDomainSchema"
+            @click="useDomainSchemaForCurrentFile"
+          >
+            {{ isUsingDomainSchema ? '적용 중...' : '현재 문서에 이 도메인 스키마 적용' }}
+          </button>
         </div>
       </div>
     </div>

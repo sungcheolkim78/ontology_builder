@@ -13,24 +13,36 @@ from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
     activate_version,
+    apply_domain_schema_changes,
     apply_evolution,
+    converge_domain_schema,
     create_schema_version,
     delete_version,
     discover_ontology,
+    domain_calibration_stems,
+    domain_convergence_history,
     embed_graph,
+    evaluate_domain_schema,
     extract_graph,
+    find_redundant_type_pairs,
     generate_schema,
     get_active_version,
+    list_domains,
     list_schema_stems,
     list_versions,
     load_discovery,
     load_document_manifest,
+    load_domain_pending_review,
+    load_domain_schema,
     load_graph,
     load_schema,
+    measure_schema_stability,
     propose_evolution,
+    run_domain_convergence,
     save_discovery,
     save_document_manifest,
     save_graph,
+    use_domain_schema,
     validate_ontology,
 )
 from app.parser import DATA_DIR, parse_to_markdown_file
@@ -380,6 +392,154 @@ def evolve_apply(filename: str, request: EvolveApplyRequest):
         raise HTTPException(status_code=404, detail="schema not found")
     try:
         result = apply_evolution(stem, request.changes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+class DomainConvergeRequest(BaseModel):
+    # Calibration set, in the order each document should be folded into the
+    # schema. filenames[0] seeds the schema (via generate_schema) unless
+    # seed_schema is given, in which case every filename is folded in.
+    filenames: list[str]
+    seed_schema: dict | None = None
+    document_type: str = "general"
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/domain-schema/converge")
+def converge_domain(request: DomainConvergeRequest):
+    if not request.filenames:
+        raise HTTPException(status_code=400, detail="filenames must not be empty")
+    docs = []
+    for filename in request.filenames:
+        doc_path = _document_path(filename)
+        if not doc_path.is_file():
+            raise HTTPException(status_code=404, detail=f"document not found: {filename}")
+        docs.append({"stem": _stem(filename), "text": doc_path.read_text()})
+
+    seed_schema = request.seed_schema
+    remaining = docs
+    try:
+        if seed_schema is None:
+            seed_schema = generate_schema(
+                docs[0]["text"], document_type=request.document_type, max_chars=request.max_chars
+            )
+            remaining = docs[1:]
+        result = converge_domain_schema(remaining, seed_schema, max_chars=request.max_chars)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Free to compute -- evaluate_domain_schema only reads the iteration log
+    # converge_domain_schema already produced, no extra LLM/embedding calls.
+    evaluation = evaluate_domain_schema(result["schema"], result["iterations"])
+    return {"seed_schema": seed_schema, "evaluation": evaluation, **result}
+
+
+class RedundantTypesRequest(BaseModel):
+    node_types: list[dict]
+    edge_types: list[dict]
+    threshold: float = 0.9
+
+
+@app.post("/api/ontology/domain-schema/redundant-types")
+def redundant_types(request: RedundantTypesRequest):
+    schema = {"node_types": request.node_types, "edge_types": request.edge_types}
+    pairs = find_redundant_type_pairs(schema, threshold=request.threshold)
+    return {"pairs": pairs}
+
+
+@app.get("/api/ontology/domain-schemas")
+def list_domain_schemas():
+    return {"domains": list_domains()}
+
+
+@app.get("/api/ontology/domain-schema/{domain}")
+def get_domain_schema(domain: str):
+    schema = load_domain_schema(domain)
+    if schema is None:
+        raise HTTPException(status_code=404, detail="domain schema not found")
+    return {
+        **schema,
+        "calibration_stems": domain_calibration_stems(domain),
+        "history": domain_convergence_history(domain),
+        "pending_review": load_domain_pending_review(domain),
+    }
+
+
+class DomainRunConvergeRequest(BaseModel):
+    # Documents to fold in this run, in order. If the domain has no stored
+    # schema yet, filenames[0] seeds it (via generate_schema); otherwise the
+    # domain's existing stored schema is the seed and every filename here is
+    # folded in on top of it.
+    filenames: list[str]
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/domain-schema/{domain}/converge")
+def converge_domain_persisted(domain: str, request: DomainRunConvergeRequest):
+    if not request.filenames:
+        raise HTTPException(status_code=400, detail="filenames must not be empty")
+    docs = []
+    for filename in request.filenames:
+        doc_path = _document_path(filename)
+        if not doc_path.is_file():
+            raise HTTPException(status_code=404, detail=f"document not found: {filename}")
+        docs.append({"stem": _stem(filename), "text": doc_path.read_text()})
+    try:
+        result = run_domain_convergence(domain, docs, max_chars=request.max_chars)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    evaluation = evaluate_domain_schema(result["schema"], result["iterations"])
+    return {**result, "evaluation": evaluation}
+
+
+class DomainPendingReviewApplyRequest(BaseModel):
+    changes: list[dict]
+
+
+@app.post("/api/ontology/domain-schema/{domain}/pending-review/apply")
+def apply_domain_pending_review(domain: str, request: DomainPendingReviewApplyRequest):
+    try:
+        result = apply_domain_schema_changes(domain, request.changes)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
+
+
+class UseDomainSchemaRequest(BaseModel):
+    domain: str
+    document_type: str = "general"
+
+
+@app.post("/api/ontology/{filename}/schema/use-domain")
+def use_domain_schema_endpoint(filename: str, request: UseDomainSchemaRequest):
+    stem = _stem(filename)
+    try:
+        version = use_domain_schema(stem, request.domain, document_type=request.document_type)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    schema = load_schema(stem, version)
+    return {**schema, "version": version}
+
+
+class StabilityRequest(BaseModel):
+    document_type: str = "general"
+    runs: int = 3
+    max_chars: int | None = None
+
+
+@app.post("/api/ontology/{filename}/schema/stability")
+def schema_stability(filename: str, request: StabilityRequest | None = None):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    document_type = request.document_type if request else "general"
+    runs = request.runs if request else 3
+    max_chars = request.max_chars if request else None
+    try:
+        result = measure_schema_stability(
+            doc_path.read_text(), document_type=document_type, runs=runs, max_chars=max_chars
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result
