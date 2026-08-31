@@ -10,4 +10,6 @@ def test_get_config_returns_configured_model(monkeypatch):
     response = client.get("/api/config")
 
     assert response.status_code == 200
-    assert response.json() == {"model": "openai/gpt-4o-mini"}
+    body = response.json()
+    assert body["model"] == "openai/gpt-4o-mini"
+    assert body["auth_required"] is False

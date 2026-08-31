@@ -4,10 +4,11 @@ from pathlib import Path
 import anydoc
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app import graphdb
+from app.auth import APP_PASSWORD, is_valid_token, issue_token
 from app.chat import get_chat_model, get_model_name, to_langchain_messages
 from app.graphrag import search_graph
 from app.ontology import (
@@ -69,6 +70,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Only active when APP_PASSWORD is set (e.g. the Render deploy) -- unset
+# locally and in every test, so this is a no-op there. Must stay registered
+# after CORSMiddleware above so CORS remains the outermost middleware and
+# still intercepts preflight OPTIONS requests before this ever runs.
+_UNAUTHENTICATED_PATHS = {"/health", "/api/login", "/api/config"}
+
+
+@app.middleware("http")
+async def require_auth(request, call_next):
+    if APP_PASSWORD and request.url.path not in _UNAUTHENTICATED_PATHS:
+        token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        if not is_valid_token(token):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+    return await call_next(request)
+
 
 @app.get("/health")
 def health():
@@ -82,7 +98,19 @@ def hello():
 
 @app.get("/api/config")
 def get_config():
-    return {"model": get_model_name()}
+    return {"model": get_model_name(), "auth_required": bool(APP_PASSWORD)}
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(request: LoginRequest):
+    token = issue_token(request.password)
+    if token is None:
+        raise HTTPException(status_code=401, detail="invalid password")
+    return {"token": token}
 
 
 class ChatMessage(BaseModel):
