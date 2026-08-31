@@ -1,10 +1,22 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ChatPanel from './components/ChatPanel.vue'
 import DocumentPreview from './components/DocumentPreview.vue'
+import LoginScreen from './components/LoginScreen.vue'
 import OntologyGraph from './components/OntologyGraph.vue'
 import SchemaGraphPreview from './components/SchemaGraphPreview.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
+import { apiFetch, authState } from './utils/api'
+
+const authRequired = ref(false)
+const configLoaded = ref(false)
+
+onMounted(async () => {
+  const response = await apiFetch('/api/config')
+  const data = await response.json()
+  authRequired.value = data.auth_required
+  configLoaded.value = true
+})
 
 const MIN_SPLIT = 20
 const MAX_SPLIT = 80
@@ -126,7 +138,9 @@ const rowResizerStyle = computed(() => ({ top: `${rowPercent.value}%` }))
 </script>
 
 <template>
-  <div class="flex h-screen w-screen flex-col overflow-hidden bg-canvas text-ink">
+  <div v-if="!configLoaded"></div>
+  <LoginScreen v-else-if="authRequired && !authState.token" />
+  <div v-else class="flex h-screen w-screen flex-col overflow-hidden bg-canvas text-ink">
     <header
       class="flex h-11 flex-shrink-0 items-center gap-3 border-b border-border bg-surface-raised px-3"
     >
