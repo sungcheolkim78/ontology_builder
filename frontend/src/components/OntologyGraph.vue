@@ -379,6 +379,142 @@ async function fitSoon() {
   graphRef.value?.fitToContents()
 }
 
+// --- export as SVG / JPG ---
+// Matches tailwind.config.js's `canvas` token -- the graph viewport itself
+// has no background of its own (it shows the dark page background through),
+// so a plain serialization of the live SVG would export transparent/white
+// instead of matching what's actually on screen.
+const GRAPH_EXPORT_BACKGROUND = '#0b0d12'
+
+// v-network-graph styles nodes/edges/labels per-instance via the `configs`
+// object above (colors, widths, font sizes), which it applies as inline SVG
+// attributes -- but its own bundled stylesheet (imported as
+// 'v-network-graph/lib/style.css') still carries some baseline rules (e.g.
+// marker/line defaults) under `.v-ng-*` classes. Those classes exist only in
+// the live page's stylesheets; a cloned SVG serialized on its own and opened
+// standalone (or drawn into an off-page <img> for the JPG path below) has no
+// access to them. Copying just the `.v-ng-*` rules into an inline <style>
+// inside the exported SVG is what keeps the exported file looking the same
+// as what's on screen, regardless of whether this rule ended up in the
+// document via Vite's dev-time <style> injection or a bundled prod CSS file.
+function collectGraphCss() {
+  let css = ''
+  for (const sheet of document.styleSheets) {
+    let rules
+    try {
+      rules = sheet.cssRules
+    } catch (err) {
+      continue // inaccessible (e.g. cross-origin) stylesheet -- nothing we can copy from it
+    }
+    if (!rules) continue
+    for (const rule of rules) {
+      if (rule.selectorText?.includes('v-ng')) {
+        css += rule.cssText + '\n'
+      }
+    }
+  }
+  return css
+}
+
+// Builds a standalone, self-contained copy of the currently rendered graph
+// SVG (current pan/zoom framing included, since that's already baked into
+// the live element's own viewBox) -- shared by both exportSvg and
+// exportJpg, since the JPG path is just "render this same SVG into a
+// canvas".
+function buildExportSvg() {
+  const root = graphRef.value?.$el
+  const svg = root && (root.tagName === 'svg' ? root : root.querySelector('svg'))
+  if (!svg) return null
+
+  const rect = svg.getBoundingClientRect()
+  const width = Math.round(rect.width)
+  const height = Math.round(rect.height)
+  const viewBox = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
+  const [vx, vy, vw, vh] = viewBox.split(/\s+/).map(Number)
+
+  const clone = svg.cloneNode(true)
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+  clone.setAttribute('width', String(width))
+  clone.setAttribute('height', String(height))
+  clone.setAttribute('viewBox', viewBox)
+
+  const styleCss = collectGraphCss()
+  if (styleCss) {
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+    style.textContent = styleCss
+    clone.insertBefore(style, clone.firstChild)
+  }
+
+  const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  background.setAttribute('x', String(vx))
+  background.setAttribute('y', String(vy))
+  background.setAttribute('width', String(vw))
+  background.setAttribute('height', String(vh))
+  background.setAttribute('fill', GRAPH_EXPORT_BACKGROUND)
+  clone.insertBefore(background, clone.firstChild)
+
+  const markup = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`
+  return { markup, width, height }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+const exportBaseName = computed(() => {
+  const stem = (props.file?.filename ?? 'ontology-graph').replace(/\.[^./]+$/, '')
+  return `${stem}_${displayMode.value === 'schema' ? 'schema' : 'graph'}`
+})
+
+const exportError = ref('')
+
+function exportSvg() {
+  exportError.value = ''
+  const built = buildExportSvg()
+  if (!built) return
+  const blob = new Blob([built.markup], { type: 'image/svg+xml;charset=utf-8' })
+  downloadBlob(blob, `${exportBaseName.value}.svg`)
+}
+
+async function exportJpg() {
+  exportError.value = ''
+  const built = buildExportSvg()
+  if (!built) return
+  const url = URL.createObjectURL(new Blob([built.markup], { type: 'image/svg+xml;charset=utf-8' }))
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('SVG를 이미지로 변환하지 못했습니다'))
+      img.src = url
+    })
+    // Rendered at 2x the on-screen size for a sharper export than a raw
+    // screen-resolution capture would give.
+    const scale = 2
+    const canvas = document.createElement('canvas')
+    canvas.width = built.width * scale
+    canvas.height = built.height * scale
+    const ctx = canvas.getContext('2d')
+    ctx.scale(scale, scale)
+    ctx.drawImage(image, 0, 0, built.width, built.height)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+    if (!blob) throw new Error('JPG 변환에 실패했습니다')
+    downloadBlob(blob, `${exportBaseName.value}.jpg`)
+  } catch (err) {
+    exportError.value = '내보내기 실패: ' + err.message
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 // --- data loading ---
 async function loadSchemaStatus(file) {
   if (!file) {
@@ -508,6 +644,8 @@ watch(
             그래프 보기
           </button>
           <button v-if="displayMode !== 'none'" class="btn" @click="resetView">리셋</button>
+          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportSvg">SVG로 내보내기</button>
+          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportJpg">JPG로 내보내기</button>
           <label class="ml-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted">
             <input type="checkbox" v-model="showNodeLabels" class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent" />
             Node Label
@@ -517,6 +655,7 @@ watch(
             Edge Label
           </label>
         </div>
+        <p v-if="exportError" class="flex-shrink-0 text-xs text-red-400">{{ exportError }}</p>
         <p v-if="error" class="flex-shrink-0 text-xs text-red-400">{{ error }}</p>
         <p v-if="displayMode === 'none' && !error" class="flex-shrink-0 text-xs text-ink-faint">
           스키마를 생성하거나 라이브러리에서 선택하세요
