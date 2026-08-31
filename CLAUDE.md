@@ -22,7 +22,32 @@ podman-compose up --build -d
 Requires a running `podman machine` and `backend/.env` with a real
 `OPENROUTER_API_KEY` (copy `backend/.env.example`). Frontend at
 `localhost:5173`, backend at `localhost:8000`; the frontend dev server
-proxies `/api` and `/health` to the backend container.
+proxies `/api` and `/health` to the backend container. Ladybug Explorer (a
+GUI for browsing `backend/data/graph/graph.ladybugdb` directly via Cypher)
+is at `localhost:8001`, running in `MODE=READ_ONLY` so it can stay up
+alongside the backend without either side able to corrupt the other via a
+write. Its image tag in `podman-compose.yml` must stay in sync with the
+`ladybug` version pinned in `backend/requirements.txt` -- the explorer and
+the embedded library have to agree on storage format to open the same file.
+If graph queries in Explorer start failing oddly with both it and the
+backend running, that's the same WAL-corruption failure mode as "LadybugDB
+초기화" in the UI, not a new bug -- reset via that button.
+
+Explorer only reads the database file once, when its container starts --
+verified experimentally that it never picks up later writes, not on
+re-query and not even via its own in-app "Apply" (reconnect to the same
+path) button; only a fresh container start re-reads the file. So whenever
+you want to see the latest graph, restart it: `podman restart
+ontology_builder_ladybug-explorer_1`. That restart only shows everything
+written so far if the main `.ladybugdb` file itself is up to date --
+writes otherwise sit only in the `.wal` file until something checkpoints,
+and (verified experimentally) an explicit `CHECKPOINT;` on a connection
+that then stays open does *not* do this; only actually closing the
+connection/database does. `graphdb.py`'s `write_graph`/`update_node_embeddings`
+call `reset_connection()` right after every `COMMIT` specifically to force
+that close-triggered checkpoint (the next call transparently reopens it),
+so the main file is always current and an Explorer restart always shows
+every write made so far.
 
 **Known gotcha (podman on macOS, virtiofs):** bind mounts and Vite's file
 watcher both go stale under this setup — a file edited on the host can

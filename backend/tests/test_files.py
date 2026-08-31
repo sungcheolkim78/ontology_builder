@@ -86,9 +86,14 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "report_raw.md").write_text("content")
     save_document_manifest("report_raw", "report.docx")
-    schema_dir = GRAPH_DIR / "report_raw"
-    schema_dir.mkdir(parents=True, exist_ok=True)
-    (schema_dir / "schema.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
+    d = GRAPH_DIR / "report_raw"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "schema_v1.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
+    (d / "versions.json").write_text(
+        json.dumps(
+            {"active_version": 1, "versions": [{"version": 1, "document_type": "general", "created_at": None}]}
+        )
+    )
     client = TestClient(app)
 
     response = client.get("/api/documents")
@@ -156,10 +161,15 @@ def test_list_files_excludes_ladybugdb_files(monkeypatch):
     # neither should ever show up as a "document" here.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "doc_raw.md").write_text("# Doc\nAlice works at Acme.")
-    schema_dir = GRAPH_DIR / "doc_raw"
-    schema_dir.mkdir(parents=True)
+    d = GRAPH_DIR / "doc_raw"
+    d.mkdir(parents=True)
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    (schema_dir / "schema.json").write_text(json.dumps(schema))
+    (d / "schema_v1.json").write_text(json.dumps(schema))
+    (d / "versions.json").write_text(
+        json.dumps(
+            {"active_version": 1, "versions": [{"version": 1, "document_type": "general", "created_at": None}]}
+        )
+    )
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     monkeypatch.setattr(
         "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))

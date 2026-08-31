@@ -16,6 +16,9 @@ backups/
 # Playwright MCP tool output (ad-hoc test screenshots/snapshots)
 .playwright-mcp/
 
+# Subagent-driven-development scratch workspaces (ledgers, briefs, review packages)
+.superpowers/
+
 # C extensions
 *.so
 
@@ -229,3 +232,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.DS_Store

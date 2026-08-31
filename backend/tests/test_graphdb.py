@@ -638,3 +638,91 @@ def test_expand_hops_nonzero_hops_on_zero_rel_table_database_returns_seed():
 
     assert {n["id"] for n in result_nodes} == {"n1"}
     assert edges == []
+
+
+def test_write_graph_scopes_by_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+    graphdb.write_graph(
+        "doc_a",
+        [{"id": "n1", "label": "Version 2 Node", "type": "Person"}],
+        [],
+        version=2,
+    )
+
+    loaded_v1 = graphdb.load_graph("doc_a", version=1)
+    loaded_v2 = graphdb.load_graph("doc_a", version=2)
+
+    assert {n["label"] for n in loaded_v1["nodes"]} == {"Ada Lovelace", "Analytical Engine"}
+    assert {n["label"] for n in loaded_v2["nodes"]} == {"Version 2 Node"}
+
+
+def test_has_graph_is_scoped_by_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+
+    assert graphdb.has_graph("doc_a", version=1) is True
+    assert graphdb.has_graph("doc_a", version=2) is False
+
+
+def test_node_from_row_uses_original_id_column():
+    row = {"id": "doc_a::v1::n1", "original_id": "n1", "label": "Ada Lovelace", "type": "Person", "detail": None}
+    assert graphdb._node_from_row(row) == {"id": "n1", "label": "Ada Lovelace", "type": "Person"}
+
+
+def test_edge_from_row_uses_source_target_as_is():
+    row = {"source": "n1", "target": "n2", "type": "WORKED_ON", "detail": None}
+    assert graphdb._edge_from_row(row) == {"source": "n1", "target": "n2", "type": "WORKED_ON"}
+
+
+def test_find_matching_edges_and_expand_hops_resolve_legacy_two_part_ids_via_original_id():
+    # Regression test for the bug found during implementation planning:
+    # a migrated (pre-versioning) row keeps its legacy 2-part PRIMARY KEY
+    # id ("doc_a::n1", no version segment) forever. find_matching_edges
+    # and expand_hops must resolve bare ids via the original_id column,
+    # never by reconstructing a 3-part "doc_a::v1::n1" string and
+    # matching it against id -- that reconstruction would never match a
+    # legacy row like this one.
+    conn = graphdb._get_connection()
+    conn.execute(
+        f"CREATE NODE TABLE Person(id STRING PRIMARY KEY, original_id STRING, "
+        f"label STRING, detail STRING, source_document STRING, version INT64, "
+        f"embedding FLOAT[{EMBEDDING_DIM}])"
+    )
+    conn.execute(
+        "CREATE REL TABLE GROUP WORKED_ON(FROM Person TO Person, type STRING, "
+        "detail STRING, source_document STRING, version INT64)"
+    )
+    conn.execute(
+        "CREATE (:Person {id: 'doc_a::n1', original_id: 'n1', label: 'Ada Lovelace', "
+        "detail: '', source_document: 'doc_a', version: 1})"
+    )
+    conn.execute(
+        "CREATE (:Person {id: 'doc_a::n2', original_id: 'n2', label: 'Charles Babbage', "
+        "detail: '', source_document: 'doc_a', version: 1})"
+    )
+    conn.execute(
+        "MATCH (a:Person {id: 'doc_a::n1'}), (b:Person {id: 'doc_a::n2'}) "
+        "CREATE (a)-[:WORKED_ON {type: 'WORKED_ON', detail: '', "
+        "source_document: 'doc_a', version: 1}]->(b)"
+    )
+    graphdb.reset_connection()
+
+    matched_edges = graphdb.find_matching_edges("doc_a", ["WORKED_ON"], {"n1"}, version=1)
+    assert matched_edges == [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
+
+    nodes, edges = graphdb.expand_hops("doc_a", {"n1"}, hops=1, version=1)
+    assert {n["id"] for n in nodes} == {"n1", "n2"}
+    assert edges == [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
+
+
+def test_delete_version_data_removes_only_that_version():
+    graphdb.write_graph("doc_a", NODES, EDGES, version=1)
+    graphdb.write_graph(
+        "doc_a", [{"id": "n1", "label": "V2 Node", "type": "Person"}], [], version=2
+    )
+
+    graphdb.delete_version_data("doc_a", version=1)
+
+    assert graphdb.has_graph("doc_a", version=1) is False
+    assert graphdb.has_graph("doc_a", version=2) is True
+    loaded_v2 = graphdb.load_graph("doc_a", version=2)
+    assert {n["label"] for n in loaded_v2["nodes"]} == {"V2 Node"}
