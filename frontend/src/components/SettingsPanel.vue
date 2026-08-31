@@ -37,6 +37,7 @@ const graphRagHops = ref(1)
 const maxSchemaChars = ref(300000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
+const showRunSettings = ref(false)
 
 const currentFile = computed(() => files.value.find((f) => f.filename === props.selectedFilename))
 
@@ -408,71 +409,19 @@ function toggleEdgeType(type) {
 
       <div class="mb-4 border-t border-border pt-3.5">
         <h2 class="section-label">실행 설정</h2>
-        <div class="space-y-3">
-          <div>
-            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
-            <p class="inline-block rounded border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
-              {{ model }}
-            </p>
-          </div>
-
-          <div>
-            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">채팅 표시 설정</h3>
-            <label class="flex items-center gap-2 text-xs text-ink">
-              <input
-                type="checkbox"
-                :checked="renderMarkdown"
-                @change="onMarkdownToggle"
-                class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent"
-              />
-              마크다운 HTML로 렌더링
-            </label>
-          </div>
-
-          <div>
-            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">GraphRAG 설정</h3>
-            <label class="flex items-center gap-2 text-xs text-ink">
-              검색 hop 수
-              <input
-                type="number"
-                min="1"
-                max="5"
-                :value="graphRagHops"
-                @change="onHopsInput"
-                class="field w-14"
-              />
-            </label>
-          </div>
-
-          <div>
-            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">스키마 생성 설정</h3>
-            <label class="flex items-center gap-2 text-xs text-ink">
-              최대 문자수
-              <input
-                type="number"
-                min="1"
-                step="1000"
-                :value="maxSchemaChars"
-                @change="onMaxSchemaCharsInput"
-                class="field w-24"
-              />
-            </label>
-            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
-              이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.
-            </p>
-          </div>
-
-          <div>
-            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">데이터베이스 관리</h3>
-            <button type="button" class="btn-danger w-full" :disabled="isResettingDb" @click="resetDatabase">
-              {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
-            </button>
-            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
-              WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.
-            </p>
-            <p v-if="resetDbError" class="mt-1 text-[11px] text-red-400">{{ resetDbError }}</p>
-          </div>
-        </div>
+        <button type="button" class="btn w-full" @click="showRunSettings = true">
+          <svg class="h-3.5 w-3.5 text-ink-faint" viewBox="0 0 20 20" fill="currentColor">
+            <path
+              fill-rule="evenodd"
+              d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 0 1-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 0 1 .947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 0 1 2.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 0 1 2.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 0 1 .947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 0 1-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 0 1-2.287-.947ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+              clip-rule="evenodd"
+            />
+          </svg>
+          실행 설정
+        </button>
+        <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+          LLM 모델, 채팅/GraphRAG 옵션, DB 관리 설정을 확인·변경합니다.
+        </p>
       </div>
 
       <div class="border-t border-border pt-3.5">
@@ -600,6 +549,84 @@ function toggleEdgeType(type) {
             <p v-if="isUsingSchema" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
             <p v-if="schemaUseError" class="mt-1 text-[11px] text-red-400">{{ schemaUseError }}</p>
           </section>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showRunSettings"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showRunSettings = false"
+    >
+      <div class="flex max-h-[80vh] w-[420px] max-w-[90vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">실행 설정</h2>
+          <button type="button" class="btn" @click="showRunSettings = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-4 overflow-y-auto p-4">
+          <div>
+            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
+            <p class="inline-block rounded border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
+              {{ model }}
+            </p>
+          </div>
+
+          <div>
+            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">채팅 표시 설정</h3>
+            <label class="flex items-center gap-2 text-xs text-ink">
+              <input
+                type="checkbox"
+                :checked="renderMarkdown"
+                @change="onMarkdownToggle"
+                class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent"
+              />
+              마크다운 HTML로 렌더링
+            </label>
+          </div>
+
+          <div>
+            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">GraphRAG 설정</h3>
+            <label class="flex items-center gap-2 text-xs text-ink">
+              검색 hop 수
+              <input
+                type="number"
+                min="1"
+                max="5"
+                :value="graphRagHops"
+                @change="onHopsInput"
+                class="field w-14"
+              />
+            </label>
+          </div>
+
+          <div>
+            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">스키마 생성 설정</h3>
+            <label class="flex items-center gap-2 text-xs text-ink">
+              최대 문자수
+              <input
+                type="number"
+                min="1"
+                step="1000"
+                :value="maxSchemaChars"
+                @change="onMaxSchemaCharsInput"
+                class="field w-24"
+              />
+            </label>
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              이 값을 넘는 문서는 스키마 생성 시 오류가 발생합니다. 필요시 늘리세요.
+            </p>
+          </div>
+
+          <div>
+            <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">데이터베이스 관리</h3>
+            <button type="button" class="btn-danger w-full" :disabled="isResettingDb" @click="resetDatabase">
+              {{ isResettingDb ? '초기화 중...' : 'LadybugDB 초기화' }}
+            </button>
+            <p class="mt-1 text-[11px] leading-snug text-ink-faint">
+              WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.
+            </p>
+            <p v-if="resetDbError" class="mt-1 text-[11px] text-red-400">{{ resetDbError }}</p>
+          </div>
         </div>
       </div>
     </div>
