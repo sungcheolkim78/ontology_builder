@@ -529,14 +529,14 @@ watch(() => props.schemaVersion, () => {
 const modelGroups = computed(() => {
   const groups = []
   const byProvider = new Map()
-  for (const id of modelCatalog.value) {
-    const provider = id.split('/')[0]
+  for (const m of modelCatalog.value) {
+    const provider = m.id.split('/')[0]
     if (!byProvider.has(provider)) {
       const models = []
       byProvider.set(provider, models)
       groups.push({ provider, models })
     }
-    byProvider.get(provider).push(id)
+    byProvider.get(provider).push(m.id)
   }
   return groups
 })

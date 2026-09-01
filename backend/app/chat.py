@@ -14,21 +14,19 @@ DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 # Curated via OpenRouter's /api/v1/models listing (verified 2026-09): one
 # Google, two each of OpenAI / Anthropic / GLM / DeepSeek, all large-context.
+# max_tokens is each model's true max_completion_tokens from the same listing --
+# providers reject a requested max_tokens above this per-model cap.
 MODEL_CATALOG = [
-    "google/gemini-3.7-flash",
-    "openai/gpt-5.5",
-    "openai/gpt-5.4-mini",
-    "anthropic/claude-opus-5",
-    "anthropic/claude-sonnet-5",
-    "z-ai/glm-5.3",
-    "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
-    "deepseek/deepseek-v4-flash",
+    {"id": "google/gemini-3.7-flash", "max_tokens": 65_536},
+    {"id": "openai/gpt-5.5", "max_tokens": 128_000},
+    {"id": "openai/gpt-5.4-mini", "max_tokens": 128_000},
+    {"id": "anthropic/claude-opus-5", "max_tokens": 128_000},
+    {"id": "anthropic/claude-sonnet-5", "max_tokens": 128_000},
+    {"id": "z-ai/glm-5.3", "max_tokens": 131_072},
+    {"id": "z-ai/glm-5.2", "max_tokens": 262_144},
+    {"id": "deepseek/deepseek-v4-pro", "max_tokens": 393_216},
+    {"id": "deepseek/deepseek-v4-flash", "max_tokens": 384_000},
 ]
-
-# 1M matches modern frontier models' default context window, so long schema/extraction
-# outputs aren't truncated by a small API-side default max_tokens.
-MAX_TOKENS = 1_000_000
 
 # Model picked at runtime from the settings UI; None falls back to OPENROUTER_MODEL.
 _selected_model: str | None = None
@@ -43,12 +41,24 @@ def set_model_name(model: str | None) -> None:
     _selected_model = model
 
 
+def get_model_max_tokens() -> int | None:
+    """Output-token cap for the active model, or None when uncataloged
+    (custom OPENROUTER_MODEL) -- sending no cap there matches the provider
+    default instead of guessing a limit that may be rejected."""
+    catalog = {m["id"]: m["max_tokens"] for m in MODEL_CATALOG}
+    return catalog.get(get_model_name())
+
+
 def get_chat_model():
+    kwargs = {}
+    max_tokens = get_model_max_tokens()
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     return ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
         model=get_model_name(),
-        max_tokens=MAX_TOKENS,
+        **kwargs,
     )
 
 
