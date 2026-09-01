@@ -210,23 +210,41 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
     )
 
     existing = _existing_tables(conn)
+    # LadybugDB's catalog (and Cypher label resolution) treats table names
+    # case-insensitively -- verified experimentally: CREATE NODE TABLE FOO
+    # after CREATE NODE TABLE foo raises "already exists in catalog", while
+    # MATCH (n:FOO) still finds rows created under label foo. LLM-generated
+    # type names from two different documents can name "the same" type with
+    # different casing (e.g. "worked_on" vs "WORKED_ON"), so existence must
+    # be checked case-insensitively too, or a case-only difference looks
+    # like a new type and crashes the CREATE below as a duplicate. The same
+    # applies to the FROM/TO pair check just below (`_existing_pairs`) --
+    # `show_connection` also resolves names case-insensitively, so an
+    # ALTER TABLE ADD FROM/TO for a pair that already exists under
+    # different casing raises its own "already exists" error instead of
+    # correctly recognizing the pair as already registered.
+    existing_lower = {name.lower() for name in existing}
     for t in node_types:
-        if t not in existing:
+        if t.lower() not in existing_lower:
             conn.execute(
                 f"CREATE NODE TABLE {t}(id STRING PRIMARY KEY, original_id STRING, "
                 f"label STRING, detail STRING, source_document STRING, version INT64, "
                 f"embedding FLOAT[{EMBEDDING_DIM}])"
             )
             existing[t] = "NODE"
+            existing_lower.add(t.lower())
 
     for etype, src, dst in edge_specs:
-        if etype not in existing:
+        if etype.lower() not in existing_lower:
             conn.execute(
                 f"CREATE REL TABLE GROUP {etype}(FROM {src} TO {dst}, "
                 f"type STRING, detail STRING, source_document STRING, version INT64)"
             )
             existing[etype] = "REL"
-        elif (src, dst) not in _existing_pairs(conn, etype):
+            existing_lower.add(etype.lower())
+        elif (src.lower(), dst.lower()) not in {
+            (s.lower(), d.lower()) for s, d in _existing_pairs(conn, etype)
+        }:
             conn.execute(f"ALTER TABLE {etype} ADD FROM {src} TO {dst}")
 
     conn.execute("BEGIN TRANSACTION")

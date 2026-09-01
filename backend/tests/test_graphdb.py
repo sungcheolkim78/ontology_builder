@@ -726,3 +726,40 @@ def test_delete_version_data_removes_only_that_version():
     assert graphdb.has_graph("doc_a", version=2) is True
     loaded_v2 = graphdb.load_graph("doc_a", version=2)
     assert {n["label"] for n in loaded_v2["nodes"]} == {"V2 Node"}
+
+
+def test_write_graph_treats_type_names_as_case_insensitive_like_the_db_engine():
+    # Regression test: LadybugDB's catalog (and Cypher label resolution)
+    # treats table/type identifiers case-insensitively -- confirmed
+    # experimentally against a real database (CREATE NODE TABLE FOO after
+    # CREATE NODE TABLE foo raises "Binder exception: FOO already exists
+    # in catalog", while MATCH (n:FOO) correctly finds rows created under
+    # label foo). write_graph's own existence check (`t not in existing`)
+    # compared names with plain case-sensitive Python `in`, so a second
+    # document whose LLM-generated type name matched an existing one
+    # except for case (e.g. "WORKED_ON" vs "worked_on") incorrectly looked
+    # unregistered and triggered a duplicate CREATE, crashing the entire
+    # extraction with that same RuntimeError.
+    graphdb.write_graph(
+        "doc_a",
+        [
+            {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+            {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+        ],
+        [{"source": "n1", "target": "n2", "type": "worked_on"}],
+    )
+
+    # Second document reuses the same conceptual node/edge types but with
+    # different casing -- must not raise.
+    graphdb.write_graph(
+        "doc_b",
+        [
+            {"id": "n1", "label": "Grace Hopper", "type": "PERSON"},
+            {"id": "n2", "label": "COBOL", "type": "CONCEPT"},
+        ],
+        [{"source": "n1", "target": "n2", "type": "WORKED_ON"}],
+    )
+
+    loaded_b = graphdb.load_graph("doc_b")
+    assert {n["label"] for n in loaded_b["nodes"]} == {"Grace Hopper", "COBOL"}
+    assert loaded_b["edges"] == [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
