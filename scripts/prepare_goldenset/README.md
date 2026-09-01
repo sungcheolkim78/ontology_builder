@@ -57,8 +57,15 @@ python scripts/prepare_goldenset/prepare_goldenset.py ./documents \
 
 - `--output-dir`: 결과 폴더, 기본값 `./goldenset`
 - `--questions-per-document`: 문서당 질문 수, 기본값 `10`
+- `--question-context-chars`: 질문 생성에 전달할 최대 Markdown 문자 수, 기본값 `24000`.
+  큰 문서는 헤더별 내용을 유지하면서 이 범위로 결정론적으로 축약합니다. 답변 생성은
+  원문 전체를 사용해 근거 인용을 검증합니다.
 - `--no-recursive`: 입력 폴더 바로 아래의 Markdown만 처리
 - `--overwrite`: 기존 문서별 결과를 다시 생성
+- `--max-process-files`: 정렬된 Markdown 파일 중 최대 처리 개수. 생략하면 전체 파일을
+  처리합니다. `MAX_PROC_FILEN` Make 변수로도 지정할 수 있습니다.
+- `--log-file`: 전체 실행 로그를 기록할 단일 파일. 기본값은
+  `<output-dir>/prepare_goldenset.log`
 
 ## 결과
 
@@ -68,7 +75,8 @@ python scripts/prepare_goldenset/prepare_goldenset.py ./documents \
 goldenset/
 ├── guide/a.golden.json  # 문서별 질문, 답, 원자 사실, 근거 및 검증 결과
 ├── goldenset.jsonl      # 모든 QA를 한 줄당 한 항목으로 합친 파일
-└── manifest.json        # 모델, 생성 시각, 실패 및 경고 요약
+├── manifest.json        # 모델, 생성 시각, 실패 및 경고 요약
+└── prepare_goldenset.log # 문서별 처리 단계와 오류를 포함한 전체 실행 로그
 ```
 
 각 QA 항목은 다음 정보를 포함합니다.

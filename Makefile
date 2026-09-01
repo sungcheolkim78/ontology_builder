@@ -1,11 +1,16 @@
 PYTHON ?= backend/.venv/bin/python
-INPUT_DIR ?= docs
-OUTPUT_DIR ?= goldenset
+INPUT_DIR ?= data/raw/md
+OUTPUT_DIR ?= data/goldenset
 QUESTIONS_PER_DOCUMENT ?= 10
-MODEL ?=
+MODEL ?= z-ai/glm-5.3-flash
+QUESTION_CONTEXT_CHARS ?= 24000
+LOG_FILE ?=
+MAX_PROC_FILEN ?=
 
 GOLDENSET_SCRIPT := scripts/prepare_goldenset/prepare_goldenset.py
 MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
+LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
+MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
 .PHONY: help goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-test
 
@@ -28,15 +33,17 @@ help:
 	@echo ""
 	@echo "Optional variables:"
 	@echo "  OUTPUT_DIR=./goldenset QUESTIONS_PER_DOCUMENT=10 MODEL=openai/gpt-4o-mini"
+	@echo "  QUESTION_CONTEXT_CHARS=24000 LOG_FILE=./goldenset/run.log"
+	@echo "  MAX_PROC_FILEN=10"
 	@echo "  PYTHON=backend/.venv/bin/python"
 
 goldenset:
 	@test -n "$(INPUT_DIR)" || (echo "INPUT_DIR is required" >&2; exit 2)
-	$(PYTHON) $(GOLDENSET_SCRIPT) "$(INPUT_DIR)" --output-dir "$(OUTPUT_DIR)" --questions-per-document "$(QUESTIONS_PER_DOCUMENT)" $(MODEL_ARG)
+	$(PYTHON) $(GOLDENSET_SCRIPT) "$(INPUT_DIR)" --output-dir "$(OUTPUT_DIR)" --questions-per-document "$(QUESTIONS_PER_DOCUMENT)" --question-context-chars "$(QUESTION_CONTEXT_CHARS)" $(MODEL_ARG) $(LOG_ARG) $(MAX_FILES_ARG)
 
 goldenset-overwrite:
 	@test -n "$(INPUT_DIR)" || (echo "INPUT_DIR is required" >&2; exit 2)
-	$(PYTHON) $(GOLDENSET_SCRIPT) "$(INPUT_DIR)" --output-dir "$(OUTPUT_DIR)" --questions-per-document "$(QUESTIONS_PER_DOCUMENT)" $(MODEL_ARG) --overwrite
+	$(PYTHON) $(GOLDENSET_SCRIPT) "$(INPUT_DIR)" --output-dir "$(OUTPUT_DIR)" --questions-per-document "$(QUESTIONS_PER_DOCUMENT)" --question-context-chars "$(QUESTION_CONTEXT_CHARS)" $(MODEL_ARG) $(LOG_ARG) $(MAX_FILES_ARG) --overwrite
 
 goldenset-test:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -B -m pytest \

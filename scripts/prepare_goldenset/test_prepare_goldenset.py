@@ -1,4 +1,5 @@
 import importlib.util
+import logging
 from pathlib import Path
 
 
@@ -57,3 +58,36 @@ def test_validate_questions_assigns_stable_ids():
     }
     result = module.validate_questions(payload, 1)
     assert result[0]["id"] == "q001"
+
+
+def test_compact_document_for_questions_keeps_sections_within_budget():
+    document = "# First\n" + ("first fact " * 20) + "\n\n## Second\n" + ("second fact " * 20)
+
+    compacted = module.compact_document_for_questions(document, max_chars=120)
+
+    assert len(compacted) <= 120
+    assert "# First" in compacted
+    assert "## Second" in compacted
+    assert "[section content truncated]" in compacted
+
+
+def test_configure_logging_writes_all_messages_to_one_file(tmp_path):
+    log_path = tmp_path / "run.log"
+    logger = module.configure_logging(log_path)
+
+    logger.info("document started")
+    logger.warning("document warning")
+    for handler in logger.handlers:
+        handler.flush()
+
+    contents = log_path.read_text(encoding="utf-8")
+    assert "document started" in contents
+    assert "document warning" in contents
+    assert sum(isinstance(handler, logging.FileHandler) for handler in logger.handlers) == 1
+
+
+def test_limit_markdown_files_keeps_sorted_prefix():
+    files = [Path("a.md"), Path("b.md"), Path("c.md")]
+
+    assert module.limit_markdown_files(files, 2) == files[:2]
+    assert module.limit_markdown_files(files, None) == files
