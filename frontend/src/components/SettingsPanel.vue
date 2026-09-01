@@ -39,7 +39,7 @@ const resetDbError = ref('')
 const enabledTypes = ref(new Set(props.availableTypes))
 const enabledEdgeTypes = ref(new Set(props.availableEdgeTypes))
 const graphRagHops = ref(1)
-const maxSchemaChars = ref(300000)
+const maxSchemaChars = ref(1000000)
 const renderMarkdown = ref(true)
 const showFileExplorer = ref(false)
 const showRunSettings = ref(false)
@@ -419,7 +419,7 @@ function onHopsInput(event) {
 }
 
 function onMaxSchemaCharsInput(event) {
-  maxSchemaChars.value = Math.max(1, Number(event.target.value) || 300000)
+  maxSchemaChars.value = Math.max(1, Number(event.target.value) || 1000000)
 }
 
 function onMarkdownToggle(event) {

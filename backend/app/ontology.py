@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # blowing the context window or getting back truncated/malformed JSON (e.g. an
 # edge referencing a node that got cut off mid-response) instead of a clear,
 # immediate error.
-MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 300_000))
+MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 1_000_000))
 
 
 def _check_document_length(document_text: str, max_chars: int | None = None) -> None:
