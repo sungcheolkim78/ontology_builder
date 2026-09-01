@@ -22,6 +22,7 @@ def get_chat_model():
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
         model=get_model_name(),
+        max_tokens=1_000_000,
     )
 
 
