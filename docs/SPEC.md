@@ -309,17 +309,23 @@ an app that spends OpenRouter credits. Stateless, no session store:
 (constant-time compare) and, on success, returns
 `token = sha256(APP_PASSWORD)`. The frontend stores that token in
 `localStorage` and sends it as `Authorization: Bearer {token}` on every
-subsequent request; `require_auth`, an HTTP middleware registered
-right after `CORSMiddleware` (so CORS preflight `OPTIONS` requests are
-still handled first), recomputes the same hash and rejects any
-`/api/*` request without a match — except `/health`, `/api/login`, and
-`/api/config` itself, which must stay reachable pre-login. The gate is
-a no-op whenever `APP_PASSWORD` is unset (local dev, and every backend
-test — none of them set it): `/api/config`'s `auth_required` is
-`false`, `require_auth` never rejects anything, and the frontend never
-shows a login screen at all. Because the token is a fixed hash with no
-expiry, rotating `APP_PASSWORD` on Render immediately invalidates
-every previously-issued token at once.
+subsequent request; `require_auth`, an HTTP middleware, recomputes the
+same hash and rejects any `/api/*` request without a match — except
+`/health`, `/api/login`, and `/api/config` itself, which must stay
+reachable pre-login. **`OPTIONS` requests always bypass the gate
+regardless of path**, checked first in the middleware, before even
+looking at `APP_PASSWORD`: a CORS preflight request never carries the
+app's own `Authorization` header (browsers don't attach custom headers
+to preflight), and confirmed in production, requiring one here broke
+every real cross-origin call behind it — `OPTIONS /api/parse` came
+back 401, so the browser aborted the actual `POST` before ever sending
+it, breaking every file upload the moment `APP_PASSWORD` was set. The
+gate is a no-op whenever `APP_PASSWORD` is unset (local dev, and every
+backend test — none of them set it): `/api/config`'s `auth_required`
+is `false`, `require_auth` never rejects anything, and the frontend
+never shows a login screen at all. Because the token is a fixed hash
+with no expiry, rotating `APP_PASSWORD` on Render immediately
+invalidates every previously-issued token at once.
 
 ### Configuration
 

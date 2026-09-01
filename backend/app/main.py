@@ -71,15 +71,19 @@ app.add_middleware(
 )
 
 # Only active when APP_PASSWORD is set (e.g. the Render deploy) -- unset
-# locally and in every test, so this is a no-op there. Must stay registered
-# after CORSMiddleware above so CORS remains the outermost middleware and
-# still intercepts preflight OPTIONS requests before this ever runs.
+# locally and in every test, so this is a no-op there.
 _UNAUTHENTICATED_PATHS = {"/health", "/api/login", "/api/config"}
 
 
 @app.middleware("http")
 async def require_auth(request, call_next):
-    if APP_PASSWORD and request.url.path not in _UNAUTHENTICATED_PATHS:
+    # CORS preflight requests never carry the app's own Authorization header
+    # (browsers don't attach custom headers to them), and rejecting them here
+    # breaks every real cross-origin request behind it -- confirmed in
+    # production as OPTIONS /api/parse returning 401 the moment APP_PASSWORD
+    # was set, which silently killed the browser's actual POST before it was
+    # ever sent. OPTIONS always passes through untouched.
+    if request.method != "OPTIONS" and APP_PASSWORD and request.url.path not in _UNAUTHENTICATED_PATHS:
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         if not is_valid_token(token):
             return JSONResponse(status_code=401, content={"detail": "unauthorized"})

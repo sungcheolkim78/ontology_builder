@@ -47,3 +47,23 @@ def test_health_and_config_and_login_stay_open_when_app_password_set(monkeypatch
     assert client.get("/health").status_code == 200
     assert client.get("/api/config").status_code == 200
     assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
+
+
+def test_options_preflight_bypasses_auth_even_on_protected_routes(monkeypatch):
+    """Regression test: a CORS preflight OPTIONS request never carries the
+    app's own Authorization header, so requiring one here breaks every real
+    cross-origin request behind it -- observed in production as OPTIONS
+    /api/parse returning 401 the moment APP_PASSWORD was set."""
+    monkeypatch.setattr("app.auth.APP_PASSWORD", "hunter2")
+    monkeypatch.setattr("app.main.APP_PASSWORD", "hunter2")
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/parse",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code != 401
