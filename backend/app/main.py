@@ -9,7 +9,14 @@ from pydantic import BaseModel
 
 from app import graphdb
 from app.auth import APP_PASSWORD, is_valid_token, issue_token
-from app.chat import MAX_TOKENS, get_chat_model, get_model_name, to_langchain_messages
+from app.chat import (
+    MAX_TOKENS,
+    MODEL_CATALOG,
+    get_chat_model,
+    get_model_name,
+    set_model_name,
+    to_langchain_messages,
+)
 from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
@@ -104,9 +111,22 @@ def hello():
 def get_config():
     return {
         "model": get_model_name(),
+        "models": MODEL_CATALOG,
         "max_tokens": MAX_TOKENS,
         "auth_required": bool(APP_PASSWORD),
     }
+
+
+class SetModelRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/config/model")
+def set_model(request: SetModelRequest):
+    if request.model not in MODEL_CATALOG:
+        raise HTTPException(status_code=400, detail="unknown model")
+    set_model_name(request.model)
+    return {"model": get_model_name()}
 
 
 class LoginRequest(BaseModel):

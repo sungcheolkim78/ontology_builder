@@ -24,6 +24,10 @@ const emit = defineEmits([
 
 const model = ref('로딩 중...')
 const maxTokens = ref(null)
+const modelCatalog = ref([])
+const selectedModel = ref('')
+const isSettingModel = ref(false)
+const modelSetError = ref('')
 const isUploading = ref(false)
 const uploadError = ref('')
 const files = ref([])
@@ -504,6 +508,8 @@ onMounted(async () => {
     const data = await res.json()
     model.value = data.model
     maxTokens.value = data.max_tokens ?? null
+    modelCatalog.value = data.models ?? []
+    selectedModel.value = data.model
   } catch (err) {
     model.value = '알 수 없음'
   }
@@ -519,6 +525,46 @@ watch(() => props.schemaVersion, () => {
   loadSchemas()
   loadDocuments()
 })
+
+const modelGroups = computed(() => {
+  const groups = []
+  const byProvider = new Map()
+  for (const id of modelCatalog.value) {
+    const provider = id.split('/')[0]
+    if (!byProvider.has(provider)) {
+      const models = []
+      byProvider.set(provider, models)
+      groups.push({ provider, models })
+    }
+    byProvider.get(provider).push(id)
+  }
+  return groups
+})
+
+async function onModelChange() {
+  const previous = model.value
+  const next = selectedModel.value
+  if (next === previous) return
+  isSettingModel.value = true
+  modelSetError.value = ''
+  try {
+    const res = await apiFetch('/api/config/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: next }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    model.value = next
+  } catch (err) {
+    selectedModel.value = previous
+    modelSetError.value = '모델 변경 실패: ' + err.message
+  } finally {
+    isSettingModel.value = false
+  }
+}
 
 function selectFile(filename) {
   emit('file-selected', { filename, path: `data/${filename}` })
@@ -1122,13 +1168,20 @@ function toggleEdgeType(type) {
         <div class="flex-1 space-y-4 overflow-y-auto p-4">
           <div>
             <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
-            <p class="inline-block rounded border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
-              {{ model }}
-            </p>
-            <p
-              v-if="maxTokens"
-              class="mt-1 text-[11px] text-ink-muted"
+            <select
+              v-model="selectedModel"
+              class="field w-full"
+              :disabled="isSettingModel"
+              @change="onModelChange"
             >
+              <option v-if="!modelCatalog.length" :value="selectedModel">{{ selectedModel }}</option>
+              <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
+                <option v-for="id in group.models" :key="id" :value="id">{{ id }}</option>
+              </optgroup>
+            </select>
+            <p v-if="isSettingModel" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
+            <p v-if="modelSetError" class="mt-1 text-[11px] text-red-400">{{ modelSetError }}</p>
+            <p v-if="maxTokens" class="mt-1 text-[11px] text-ink-muted">
               max tokens: {{ maxTokens.toLocaleString('en-US') }}
             </p>
           </div>
