@@ -416,21 +416,55 @@ function collectGraphCss() {
   return css
 }
 
-// Builds a standalone, self-contained copy of the currently rendered graph
-// SVG (current pan/zoom framing included, since that's already baked into
-// the live element's own viewBox) -- shared by both exportSvg and
-// exportJpg, since the JPG path is just "render this same SVG into a
-// canvas".
+// Builds a standalone, self-contained copy of the graph SVG covering the
+// entire graph (calculates the bounding box of all visible nodes with padding,
+// rather than being limited to the current screen viewport / zoom level) --
+// shared by both exportSvg and exportJpg.
 function buildExportSvg() {
   const root = graphRef.value?.$el
   const svg = root && (root.tagName === 'svg' ? root : root.querySelector('svg'))
   if (!svg) return null
 
-  const rect = svg.getBoundingClientRect()
-  const width = Math.round(rect.width)
-  const height = Math.round(rect.height)
-  const viewBox = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
-  const [vx, vy, vw, vh] = viewBox.split(/\s+/).map(Number)
+  // Calculate full bounding box across all visible nodes so the exported image
+  // contains the entire graph regardless of current pan/zoom in the viewport.
+  const nodePositions = visibleNodes.value
+    .map((n) => layouts.value.nodes[n.id])
+    .filter((p) => p && typeof p.x === 'number' && typeof p.y === 'number')
+
+  let vx, vy, vw, vh
+  let width, height
+
+  if (nodePositions.length > 0) {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of nodePositions) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    const padding = 120
+    vx = Math.round(minX - padding)
+    vy = Math.round(minY - padding)
+    vw = Math.max(400, Math.round(maxX - minX + padding * 2))
+    vh = Math.max(300, Math.round(maxY - minY + padding * 2))
+    width = vw
+    height = vh
+  } else {
+    const rect = svg.getBoundingClientRect()
+    width = Math.round(rect.width) || 800
+    height = Math.round(rect.height) || 600
+    const viewBoxAttr = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
+    const parsed = viewBoxAttr.split(/\s+/).map(Number)
+    vx = parsed[0] ?? 0
+    vy = parsed[1] ?? 0
+    vw = parsed[2] ?? width
+    vh = parsed[3] ?? height
+  }
+
+  const viewBox = `${vx} ${vy} ${vw} ${vh}`
 
   const clone = svg.cloneNode(true)
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
@@ -496,16 +530,20 @@ async function exportJpg() {
       img.onerror = () => reject(new Error('SVG를 이미지로 변환하지 못했습니다'))
       img.src = url
     })
-    // Rendered at 2x the on-screen size for a sharper export than a raw
-    // screen-resolution capture would give.
-    const scale = 2
+    // Rendered at high resolution (at least 2x or min dimension 2400px)
+    // for a sharp, high-quality image showing the complete graph clearly.
+    const minDim = 2400
+    const longestSide = Math.max(built.width, built.height, 1)
+    const scale = Math.max(2, Math.min(4, minDim / longestSide))
+    const canvasWidth = Math.round(built.width * scale)
+    const canvasHeight = Math.round(built.height * scale)
+
     const canvas = document.createElement('canvas')
-    canvas.width = built.width * scale
-    canvas.height = built.height * scale
+    canvas.width = canvasWidth
+    canvas.height = canvasHeight
     const ctx = canvas.getContext('2d')
-    ctx.scale(scale, scale)
-    ctx.drawImage(image, 0, 0, built.width, built.height)
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+    ctx.drawImage(image, 0, 0, canvasWidth, canvasHeight)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95))
     if (!blob) throw new Error('JPG 변환에 실패했습니다')
     downloadBlob(blob, `${exportBaseName.value}.jpg`)
   } catch (err) {
