@@ -219,7 +219,11 @@ saves the result to `backend/data/{stem}_raw.md`, returns
 `{"filename": "...", "path": "data/..."}` (content is not included in
 the response — fetch it separately via `/api/files/{filename}`).
 `anydoc.ConvertError` and `ValueError` (e.g. unrecognized extension)
-both map to HTTP 400.
+both map to HTTP 400. A `.md` upload skips `anydoc` entirely (it only
+accepts formats it converts *into* markdown *from* — `md` isn't one of
+them, so the call would just fail) and is registered as-is: the
+uploaded bytes are UTF-8-decoded and written straight to
+`{stem}_raw.md`, with an invalid-UTF-8 upload also mapping to 400.
 
 **`GET /api/files`** — lists `backend/data/*` (excluding dotfiles like
 `.gitkeep`), sorted by modification time, newest first:
