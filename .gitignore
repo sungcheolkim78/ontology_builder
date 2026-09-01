@@ -22,6 +22,9 @@ backups/
 # Subagent-driven-development scratch workspaces (ledgers, briefs, review packages)
 .superpowers/
 
+# Agent tool session scratch state (run continuation files)
+.omo/
+
 # C extensions
 *.so
 
