@@ -43,7 +43,12 @@ const displayMode = computed(() => {
 const displayNodes = computed(() => {
   if (displayMode.value === 'graph') return nodes.value
   if (displayMode.value === 'schema') {
-    return schema.value.node_types.map((nt) => ({ id: nt.name, label: nt.name, type: nt.name }))
+    return schema.value.node_types.map((nt) => ({
+      id: nt.name,
+      label: nt.name,
+      type: nt.name,
+      description: nt.description,
+    }))
   }
   return []
 })
@@ -55,6 +60,7 @@ const displayEdges = computed(() => {
       source: et.source,
       target: et.target,
       type: et.name,
+      description: et.description,
     }))
   }
   return []
@@ -90,7 +96,7 @@ function edgeColorFor(type) {
 const vngNodes = computed(() => {
   const result = {}
   for (const n of visibleNodes.value) {
-    result[n.id] = { name: n.label, type: n.type, detail: n.detail }
+    result[n.id] = { name: n.label, type: n.type, detail: n.detail, description: n.description }
   }
   return result
 })
@@ -98,7 +104,7 @@ const vngNodes = computed(() => {
 const vngEdges = computed(() => {
   const result = {}
   visibleEdges.value.forEach((e, i) => {
-    result[`e${i}`] = { source: e.source, target: e.target, label: e.type }
+    result[`e${i}`] = { source: e.source, target: e.target, label: e.type, description: e.description }
   })
   return result
 })
@@ -106,28 +112,46 @@ const vngEdges = computed(() => {
 const layouts = ref({ nodes: {} })
 const selectedNodes = ref([])
 
-// --- node hover tooltip ---
+// --- node/edge hover tooltip ---
 const hoveredNode = ref(null)
+// Edge tooltips are only shown in schema-preview mode, where an edge is a
+// schema edge_type whose name/description are worth surfacing -- graph-mode
+// edges keep their inline edge label instead.
+const hoveredEdge = ref(null)
 const tooltipPos = ref({ x: 0, y: 0 })
 
 function onNodePointerOver({ node, event }) {
+  hoveredEdge.value = null
   hoveredNode.value = vngNodes.value[node] ?? null
   tooltipPos.value = { x: event.clientX, y: event.clientY }
-}
-
-function onNodePointerMove(event) {
-  if (hoveredNode.value) {
-    tooltipPos.value = { x: event.clientX, y: event.clientY }
-  }
 }
 
 function onNodePointerOut() {
   hoveredNode.value = null
 }
 
+function onEdgePointerOver({ edge, event }) {
+  if (displayMode.value !== 'schema') return
+  hoveredNode.value = null
+  hoveredEdge.value = vngEdges.value[edge] ?? null
+  tooltipPos.value = { x: event.clientX, y: event.clientY }
+}
+
+function onEdgePointerOut() {
+  hoveredEdge.value = null
+}
+
+function onPointerMove(event) {
+  if (hoveredNode.value || hoveredEdge.value) {
+    tooltipPos.value = { x: event.clientX, y: event.clientY }
+  }
+}
+
 const eventHandlers = {
   'node:pointerover': onNodePointerOver,
   'node:pointerout': onNodePointerOut,
+  'edge:pointerover': onEdgePointerOver,
+  'edge:pointerout': onEdgePointerOut,
   'node:dragstart': onNodeDragStart,
   'node:pointermove': onNodeDragMove,
   'node:dragend': onNodeDragEnd,
@@ -705,7 +729,7 @@ watch(
       <div
         v-if="displayMode !== 'none'"
         class="relative min-h-0 w-full flex-1 rounded-lg ring-1 ring-inset ring-border"
-        @mousemove="onNodePointerMove"
+        @mousemove="onPointerMove"
       >
         <v-network-graph
           ref="graphRef"
@@ -723,13 +747,25 @@ watch(
         </v-network-graph>
 
         <div
-          v-if="hoveredNode"
+          v-if="hoveredNode || hoveredEdge"
           class="pointer-events-none fixed z-[2000] max-w-[260px] rounded-md border border-border bg-surface-raised px-2.5 py-2 text-xs leading-relaxed text-ink shadow-2xl"
           :style="{ left: tooltipPos.x + 12 + 'px', top: tooltipPos.y + 12 + 'px' }"
         >
-          <div class="mb-0.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ hoveredNode.type }}</div>
-          <div class="font-semibold text-ink">{{ hoveredNode.name }}</div>
-          <div v-if="hoveredNode.detail" class="mt-0.5 text-ink-muted">{{ hoveredNode.detail }}</div>
+          <template v-if="displayMode === 'schema' && hoveredNode">
+            <div class="mb-0.5 text-[10px] uppercase tracking-wide text-ink-faint">Name</div>
+            <div class="font-semibold text-ink">{{ hoveredNode.name }}</div>
+            <div v-if="hoveredNode.description" class="mt-0.5 text-ink-muted">{{ hoveredNode.description }}</div>
+          </template>
+          <template v-else-if="displayMode === 'schema' && hoveredEdge">
+            <div class="mb-0.5 text-[10px] uppercase tracking-wide text-ink-faint">Name</div>
+            <div class="font-semibold text-ink">{{ hoveredEdge.label }}</div>
+            <div v-if="hoveredEdge.description" class="mt-0.5 text-ink-muted">{{ hoveredEdge.description }}</div>
+          </template>
+          <template v-else-if="hoveredNode">
+            <div class="mb-0.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ hoveredNode.type }}</div>
+            <div class="font-semibold text-ink">{{ hoveredNode.name }}</div>
+            <div v-if="hoveredNode.detail" class="mt-0.5 text-ink-muted">{{ hoveredNode.detail }}</div>
+          </template>
         </div>
       </div>
     </div>
