@@ -33,6 +33,35 @@ def test_parse_saves_markdown_and_returns_path(monkeypatch):
     assert saved.read_text() == "# hello"
 
 
+def test_parse_registers_markdown_upload_without_anydoc_conversion(monkeypatch):
+    def fail_if_called(data, fmt=None):
+        raise AssertionError("anydoc.to_markdown_bytes should not be called for .md uploads")
+
+    monkeypatch.setattr("app.parser.anydoc.to_markdown_bytes", fail_if_called)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("notes.md", "# already markdown".encode("utf-8"), "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"filename": "notes_raw.md", "path": "data/notes_raw.md"}
+    saved = DATA_DIR / "notes_raw.md"
+    assert saved.read_text() == "# already markdown"
+
+
+def test_parse_returns_400_for_non_utf8_markdown_upload():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("notes.md", b"\xff\xfe not utf-8", "text/markdown")},
+    )
+
+    assert response.status_code == 400
+
+
 def test_parse_saves_original_filename_to_document_manifest(monkeypatch):
     from app.ontology import load_document_manifest
 
