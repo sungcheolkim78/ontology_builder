@@ -441,24 +441,55 @@ function collectGraphCss() {
 }
 
 // Builds a standalone, self-contained copy of the graph SVG covering the
-// entire graph (calculates the bounding box of all visible nodes with padding,
-// rather than being limited to the current screen viewport / zoom level) --
-// shared by both exportSvg and exportJpg.
+// entire graph (bounding box of everything actually rendered, not the current
+// screen viewport / zoom level), with the content centered -- shared by both
+// exportSvg and exportJpg.
 function buildExportSvg() {
   const root = graphRef.value?.$el
   const svg = root && (root.tagName === 'svg' ? root : root.querySelector('svg'))
   if (!svg) return null
 
-  // Calculate full bounding box across all visible nodes so the exported image
-  // contains the entire graph regardless of current pan/zoom in the viewport.
-  const nodePositions = visibleNodes.value
-    .map((n) => layouts.value.nodes[n.id])
-    .filter((p) => p && typeof p.x === 'number' && typeof p.y === 'number')
+  // Bounding box of everything the browser actually renders for the live SVG
+  // -- nodes, edges, arrows, and node/edge label text extents -- via getBBox(),
+  // in layout coordinates regardless of the current pan/zoom. Measuring from
+  // node centers alone would clip labels that stick out past the outermost
+  // nodes, and would miss any content the layout positions haven't caught up
+  // with. Falls back to a node-center computation (fixed padding, labels not
+  // measured) if getBBox is unavailable or the graph is empty.
+  let box = null
+  try {
+    const b = svg.getBBox()
+    if (b.width > 0 && b.height > 0) box = b
+  } catch (err) {
+    // fall through to the node-center fallback below
+  }
 
   let vx, vy, vw, vh
   let width, height
 
-  if (nodePositions.length > 0) {
+  if (box) {
+    vx = Math.floor(box.x)
+    vy = Math.floor(box.y)
+    vw = Math.ceil(box.width)
+    vh = Math.ceil(box.height)
+  } else {
+    const nodePositions = visibleNodes.value
+      .map((n) => layouts.value.nodes[n.id])
+      .filter((p) => p && typeof p.x === 'number' && typeof p.y === 'number')
+    if (nodePositions.length === 0) {
+      // Nothing measurable at all -- export the current viewport as-is.
+      const rect = svg.getBoundingClientRect()
+      width = Math.round(rect.width) || 800
+      height = Math.round(rect.height) || 600
+      const viewBoxAttr = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
+      const parsed = viewBoxAttr.split(/\s+/).map(Number)
+      return finishExportSvg(svg, {
+        vx: parsed[0] ?? 0,
+        vy: parsed[1] ?? 0,
+        vw: parsed[2] ?? width,
+        vh: parsed[3] ?? height,
+      })
+    }
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
@@ -469,26 +500,39 @@ function buildExportSvg() {
       if (p.y < minY) minY = p.y
       if (p.y > maxY) maxY = p.y
     }
-    const padding = 120
-    vx = Math.round(minX - padding)
-    vy = Math.round(minY - padding)
-    vw = Math.max(400, Math.round(maxX - minX + padding * 2))
-    vh = Math.max(300, Math.round(maxY - minY + padding * 2))
-    width = vw
-    height = vh
-  } else {
-    const rect = svg.getBoundingClientRect()
-    width = Math.round(rect.width) || 800
-    height = Math.round(rect.height) || 600
-    const viewBoxAttr = svg.getAttribute('viewBox') || `0 0 ${width} ${height}`
-    const parsed = viewBoxAttr.split(/\s+/).map(Number)
-    vx = parsed[0] ?? 0
-    vy = parsed[1] ?? 0
-    vw = parsed[2] ?? width
-    vh = parsed[3] ?? height
+    vx = Math.floor(minX - 120)
+    vy = Math.floor(minY - 120)
+    vw = Math.ceil(maxX - minX + 240)
+    vh = Math.ceil(maxY - minY + 240)
   }
 
+  // Symmetric padding around the content box keeps it centered, and the
+  // minimum-size clamps expand symmetrically too so the centering survives.
+  const padding = 60
+  vx -= padding
+  vy -= padding
+  vw += padding * 2
+  vh += padding * 2
+  if (vw < 400) {
+    vx -= (400 - vw) / 2
+    vw = 400
+  }
+  if (vh < 300) {
+    vy -= (300 - vh) / 2
+    vh = 300
+  }
+  return finishExportSvg(svg, { vx, vy, vw, vh })
+}
+
+// Assembles the standalone SVG clone for a given export region: sets the
+// viewBox to that region (which re-centers/zooms the cloned content since the
+// clone keeps its layout coordinates), inlines the .v-ng-* stylesheet rules so
+// the file looks the same standalone, and adds a background rect covering the
+// whole region so no exported content ever sits on transparent/white.
+function finishExportSvg(svg, { vx, vy, vw, vh }) {
   const viewBox = `${vx} ${vy} ${vw} ${vh}`
+  const width = vw
+  const height = vh
 
   const clone = svg.cloneNode(true)
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
