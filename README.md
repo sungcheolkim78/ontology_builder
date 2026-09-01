@@ -12,6 +12,7 @@
 - **그래프 시각화**: 추출된 그래프를 인터랙티브하게 확인 (줌/팬/드래그, 노드·엣지 타입별 필터)
 - **GraphRAG 챗봇**: 질문과 관련된 그래프 노드를 찾아 주변 정보를 함께 참고해서 답변 (키워드 매칭 → 임베딩 유사도 → 해당 타입 전체, 3단계 폴백). 답변에 표시되는 관련 타입/노드를 클릭하면 그래프에서 해당 타입을 켜고 끄거나 관련 노드를 하이라이트·자동 포커스. 응답을 기다리는 동안 ESC로 취소 가능
 - **관측성(Observability)**: 모든 LLM 호출(채팅/스키마 생성/추출/키워드 추출)을 Jaeger로 추적, DB 장애 시 리셋 가능
+- **공유 비밀번호 로그인 (선택)**: 배포 환경에서 `APP_PASSWORD`를 설정하면 하나의 비밀번호로 접근을 제한하는 로그인 화면이 뜹니다. 계정 구분 없이 모든 사용자가 동일한 데이터를 봅니다. 로컬 개발에서는 설정하지 않으면 그대로 비활성 상태입니다.
 
 ## 아키텍처
 
@@ -65,6 +66,14 @@ podman-compose up --build -d
 
 모든 LLM 호출(채팅, 스키마 생성, 그래프 추출, GraphRAG 검색)은 `http://localhost:16686` (Jaeger UI)에서 추적할 수 있습니다.
 
+바로 사용해볼 문서가 없다면 `samples/`에 준비된 삼성생명 약관 5종을
+`backend/data/`에 복사한 뒤 스택을 재시작하면 됩니다 (`samples/README.md` 참고):
+
+```bash
+cp samples/*.md backend/data/
+podman-compose down && podman-compose up --build -d
+```
+
 ## 사용 방법
 
 1. 좌측 패널에서 문서를 업로드
@@ -79,6 +88,16 @@ podman-compose up --build -d
 ```bash
 podman-compose down
 ```
+
+## 배포 (Render)
+
+`render.yaml`로 백엔드(FastAPI, Docker)와 프론트엔드(정적 사이트)를
+별도 서비스로 배포합니다. Render 대시보드에서 `OPENROUTER_API_KEY`를
+설정해야 하고, 접근을 하나의 공유 비밀번호로 제한하려면
+`APP_PASSWORD`도 함께 설정하세요 (둘 다 `render.yaml`에는 값 없이
+`sync: false`로만 선언되어 있어, 실제 값은 대시보드에서 직접 입력해야
+합니다). 자세한 내용은 [`docs/SPEC.md`](docs/SPEC.md)의 "Deployment
+(production, Render)" 절을 참고하세요.
 
 ## 더 알아보기
 

@@ -100,7 +100,8 @@ no network calls and negligible overhead when running tests locally
 |---|---|---|
 | GET | `/health` | Liveness check → `{"status": "ok"}` |
 | GET | `/api/hello` | Scaffold sample endpoint |
-| GET | `/api/config` | Current LLM model name → `{"model": "..."}` |
+| GET | `/api/config` | Current LLM model name + auth status → `{"model": "...", "auth_required": bool}` |
+| POST | `/api/login` | `{"password": "..."}` → `{"token": "..."}`, or 401 |
 | POST | `/api/chat` | Chat with the LLM |
 | POST | `/api/parse` | Upload a document, convert to markdown |
 | GET | `/api/files` | List parsed documents, newest first |
@@ -294,11 +295,35 @@ fully replaces rather than appends.
 response shape is unchanged (`{"nodes": [...], "edges": [...]}`); 404
 if extraction hasn't run yet.
 
+### Auth (`app/auth.py`)
+
+A single shared password gates the app when it's deployed somewhere
+public (Render) — not per-user accounts, and not intended as a real
+security boundary, just a deterrent against casual/uninvited access to
+an app that spends OpenRouter credits. Stateless, no session store:
+`POST /api/login` checks the submitted password against `APP_PASSWORD`
+(constant-time compare) and, on success, returns
+`token = sha256(APP_PASSWORD)`. The frontend stores that token in
+`localStorage` and sends it as `Authorization: Bearer {token}` on every
+subsequent request; `require_auth`, an HTTP middleware registered
+right after `CORSMiddleware` (so CORS preflight `OPTIONS` requests are
+still handled first), recomputes the same hash and rejects any
+`/api/*` request without a match — except `/health`, `/api/login`, and
+`/api/config` itself, which must stay reachable pre-login. The gate is
+a no-op whenever `APP_PASSWORD` is unset (local dev, and every backend
+test — none of them set it): `/api/config`'s `auth_required` is
+`false`, `require_auth` never rejects anything, and the frontend never
+shows a login screen at all. Because the token is a fixed hash with no
+expiry, rotating `APP_PASSWORD` on Render immediately invalidates
+every previously-issued token at once.
+
 ### Configuration
 
 - `OPENROUTER_API_KEY` (required), `OPENROUTER_MODEL` (optional,
   default `openai/gpt-4o-mini`) — read from `backend/.env`
   (git-ignored; `backend/.env.example` documents the format).
+- `APP_PASSWORD` (optional) — enables the login gate described above
+  when set to a non-empty value; unset by default in local dev.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` (optional) — set by `podman-compose.yml`
   to Jaeger's OTLP HTTP receiver; unset in any other environment
   (including local pytest runs) disables tracing entirely rather than
@@ -318,9 +343,15 @@ Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 
 ### Tests
 
-`backend/tests/` (pytest, run via `python -m pytest`): `test_chat.py`,
-`test_config.py`, `test_files.py`, `test_graphdb.py`, `test_graphrag.py`,
-`test_ontology.py`, `test_parse.py`, `test_telemetry.py`.
+`backend/tests/` (pytest, run via `python -m pytest`): `test_auth.py`,
+`test_chat.py`, `test_config.py`, `test_files.py`, `test_graphdb.py`,
+`test_graphrag.py`, `test_ontology.py`, `test_parse.py`, `test_telemetry.py`.
+`test_auth.py` patches both `app.auth.APP_PASSWORD` and
+`app.main.APP_PASSWORD` per test (the latter is a separate name bound
+by `main.py`'s `from app.auth import APP_PASSWORD`, so patching only
+the former leaves the middleware's copy unpatched) — none of these
+tests, nor any other test file, ever sets the real `APP_PASSWORD`
+env var, so the auth gate stays inactive for the rest of the suite.
 Chat/parse/ontology/graphrag tests mock the external calls
 (`get_chat_model`, `get_embedding_model`, `anydoc.to_markdown_bytes`);
 an autouse fixture stubs `get_embedding_model` in every test file whose
@@ -550,6 +581,30 @@ to `ChatPanel`.
 (the compose service name) so the browser only ever talks to
 `localhost:5173`.
 
+## Sample data & data-prep tooling (`scripts/`, `samples/`, `Makefile`)
+
+Outside the app itself:
+
+- **`samples/`** — five pre-converted Samsung Life 약관 (insurance
+  terms) markdown documents, checked into git specifically so a new
+  user can copy them straight into `backend/data/` and try schema
+  generation/extraction immediately, without running the PDF-to-
+  markdown pipeline below first. See `samples/README.md`.
+- **`scripts/data_prep/`** — `download_samsunglife_terms.py` (fetches
+  source PDFs) and `convert_pdfs_to_markdown.py` (table-aware PDF →
+  markdown, writing a `manifest.json` alongside the output recording
+  source SHA-256/page/table counts per file). Their output lands under
+  `data/raw/` (`pdf/`, `md/`), which is git-ignored — the full raw set
+  is a local-only, regeneratable artifact; only the curated `samples/`
+  subset is committed.
+- **`scripts/prepare_goldenset/`** — generates a golden question/answer
+  set from a directory of markdown documents, for evaluating GraphRAG
+  answer quality against a fixed reference set rather than manual
+  spot-checking.
+- **`Makefile`** — `make samsunglife-data`, `make pdf-to-md`, `make
+  goldenset` (plus `-test` targets for each) wire up the three tools
+  above with sensible defaults; see `make help`.
+
 ## Deployment (dev)
 
 `podman-compose.yml` defines three services:
@@ -615,6 +670,35 @@ for the frontend service (a page reload or even disabling the browser
 cache does **not** help — the staleness is server-side, in Vite's own
 transform cache, not the browser).
 
+## Deployment (production, Render)
+
+`render.yaml` defines two services, split the same way as local dev
+but as independent Render services rather than podman-compose
+containers:
+
+- **`ontology-builder-backend`** — `type: web`, `runtime: docker`,
+  built from `backend/Dockerfile` with `dockerCommand` overriding the
+  Dockerfile's dev `CMD` to drop `--reload` and bind Render's assigned
+  `$PORT`. Has a 1GB disk mounted at `/app/data` (persists
+  `backend/data` across deploys — the `starter` plan, not `free`, is
+  required for a disk). `healthCheckPath: /health` (must stay
+  unauthenticated — see Auth above). Env vars: `OPENROUTER_API_KEY`
+  and `APP_PASSWORD` (both `sync: false` — set the real values in the
+  Render dashboard, never committed), `OPENROUTER_MODEL`,
+  `CORS_ALLOWED_ORIGINS` (must equal the frontend service's actual
+  public URL).
+- **`ontology-builder-frontend`** — `type: web`, `runtime: static`,
+  built via `npm install && npm run build`, published from
+  `frontend/dist`. `VITE_API_BASE_URL` (must equal the backend
+  service's actual public URL) is inlined into the build by Vite, so
+  the same relative `/api/*` calls `utils/api.js` makes locally (via
+  Vite's dev-server proxy) resolve to an absolute cross-origin URL in
+  production instead — see `API_BASE` in `utils/api.js`.
+
+Leaving `APP_PASSWORD` unset on the Render backend is a valid
+deployment choice (the app is then open, same as local dev) — setting
+it is a deliberate opt-in, not something `render.yaml` forces.
+
 ## Known limitations / not yet built
 
 - **No persistence beyond `backend/data/`, and no server-based
@@ -635,7 +719,11 @@ transform cache, not the browser).
   REL tables behind, now with zero rows for that document — and if no
   other document ever used that type, zero rows at all. Tables are
   never dropped.
-- **No auth.** All endpoints are open; fine for local dev only.
+- **No real auth.** The optional `APP_PASSWORD` gate (see Auth above)
+  is a single shared password with a non-expiring stateless token —
+  fine as a casual-access deterrent on the Render deploy, not a
+  security boundary. No per-user accounts, no login rate limiting, no
+  token expiry, no logout button.
 - **No streaming chat.** Responses return in one shot.
 - **No automated frontend tests.** Frontend changes are verified
   manually / via Playwright, not a test suite.
