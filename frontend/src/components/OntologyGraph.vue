@@ -5,6 +5,7 @@ import 'v-network-graph/lib/style.css'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 import { colorForNodeType } from '../utils/nodeColors.js'
 import { apiFetch } from '../utils/api.js'
+import { FileDown, Focus, ImageDown, Maximize, Network, Shapes } from 'lucide-vue-next'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -377,6 +378,39 @@ function resetView() {
   graphRef.value?.fitToContents()
 }
 
+// Gathers the visible nodes so their centroid sits at the coordinate center
+// (CENTER, CENTER) by translating every node's position by the same delta --
+// unlike re-running the force simulation this preserves the layout's overall
+// shape (clusters, drag-adjusted placements), it just re-centers it. The
+// simulation's own node objects are updated too so the next drag/tick starts
+// from the new positions, then fitToContents picks a zoom that fits them all.
+function gatherToCenter() {
+  const positions = layouts.value.nodes
+  const ids = visibleNodes.value.map((n) => n.id).filter((id) => positions[id])
+  if (ids.length === 0) return
+
+  let sumX = 0
+  let sumY = 0
+  for (const id of ids) {
+    sumX += positions[id].x
+    sumY += positions[id].y
+  }
+  const dx = CENTER - sumX / ids.length
+  const dy = CENTER - sumY / ids.length
+
+  const moved = {}
+  for (const id of ids) {
+    moved[id] = { x: positions[id].x + dx, y: positions[id].y + dy }
+    const simNode = simNodesById.get(id)
+    if (simNode) {
+      simNode.x = moved[id].x
+      simNode.y = moved[id].y
+    }
+  }
+  layouts.value = { nodes: moved }
+  fitSoon()
+}
+
 function focusOnNodes(ids) {
   if (!graphRef.value || !ids || ids.length === 0) return
   const positions = ids.map((id) => layouts.value.nodes[id]).filter(Boolean)
@@ -735,23 +769,64 @@ watch(
           <button
             v-if="schema && schema.node_types.length > 0"
             type="button"
-            class="btn"
+            class="btn px-2"
             :class="{ 'ring-1 ring-accent': showSchemaPreview }"
+            title="스키마 미리보기"
+            aria-label="스키마 미리보기"
             @click="showSchemaPreview = true"
           >
-            스키마 미리보기
+            <Shapes :size="14" />
           </button>
           <button
             type="button"
-            class="btn"
+            class="btn px-2"
             :class="{ 'ring-1 ring-accent': !showSchemaPreview }"
+            title="그래프 보기"
+            aria-label="그래프 보기"
             @click="viewGraph"
           >
-            그래프 보기
+            <Network :size="14" />
           </button>
-          <button v-if="displayMode !== 'none'" class="btn" @click="resetView">리셋</button>
-          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportSvg">SVG로 내보내기</button>
-          <button v-if="displayMode !== 'none'" type="button" class="btn" @click="exportJpg">JPG로 내보내기</button>
+          <button
+            v-if="displayMode !== 'none'"
+            type="button"
+            class="btn px-2"
+            title="가운데로 모으기"
+            aria-label="가운데로 모으기"
+            @click="gatherToCenter"
+          >
+            <Focus :size="14" />
+          </button>
+          <button
+            v-if="displayMode !== 'none'"
+            type="button"
+            class="btn px-2"
+            title="리셋 (전체 맞춤)"
+            aria-label="리셋 (전체 맞춤)"
+            @click="resetView"
+          >
+            <Maximize :size="14" />
+          </button>
+          <button
+            v-if="displayMode !== 'none'"
+            type="button"
+            class="btn px-2"
+            title="SVG로 내보내기"
+            aria-label="SVG로 내보내기"
+            @click="exportSvg"
+          >
+            <FileDown :size="14" />
+          </button>
+          <button
+            v-if="displayMode !== 'none'"
+            type="button"
+            class="btn px-2"
+            title="JPG로 내보내기"
+            aria-label="JPG로 내보내기"
+            @click="exportJpg"
+          >
+            <ImageDown :size="14" />
+          </button>
           <label class="ml-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-muted">
             <input type="checkbox" v-model="showNodeLabels" class="h-3.5 w-3.5 rounded border-border bg-surface-sunken accent-accent" />
             Node Label
