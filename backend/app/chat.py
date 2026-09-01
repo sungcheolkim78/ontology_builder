@@ -12,6 +12,10 @@ ROLE_TO_MESSAGE = {
 
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 
+# 1M matches modern frontier models' default context window, so long schema/extraction
+# outputs aren't truncated by a small API-side default max_tokens.
+MAX_TOKENS = 1_000_000
+
 
 def get_model_name():
     return os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
@@ -22,7 +26,7 @@ def get_chat_model():
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
         model=get_model_name(),
-        max_tokens=1_000_000,
+        max_tokens=MAX_TOKENS,
     )
 
 

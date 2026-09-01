@@ -23,6 +23,7 @@ const emit = defineEmits([
 ])
 
 const model = ref('로딩 중...')
+const maxTokens = ref(null)
 const isUploading = ref(false)
 const uploadError = ref('')
 const files = ref([])
@@ -502,6 +503,7 @@ onMounted(async () => {
     const res = await apiFetch('/api/config')
     const data = await res.json()
     model.value = data.model
+    maxTokens.value = data.max_tokens ?? null
   } catch (err) {
     model.value = '알 수 없음'
   }
@@ -1122,6 +1124,12 @@ function toggleEdgeType(type) {
             <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
             <p class="inline-block rounded border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink-muted">
               {{ model }}
+            </p>
+            <p
+              v-if="maxTokens"
+              class="mt-1 text-[11px] text-ink-muted"
+            >
+              max tokens: {{ maxTokens.toLocaleString('en-US') }}
             </p>
           </div>
 

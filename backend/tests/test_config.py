@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.chat import MAX_TOKENS
 from app.main import app
 
 
@@ -12,4 +13,5 @@ def test_get_config_returns_configured_model(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["model"] == "openai/gpt-4o-mini"
+    assert body["max_tokens"] == MAX_TOKENS
     assert body["auth_required"] is False

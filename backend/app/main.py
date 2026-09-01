@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app import graphdb
 from app.auth import APP_PASSWORD, is_valid_token, issue_token
-from app.chat import get_chat_model, get_model_name, to_langchain_messages
+from app.chat import MAX_TOKENS, get_chat_model, get_model_name, to_langchain_messages
 from app.graphrag import search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
@@ -102,7 +102,11 @@ def hello():
 
 @app.get("/api/config")
 def get_config():
-    return {"model": get_model_name(), "auth_required": bool(APP_PASSWORD)}
+    return {
+        "model": get_model_name(),
+        "max_tokens": MAX_TOKENS,
+        "auth_required": bool(APP_PASSWORD),
+    }
 
 
 class LoginRequest(BaseModel):
