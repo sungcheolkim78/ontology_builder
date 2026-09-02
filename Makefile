@@ -12,7 +12,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-test
+.PHONY: help goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -30,6 +30,10 @@ help:
 	@echo "      Convert data/raw/pdf files to table-aware Markdown."
 	@echo "  make pdf-to-md-test"
 	@echo "      Run unit tests for the PDF-to-Markdown converter."
+	@echo "  make chunk-terms"
+	@echo "      Chunk data/raw/md files into per-article JSON under data/chunks."
+	@echo "  make chunk-terms-test"
+	@echo "      Run unit tests for the Markdown article chunker."
 	@echo ""
 	@echo "Optional variables:"
 	@echo "  OUTPUT_DIR=./goldenset QUESTIONS_PER_DOCUMENT=10 MODEL=openai/gpt-4o-mini"
@@ -62,3 +66,10 @@ pdf-to-md:
 pdf-to-md-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest \
 		scripts/data_prep/test_convert_pdfs_to_markdown.py -q
+
+chunk-terms:
+	python3 scripts/data_prep/chunk_terms_markdown.py --input-dir "$(INPUT_DIR)" --output-dir data/chunks
+
+chunk-terms-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest \
+		scripts/data_prep/test_chunk_terms_markdown.py -q
