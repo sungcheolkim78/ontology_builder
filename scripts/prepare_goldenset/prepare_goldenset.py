@@ -254,6 +254,7 @@ def generate_for_document(
     relative_path: Path,
     question_count: int,
     question_context_chars: int = 24000,
+    answer_context_chars: int | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     LOGGER.info("reading document: %s", relative_path)
     document = source_path.read_text(encoding="utf-8")
@@ -265,6 +266,14 @@ def generate_for_document(
         relative_path,
         len(document),
         len(question_context),
+    )
+    answer_budget = question_context_chars if answer_context_chars is None else answer_context_chars
+    answer_context = compact_document_for_questions(document, answer_budget)
+    LOGGER.info(
+        "answer context prepared: %s (%d -> %d chars)",
+        relative_path,
+        len(document),
+        len(answer_context),
     )
     LOGGER.info("generating %d questions: %s", question_count, relative_path)
     question_payload = invoke_json(
@@ -282,7 +291,7 @@ def generate_for_document(
         ANSWER_PROMPT.format(
             questions=json.dumps(questions, ensure_ascii=False, indent=2),
             source_file=relative_path.as_posix(),
-            document=document,
+            document=answer_context,
         ),
     )
     records, warnings = merge_and_validate_answers(questions, answer_payload, document)
@@ -320,6 +329,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum Markdown characters sent to the question-generation prompt",
     )
     parser.add_argument(
+        "--answer-context-chars",
+        type=int,
+        default=None,
+        help=(
+            "maximum Markdown characters sent to the answer-generation prompt; "
+            "defaults to the question context size"
+        ),
+    )
+    parser.add_argument(
         "--log-file",
         type=Path,
         help="single file receiving all run logs (default: <output-dir>/prepare_goldenset.log)",
@@ -343,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.question_context_chars < 1:
         LOGGER.error("--question-context-chars must be at least 1")
+        return 2
+    if args.answer_context_chars is not None and args.answer_context_chars < 1:
+        LOGGER.error("--answer-context-chars must be at least 1")
         return 2
     if args.max_process_files is not None and args.max_process_files < 1:
         LOGGER.error("--max-process-files must be at least 1")
@@ -387,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
                 relative_path,
                 args.questions_per_document,
                 args.question_context_chars,
+                args.answer_context_chars,
             )
             result["model"] = args.model
             write_json(output_path, result)
