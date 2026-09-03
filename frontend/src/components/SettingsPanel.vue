@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
@@ -28,6 +28,23 @@ const modelCatalog = ref([])
 const selectedModel = ref('')
 const isSettingModel = ref(false)
 const modelSetError = ref('')
+
+// Per-operation model overrides -- each ontology pipeline step can run on
+// its own model instead of always following the general model above (see
+// app.chat.OPERATION_KEYS on the backend). Keyed the same way as the
+// backend's operation_models, plus current/pending/loading/error state per
+// key, mirroring the model/selectedModel/isSettingModel/modelSetError
+// pattern above but per-operation instead of singular.
+const OPERATION_MODELS = [
+  { key: 'discover_ontology', label: '온톨로지 발견' },
+  { key: 'generate_schema', label: '스키마 생성' },
+  { key: 'extract_graph', label: '그래프 추출' },
+  { key: 'validate_ontology', label: '온톨로지 검증' },
+]
+const operationModel = reactive({})
+const selectedOperationModel = reactive({})
+const isSettingOperationModel = reactive({})
+const operationModelSetError = reactive({})
 const isUploading = ref(false)
 const uploadError = ref('')
 const uploadConverter = ref('anydoc')
@@ -631,6 +648,11 @@ onMounted(async () => {
     maxTokens.value = data.max_tokens ?? null
     modelCatalog.value = data.models ?? []
     selectedModel.value = data.model
+    for (const { key } of OPERATION_MODELS) {
+      const current = data.operation_models?.[key] ?? data.model
+      operationModel[key] = current
+      selectedOperationModel[key] = current
+    }
   } catch (err) {
     model.value = '알 수 없음'
   }
@@ -684,6 +706,31 @@ async function onModelChange() {
     modelSetError.value = '모델 변경 실패: ' + err.message
   } finally {
     isSettingModel.value = false
+  }
+}
+
+async function onOperationModelChange(key) {
+  const previous = operationModel[key]
+  const next = selectedOperationModel[key]
+  if (next === previous) return
+  isSettingOperationModel[key] = true
+  operationModelSetError[key] = ''
+  try {
+    const res = await apiFetch('/api/config/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: next, operation: key }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    operationModel[key] = next
+  } catch (err) {
+    selectedOperationModel[key] = previous
+    operationModelSetError[key] = '모델 변경 실패: ' + err.message
+  } finally {
+    isSettingOperationModel[key] = false
   }
 }
 
@@ -1395,6 +1442,7 @@ function toggleEdgeType(type) {
         <div class="flex-1 space-y-4 overflow-y-auto p-4">
           <div>
             <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
+            <p class="mb-1 text-[11px] text-ink-faint">기본 모델 (채팅, 골든셋 생성 등 아래에 없는 모든 작업)</p>
             <select
               v-model="selectedModel"
               class="field w-full"
@@ -1411,6 +1459,27 @@ function toggleEdgeType(type) {
             <p v-if="maxTokens" class="mt-1 text-[11px] text-ink-muted">
               max tokens: {{ maxTokens.toLocaleString('en-US') }}
             </p>
+
+            <div v-for="op in OPERATION_MODELS" :key="op.key" class="mt-3">
+              <p class="mb-1 text-[11px] text-ink-faint">{{ op.label }}</p>
+              <select
+                v-model="selectedOperationModel[op.key]"
+                class="field w-full"
+                :disabled="isSettingOperationModel[op.key]"
+                @change="onOperationModelChange(op.key)"
+              >
+                <option v-if="!modelCatalog.length" :value="selectedOperationModel[op.key]">
+                  {{ selectedOperationModel[op.key] }}
+                </option>
+                <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
+                  <option v-for="id in group.models" :key="id" :value="id">{{ id }}</option>
+                </optgroup>
+              </select>
+              <p v-if="isSettingOperationModel[op.key]" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
+              <p v-if="operationModelSetError[op.key]" class="mt-1 text-[11px] text-red-400">
+                {{ operationModelSetError[op.key] }}
+              </p>
+            </div>
           </div>
 
           <div>

@@ -12,6 +12,7 @@ from app import graphdb
 from app.auth import APP_PASSWORD, is_valid_token, issue_token
 from app.chat import (
     MODEL_CATALOG,
+    OPERATION_KEYS,
     get_chat_model,
     get_model_max_tokens,
     get_model_name,
@@ -130,20 +131,24 @@ def get_config():
         "model": get_model_name(),
         "models": MODEL_CATALOG,
         "max_tokens": get_model_max_tokens(),
+        "operation_models": {op: get_model_name(op) for op in OPERATION_KEYS},
         "auth_required": bool(APP_PASSWORD),
     }
 
 
 class SetModelRequest(BaseModel):
     model: str
+    operation: str | None = None
 
 
 @app.post("/api/config/model")
 def set_model(request: SetModelRequest):
+    if request.operation is not None and request.operation not in OPERATION_KEYS:
+        raise HTTPException(status_code=400, detail="unknown operation")
     if request.model not in {m["id"] for m in MODEL_CATALOG}:
         raise HTTPException(status_code=400, detail="unknown model")
-    set_model_name(request.model)
-    return {"model": get_model_name()}
+    set_model_name(request.model, request.operation)
+    return {"model": get_model_name(request.operation), "operation": request.operation}
 
 
 class LoginRequest(BaseModel):

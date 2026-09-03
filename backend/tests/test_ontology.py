@@ -81,7 +81,7 @@ def seed_schema_version(stem, schema, version=1, document_type="general"):
 def test_generate_schema_returns_400_on_invalid_json(monkeypatch):
     write_document()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("not json at all")
     )
     client = TestClient(app)
 
@@ -112,7 +112,7 @@ def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     client = TestClient(app)
 
     response = client.post(
@@ -126,7 +126,7 @@ def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
 def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
     write_document()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("{}")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("{}")
     )
     client = TestClient(app)
 
@@ -151,7 +151,7 @@ def test_discover_endpoint_saves_and_returns_report(monkeypatch):
         "warnings": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report))
     )
     client = TestClient(app)
 
@@ -176,7 +176,7 @@ def test_discover_returns_404_when_document_missing():
 def test_discover_returns_400_on_invalid_json(monkeypatch):
     write_document()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("not json at all")
     )
     client = TestClient(app)
 
@@ -234,7 +234,7 @@ def test_discover_ontology_from_chunks_single_group_skips_consolidation(monkeypa
 
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
     fake_model = RecordingChatModel(json.dumps(report))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
 
@@ -262,7 +262,7 @@ def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch)
         "relationships": [],
     }
     fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = discover_ontology_from_chunks(
         [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
@@ -291,7 +291,7 @@ def test_discover_endpoint_uses_chunks_when_present(monkeypatch):
         )
     )
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/discover")
@@ -305,7 +305,7 @@ def test_generate_schema_from_chunks_single_group_skips_consolidation(monkeypatc
 
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = generate_schema_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
 
@@ -320,7 +320,7 @@ def test_generate_schema_from_chunks_consolidates_multiple_groups(monkeypatch):
     schema2 = {"node_types": [{"name": "InsurancePolicy", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": [{"name": "Policy", "description": "merged"}], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = generate_schema_from_chunks(
         [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
@@ -345,7 +345,7 @@ def test_schema_endpoint_uses_chunks_when_present(monkeypatch):
         )
     )
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/schema")
@@ -362,7 +362,7 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
     (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     client = TestClient(app)
 
     client.post("/api/ontology/doc_raw.md/schema")
@@ -376,7 +376,7 @@ def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
@@ -439,7 +439,7 @@ def test_embed_endpoint_embeds_the_extracted_graph(monkeypatch):
     write_document()
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     client = TestClient(app)
     client.post("/api/ontology/doc_raw.md/extract")
@@ -462,7 +462,7 @@ def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):
     write_document()
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     client = TestClient(app)
 
@@ -484,7 +484,7 @@ def test_extract_saves_and_returns_graph(monkeypatch):
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     client = TestClient(app)
 
@@ -500,7 +500,7 @@ def test_extract_returns_400_on_invalid_json(monkeypatch):
     write_document()
     seed_schema_version("doc_raw", {"node_types": [], "edge_types": []})
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("nope")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("nope")
     )
     client = TestClient(app)
 
@@ -521,7 +521,7 @@ def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     client = TestClient(app)
 
@@ -536,7 +536,7 @@ def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
 
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     fake_model = RecordingChatModel(json.dumps(graph))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
 
     result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
@@ -574,7 +574,7 @@ def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeyp
         ],
     }
     fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = extract_graph_from_chunks(
         [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], schema, max_group_chars=30
@@ -610,7 +610,7 @@ def test_extract_endpoint_uses_chunks_when_present(monkeypatch):
         )
     )
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph)))
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/extract")
@@ -785,7 +785,7 @@ def test_validate_endpoint_returns_report(monkeypatch):
         "recommended_changes": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report))
     )
     client = TestClient(app)
 
@@ -828,7 +828,7 @@ def test_validate_returns_400_on_invalid_json(monkeypatch):
     write_document()
     _seed_schema_and_graph()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("not json at all")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("not json at all")
     )
     client = TestClient(app)
 
@@ -915,7 +915,7 @@ def test_generate_schema_response_includes_version(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema))
     )
     client = TestClient(app)
 
@@ -933,7 +933,7 @@ def test_generate_schema_second_call_creates_second_version(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema))
     )
     client = TestClient(app)
 
@@ -948,7 +948,7 @@ def test_generate_schema_second_call_creates_second_version(monkeypatch):
 def test_list_schema_versions_endpoint_reports_active_and_graph_status(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
     client = TestClient(app)
 
     client.post("/api/ontology/doc_raw.md/schema")
@@ -969,9 +969,9 @@ def test_activate_schema_version_endpoint_switches_active_version(monkeypatch):
     schema_v2 = {"node_types": [{"name": "Organization", "description": "v2"}], "edge_types": []}
     client = TestClient(app)
 
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema_v1)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema_v1)))
     client.post("/api/ontology/doc_raw.md/schema")
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema_v2)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema_v2)))
     client.post("/api/ontology/doc_raw.md/schema")
 
     response = client.post("/api/ontology/doc_raw.md/schema/versions/1/activate")
@@ -992,7 +992,7 @@ def test_activate_schema_version_endpoint_returns_404_for_unknown_version():
 def test_delete_schema_version_endpoint_removes_version(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
     client = TestClient(app)
     client.post("/api/ontology/doc_raw.md/schema")
     client.post("/api/ontology/doc_raw.md/schema")
@@ -1032,7 +1032,7 @@ def test_evolve_endpoint_returns_proposal(monkeypatch):
         ],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(proposal))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(proposal))
     )
     client = TestClient(app)
 
@@ -1063,7 +1063,7 @@ def test_evolve_returns_400_on_invalid_json(monkeypatch):
     write_document()
     _seed_schema_and_graph()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("not json")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("not json")
     )
     client = TestClient(app)
 
@@ -1239,7 +1239,7 @@ def test_converge_domain_schema_applies_auto_decisions_and_queues_review(monkeyp
     fake_model = SequencedChatModel(
         [json.dumps(extract_response), json.dumps(validate_response), json.dumps(propose_response)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = converge_domain_schema(
         [{"stem": "doc2_raw", "text": "Bob works at Acme."}], seed_schema
@@ -1299,7 +1299,7 @@ def test_converge_domain_schema_folds_multiple_documents_in_order(monkeypatch):
             json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_edge),
         ]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = converge_domain_schema(
         [
@@ -1336,7 +1336,7 @@ def test_converge_domain_endpoint_returns_seed_schema_and_final_schema(monkeypat
     fake_model = SequencedChatModel(
         [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_org)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     client = TestClient(app)
 
@@ -1387,7 +1387,7 @@ def test_converge_domain_endpoint_generates_seed_schema_when_none_given(monkeypa
             json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes),
         ]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     client = TestClient(app)
 
     response = client.post(
@@ -1532,7 +1532,7 @@ def test_measure_schema_stability_perfect_agreement_across_runs(monkeypatch):
     from app.ontology import measure_schema_stability
 
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result = measure_schema_stability("some document text", runs=3)
 
@@ -1548,7 +1548,7 @@ def test_measure_schema_stability_disagreement_lowers_similarity(monkeypatch):
         {"node_types": [{"name": "Individual", "description": "a person"}], "edge_types": []},
     ]
     fake_model = SequencedChatModel([json.dumps(s) for s in schemas])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = measure_schema_stability("some document text", runs=2)
 
@@ -1570,7 +1570,7 @@ def test_converge_endpoint_includes_evaluation(monkeypatch):
     fake_model = SequencedChatModel(
         [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
     seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     client = TestClient(app)
 
@@ -1609,7 +1609,7 @@ def test_redundant_types_endpoint(monkeypatch):
 def test_schema_stability_endpoint(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
     client = TestClient(app)
 
     response = client.post("/api/ontology/doc_raw.md/schema/stability", json={"runs": 2})
@@ -1639,7 +1639,7 @@ def test_run_domain_convergence_seeds_from_first_document_when_domain_is_new(mon
             json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes),  # doc2
         ]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = run_domain_convergence(
         "insurance_policy",
@@ -1666,7 +1666,7 @@ def test_run_domain_convergence_reuses_existing_domain_schema_as_seed(monkeypatc
     fake_model = SequencedChatModel(
         [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(no_changes)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     result = run_domain_convergence("insurance_policy", [{"stem": "doc3_raw", "text": "doc3"}])
 
@@ -1706,7 +1706,7 @@ def test_run_domain_convergence_accumulates_pending_review_across_calls(monkeypa
     fake_model = SequencedChatModel(
         [json.dumps(empty_graph), json.dumps(validate_response), json.dumps(review_change)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
 
     run_domain_convergence("insurance_policy", [{"stem": "doc1_raw", "text": "doc1"}])
 
@@ -1827,7 +1827,7 @@ def test_get_domain_schema_endpoint_returns_404_when_missing():
 def test_converge_domain_persisted_endpoint(monkeypatch):
     write_document("doc_raw.md", "Alice works at Acme.")
     seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(seed_schema)))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(seed_schema)))
     client = TestClient(app)
 
     response = client.post(
@@ -1925,7 +1925,7 @@ def test_summarize_document_strips_and_returns_llm_text(monkeypatch):
     from app.ontology import summarize_document
 
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
     )
 
     assert summarize_document("some document text") == "이 문서는 보험약관을 설명합니다."
@@ -1934,7 +1934,7 @@ def test_summarize_document_strips_and_returns_llm_text(monkeypatch):
 def test_summarize_document_raises_on_empty_response(monkeypatch):
     from app.ontology import summarize_document
 
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel("   "))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel("   "))
 
     with pytest.raises(ValueError):
         summarize_document("some document text")
@@ -1943,7 +1943,7 @@ def test_summarize_document_raises_on_empty_response(monkeypatch):
 def test_create_summary_endpoint_saves_and_returns_summary(monkeypatch):
     write_document()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel("문서 요약입니다.")
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("문서 요약입니다.")
     )
     client = TestClient(app)
 
@@ -1976,7 +1976,7 @@ def test_get_summary_returns_404_when_not_generated():
 
 def test_create_summary_returns_400_on_empty_llm_response(monkeypatch):
     write_document()
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel("   "))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel("   "))
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/summary")

@@ -190,7 +190,7 @@ def test_list_files_excludes_ladybugdb_files(monkeypatch):
     )
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph))
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     client = TestClient(app)
 

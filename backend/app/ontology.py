@@ -87,7 +87,7 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
 
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model()
+    model = get_chat_model("discover_ontology")
     response = invoke_with_telemetry(
         "ontology.discover_ontology", model, DISCOVERY_PROMPT.format(document=document_text)
     )
@@ -163,7 +163,7 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
         }
         for i, report in enumerate(group_reports)
     ]
-    model = get_chat_model()
+    model = get_chat_model("discover_ontology")
     prompt = CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
     response = invoke_with_telemetry("ontology.consolidate_discovery_types", model, prompt)
     consolidated = parse_json_response(response.content)
@@ -253,7 +253,7 @@ def generate_schema(
     prompt_template = SCHEMA_PROMPTS.get(document_type)
     if prompt_template is None:
         raise ValueError(f"unknown document_type: {document_type!r}")
-    model = get_chat_model()
+    model = get_chat_model("generate_schema")
     prompt = prompt_template.format(document=document_text)
     if discovery:
         # Prepended, not merged into the template's own "Document:" section --
@@ -287,7 +287,7 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         }
         for i, schema in enumerate(group_schemas)
     ]
-    model = get_chat_model()
+    model = get_chat_model("generate_schema")
     prompt = SCHEMA_CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
     response = invoke_with_telemetry("ontology.consolidate_schema_types", model, prompt)
     consolidated = parse_json_response(response.content)
@@ -329,7 +329,7 @@ def generate_schema_from_chunks(
 
 
 def extract_graph(document_text: str, schema: dict) -> dict:
-    model = get_chat_model()
+    model = get_chat_model("extract_graph")
     prompt = EXTRACT_PROMPT.format(
         schema=json.dumps(schema), document=document_text
     )
@@ -424,7 +424,7 @@ def extract_graph_from_chunks(
 
 def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model()
+    model = get_chat_model("validate_ontology")
     prompt = VALIDATION_PROMPT.format(
         schema=json.dumps(schema), graph=json.dumps(graph), document=document_text
     )
@@ -783,7 +783,7 @@ def domain_schema_path(domain: str) -> Path:
 def save_domain_schema(domain: str, schema: dict) -> None:
     d = domain_dir_for(domain)
     d.mkdir(parents=True, exist_ok=True)
-    domain_schema_path(domain).write_text(json.dumps(schema))
+    domain_schema_path(domain).write_text(json.dumps(schema, ensure_ascii=False))
 
 
 def load_domain_schema(domain: str) -> dict | None:
@@ -815,7 +815,7 @@ def _load_domain_manifest(domain: str) -> dict:
 def _save_domain_manifest(domain: str, manifest: dict) -> None:
     d = domain_dir_for(domain)
     d.mkdir(parents=True, exist_ok=True)
-    _domain_manifest_path(domain).write_text(json.dumps(manifest))
+    _domain_manifest_path(domain).write_text(json.dumps(manifest, ensure_ascii=False))
 
 
 def domain_calibration_stems(domain: str) -> list[str]:
@@ -840,7 +840,7 @@ def load_domain_pending_review(domain: str) -> list[dict]:
 def _save_domain_pending_review(domain: str, items: list[dict]) -> None:
     d = domain_dir_for(domain)
     d.mkdir(parents=True, exist_ok=True)
-    _domain_pending_review_path(domain).write_text(json.dumps(items))
+    _domain_pending_review_path(domain).write_text(json.dumps(items, ensure_ascii=False))
 
 
 def run_domain_convergence(domain: str, documents: list[dict], max_chars: int | None = None) -> dict:
@@ -933,7 +933,7 @@ def _load_versions_manifest(stem: str) -> dict:
 def _save_versions_manifest(stem: str, manifest: dict) -> None:
     d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
-    versions_path(stem).write_text(json.dumps(manifest))
+    versions_path(stem).write_text(json.dumps(manifest, ensure_ascii=False))
 
 
 def list_versions(stem: str) -> list[dict]:
@@ -951,7 +951,7 @@ def schema_path_for_version(stem: str, version: int) -> Path:
 def save_schema(stem: str, version: int, schema: dict) -> None:
     d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
-    schema_path_for_version(stem, version).write_text(json.dumps(schema))
+    schema_path_for_version(stem, version).write_text(json.dumps(schema, ensure_ascii=False))
 
 
 def load_schema(stem: str, version: int) -> dict | None:
@@ -1009,7 +1009,7 @@ def save_document_manifest(stem: str, original_filename: str, converter: str = "
     d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
     (d / "manifest.json").write_text(
-        json.dumps({"original_filename": original_filename, "converter": converter})
+        json.dumps({"original_filename": original_filename, "converter": converter}, ensure_ascii=False)
     )
 
 
@@ -1031,7 +1031,7 @@ def save_discovery(stem: str, report: dict) -> None:
     (rather than versioning it like schema_v{N}.json) is intentional."""
     d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
-    discovery_path_for(stem).write_text(json.dumps(report))
+    discovery_path_for(stem).write_text(json.dumps(report, ensure_ascii=False))
 
 
 def load_discovery(stem: str) -> dict | None:
