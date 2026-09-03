@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 
 from app.chat import get_chat_model
@@ -247,3 +248,86 @@ def load_goldenset(stem: str) -> dict | None:
     if not path.is_file():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# Generated-answer persistence -----------------------------------------------
+#
+# A golden set's own questions/golden-answers (above) are generated once and
+# curated; this section is the opposite -- a running log of what this app's
+# *own* GraphRAG pipeline actually answered for each question, recorded every
+# time someone clicks "답변 생성" in the UI, so that answer (and the schema
+# version/related nodes/etc. it came from) doesn't just flash on screen and
+# disappear. Kept as a per-question *list* (append-only, never overwritten)
+# rather than one record per question, since the schema evolves over time --
+# an answer generated against schema version 3 says nothing reliable about
+# version 4, but throwing it away would lose a real data point about how
+# version 3 performed. latest_goldenset_answers() is the read side: for the
+# document's *current* active schema version specifically, since an answer
+# generated against a since-changed schema is no longer trustworthy as "the"
+# current answer for that question.
+def goldenset_answers_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "goldenset_answers.json"
+
+
+def _load_answers(stem: str) -> dict:
+    path = goldenset_answers_path_for(stem)
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_answers(stem: str, answers: dict) -> None:
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    goldenset_answers_path_for(stem).write_text(
+        json.dumps(answers, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def record_goldenset_answer(
+    stem: str,
+    question_id: str,
+    *,
+    schema_version: int,
+    hops: int,
+    content: str,
+    node_types: list,
+    edge_types: list,
+    related_nodes: list,
+    related_edges: list,
+) -> dict:
+    """Appends one generated-answer record for `question_id` and returns it.
+    Never mutates or removes any prior record -- see the module-level note
+    above for why history is kept even for schema versions no longer
+    active."""
+    answers = _load_answers(stem)
+    record = {
+        "schema_version": schema_version,
+        "hops": hops,
+        "generated_at": datetime.now().isoformat(),
+        "content": content,
+        "node_types": node_types,
+        "edge_types": edge_types,
+        "related_nodes": related_nodes,
+        "related_edges": related_edges,
+    }
+    answers.setdefault(question_id, []).append(record)
+    _save_answers(stem, answers)
+    return record
+
+
+def latest_goldenset_answers(stem: str, active_schema_version: int | None) -> dict:
+    """For every question id with at least one saved answer, the most
+    recently recorded answer whose schema_version equals
+    `active_schema_version` -- empty for a question with no answer recorded
+    against that exact version, and `{}` entirely when the document has no
+    active schema version at all."""
+    if active_schema_version is None:
+        return {}
+    answers = _load_answers(stem)
+    latest = {}
+    for question_id, records in answers.items():
+        matching = [r for r in records if r["schema_version"] == active_schema_version]
+        if matching:
+            latest[question_id] = matching[-1]
+    return latest

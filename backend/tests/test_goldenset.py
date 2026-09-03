@@ -40,6 +40,7 @@ class FakeEmbeddingModel:
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
     monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)
@@ -193,3 +194,149 @@ def test_get_goldenset_returns_404_when_none_saved():
     response = client.get("/api/documents/doc_raw.md/goldenset")
 
     assert response.status_code == 404
+
+
+def test_record_and_latest_goldenset_answers_filters_by_schema_version():
+    from app.goldenset import latest_goldenset_answers, record_goldenset_answer
+
+    write_document()
+    record_goldenset_answer(
+        "doc_raw", "q001", schema_version=1, hops=1, content="old answer",
+        node_types=[], edge_types=[], related_nodes=[], related_edges=[],
+    )
+    record_goldenset_answer(
+        "doc_raw", "q001", schema_version=2, hops=2, content="new answer",
+        node_types=["Policy"], edge_types=[], related_nodes=[], related_edges=[],
+    )
+
+    assert latest_goldenset_answers("doc_raw", active_schema_version=1)["q001"]["content"] == "old answer"
+    assert latest_goldenset_answers("doc_raw", active_schema_version=2)["q001"]["content"] == "new answer"
+    assert latest_goldenset_answers("doc_raw", active_schema_version=3) == {}
+
+
+def test_latest_goldenset_answers_picks_most_recent_matching_version():
+    from app.goldenset import latest_goldenset_answers, record_goldenset_answer
+
+    write_document()
+    record_goldenset_answer(
+        "doc_raw", "q001", schema_version=1, hops=1, content="first",
+        node_types=[], edge_types=[], related_nodes=[], related_edges=[],
+    )
+    record_goldenset_answer(
+        "doc_raw", "q001", schema_version=1, hops=1, content="second",
+        node_types=[], edge_types=[], related_nodes=[], related_edges=[],
+    )
+
+    latest = latest_goldenset_answers("doc_raw", active_schema_version=1)
+    assert latest["q001"]["content"] == "second"
+
+
+def test_latest_goldenset_answers_returns_empty_when_no_active_schema():
+    from app.goldenset import latest_goldenset_answers
+
+    assert latest_goldenset_answers("doc_raw", active_schema_version=None) == {}
+
+
+def _write_graphrag_fixture(stem="doc_raw"):
+    from app.ontology import create_schema_version
+
+    write_document(f"{stem}.md", content="Alice works at Acme.")
+    schema = {
+        "node_types": [{"name": "Person", "description": "a person"}],
+        "edge_types": [],
+    }
+    version = create_schema_version(stem, schema)
+    graphdb.write_graph(
+        stem, [{"id": "n1", "label": "Alice", "type": "Person"}], [], version=version
+    )
+    from app.goldenset import save_goldenset
+
+    save_goldenset(
+        stem,
+        {
+            "source_file": f"{stem}.md",
+            "source_sha256": "x",
+            "questions": [
+                {
+                    "id": "q001",
+                    "question": "Alice는 누구인가요?",
+                    "question_type": "entity",
+                    "importance": "high",
+                    "answerable": True,
+                    "answer": "Alice",
+                    "evidence": [],
+                }
+            ],
+            "warnings": [],
+        },
+    )
+    return version
+
+
+def test_goldenset_answer_endpoint_generates_saves_and_returns_record(monkeypatch):
+    version = _write_graphrag_fixture()
+    model = SequencedChatModel(
+        [
+            json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Alice"]}}),
+            "Alice는 Acme에서 일합니다.",
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/goldenset/q001/answer", json={"hops": 2})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "Alice는 Acme에서 일합니다."
+    assert body["schema_version"] == version
+    assert body["hops"] == 2
+    assert body["node_types"] == ["Person"]
+    assert any(n["label"] == "Alice" for n in body["related_nodes"])
+    assert "generated_at" in body
+
+    # Persisted to disk, and surfaced back as the current answer for this schema version.
+    answers_response = client.get("/api/documents/doc_raw.md/goldenset/answers")
+    assert answers_response.status_code == 200
+    answers_body = answers_response.json()
+    assert answers_body["active_schema_version"] == version
+    assert answers_body["answers"]["q001"]["content"] == "Alice는 Acme에서 일합니다."
+
+
+def test_goldenset_answer_endpoint_returns_400_without_schema_or_graph():
+    write_document()
+    from app.goldenset import save_goldenset
+
+    save_goldenset(
+        "doc_raw",
+        {
+            "source_file": "doc_raw.md",
+            "source_sha256": "x",
+            "questions": [{"id": "q001", "question": "Q?", "question_type": "entity", "importance": "high", "answerable": True, "answer": "A", "evidence": []}],
+            "warnings": [],
+        },
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/goldenset/q001/answer")
+
+    assert response.status_code == 400
+
+
+def test_goldenset_answer_endpoint_returns_404_for_unknown_question():
+    version = _write_graphrag_fixture()
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/goldenset/does-not-exist/answer")
+
+    assert response.status_code == 404
+
+
+def test_goldenset_answers_endpoint_returns_empty_map_when_none_generated():
+    _write_graphrag_fixture()
+    client = TestClient(app)
+
+    response = client.get("/api/documents/doc_raw.md/goldenset/answers")
+
+    assert response.status_code == 200
+    assert response.json()["answers"] == {}

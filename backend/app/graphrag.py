@@ -1,7 +1,7 @@
 import json
 
 from app import graphdb
-from app.chat import get_chat_model
+from app.chat import get_chat_model, to_langchain_messages
 from app.embeddings import get_embedding_model
 from app.ontology import parse_json_response
 from app.telemetry import invoke_with_telemetry, embed_with_telemetry
@@ -201,4 +201,35 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
         "context": context,
         "related_nodes": related_nodes,
         "related_edges": related_edges,
+    }
+
+
+def answer_question(
+    messages: list[dict], schema: dict, stem: str, version: int = 1, hops: int = 1
+) -> dict:
+    """Runs search_graph() against `messages[-1]`'s content, then answers
+    with the full `messages` history augmented by whatever context was
+    found (or a fixed "no context found" reply if nothing was). Shared by
+    `/api/chat`'s schema+graph-available path and the goldenset per-question
+    answer endpoint, so the two ways of asking this app a question against
+    a document's graph can never silently drift apart."""
+    result = search_graph(messages[-1]["content"], schema, stem, version=version, hops=hops)
+    if result["context"]:
+        augmented = [
+            {
+                "role": "system",
+                "content": f"다음은 문서에서 추출된 관련 정보입니다:\n{result['context']}",
+            }
+        ] + messages
+        model = get_chat_model()
+        response = invoke_with_telemetry("chat.answer", model, to_langchain_messages(augmented))
+        content = response.content
+    else:
+        content = "관련된 내용을 찾을 수 없습니다."
+    return {
+        "content": content,
+        "node_types": result["node_types"],
+        "edge_types": result["edge_types"],
+        "related_nodes": result["related_nodes"],
+        "related_edges": result["related_edges"],
     }

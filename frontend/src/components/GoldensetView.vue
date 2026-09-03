@@ -8,45 +8,87 @@ const props = defineProps({
   hops: { type: Number, default: 1 },
 })
 
+function emptyState() {
+  return {
+    loading: false,
+    error: '',
+    content: '',
+    nodeTypes: [],
+    edgeTypes: [],
+    schemaVersion: null,
+    hopsUsed: null,
+    generatedAt: null,
+  }
+}
+
 // One generation slot per question id, independent of the others -- clicking
 // "답변 생성" on one question must never disturb another question's already-
 // generated answer or in-flight state.
 const generated = reactive({})
 
-watch(
-  () => props.report,
-  (report) => {
-    for (const q of report?.questions ?? []) {
-      if (!generated[q.id]) {
-        generated[q.id] = { loading: false, error: '', content: '', nodeTypes: [], edgeTypes: [] }
-      }
+function ensureState(id) {
+  if (!generated[id]) generated[id] = emptyState()
+  return generated[id]
+}
+
+// Loads whatever this document's own GraphRAG pipeline most recently
+// answered for each question *at the document's current active schema
+// version* -- an answer generated against a since-replaced schema version
+// is not shown, since it's no longer a trustworthy read of "the" current
+// answer (see app.goldenset.latest_goldenset_answers on the backend).
+async function loadExistingAnswers(file, questions) {
+  for (const q of questions) ensureState(q.id)
+  if (!file) return
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(file.filename)}/goldenset/answers`)
+    if (!res.ok) return
+    const data = await res.json()
+    for (const [id, record] of Object.entries(data.answers ?? {})) {
+      const state = ensureState(id)
+      state.content = record.content
+      state.nodeTypes = record.node_types ?? []
+      state.edgeTypes = record.edge_types ?? []
+      state.schemaVersion = record.schema_version
+      state.hopsUsed = record.hops
+      state.generatedAt = record.generated_at
     }
-  },
+  } catch (err) {
+    // Leave whatever was already loaded (or the empty default) in place --
+    // this is a best-effort convenience load, not required for the golden
+    // answers themselves to render.
+  }
+}
+
+watch(
+  [() => props.report, () => props.file],
+  ([report, file]) => loadExistingAnswers(file, report?.questions ?? []),
   { immediate: true }
 )
 
 async function generateAnswer(question) {
-  const state = generated[question.id]
+  const state = ensureState(question.id)
   state.loading = true
   state.error = ''
   try {
-    const res = await apiFetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: question.question }],
-        filename: props.file?.filename ?? null,
-        hops: props.hops,
-      }),
-    })
+    const res = await apiFetch(
+      `/api/documents/${encodeURIComponent(props.file?.filename ?? '')}/goldenset/${encodeURIComponent(question.id)}/answer`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hops: props.hops }),
+      }
+    )
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
-    const data = await res.json()
-    state.content = data.content
-    state.nodeTypes = data.node_types ?? []
-    state.edgeTypes = data.edge_types ?? []
+    const record = await res.json()
+    state.content = record.content
+    state.nodeTypes = record.node_types ?? []
+    state.edgeTypes = record.edge_types ?? []
+    state.schemaVersion = record.schema_version ?? null
+    state.hopsUsed = record.hops ?? null
+    state.generatedAt = record.generated_at ?? null
   } catch (err) {
     state.error = 'GraphRAG 답변 생성 실패: ' + err.message
   } finally {
@@ -100,7 +142,16 @@ async function generateAnswer(question) {
             >{{ generated[q.id]?.loading ? '생성 중...' : '답변 생성' }}</button>
           </div>
           <p v-if="generated[q.id]?.error" class="text-[11px] text-red-400">{{ generated[q.id].error }}</p>
-          <p v-else-if="generated[q.id]?.content" class="whitespace-pre-wrap text-[12px] text-ink">{{ generated[q.id].content }}</p>
+          <template v-else-if="generated[q.id]?.content">
+            <p class="whitespace-pre-wrap text-[12px] text-ink">{{ generated[q.id].content }}</p>
+            <div v-if="generated[q.id].nodeTypes?.length || generated[q.id].edgeTypes?.length" class="mt-1 flex flex-wrap gap-1">
+              <span v-for="t in generated[q.id].nodeTypes" :key="'n-' + t" class="chip border-emerald-500/40 text-emerald-400">{{ t }}</span>
+              <span v-for="t in generated[q.id].edgeTypes" :key="'e-' + t" class="chip border-amber-500/40 text-amber-400">{{ t }}</span>
+            </div>
+            <p class="mt-1 text-[10px] text-ink-faint">
+              스키마 v{{ generated[q.id].schemaVersion }} · hops {{ generated[q.id].hopsUsed }} · {{ generated[q.id].generatedAt }}
+            </p>
+          </template>
           <p v-else class="text-[12px] text-ink-faint">아직 생성되지 않았습니다</p>
         </div>
       </div>

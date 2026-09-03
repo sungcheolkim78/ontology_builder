@@ -18,7 +18,7 @@ from app.chat import (
     set_model_name,
     to_langchain_messages,
 )
-from app.graphrag import search_graph
+from app.graphrag import answer_question, search_graph
 from app.ontology import (
     DEFAULT_SCHEMA,
     activate_version,
@@ -61,7 +61,14 @@ from app.ontology import (
     validate_ontology,
 )
 from app.chunking import chunk_markdown_file, convert_pdf_to_markdown_file
-from app.goldenset import generate_goldenset, goldenset_path_for, load_goldenset, save_goldenset
+from app.goldenset import (
+    generate_goldenset,
+    goldenset_path_for,
+    latest_goldenset_answers,
+    load_goldenset,
+    record_goldenset_answer,
+    save_goldenset,
+)
 from app.parser import parse_to_markdown_file
 from app.paths import document_dir_for, documents_dir
 from app.telemetry import configure_telemetry, invoke_with_telemetry
@@ -173,35 +180,12 @@ def chat(request: ChatRequest):
         if schema and graphdb.has_graph(stem, version=version):
             hops = max(1, min(5, request.hops))
             try:
-                result = search_graph(
-                    messages[-1]["content"], schema, stem, version=version, hops=hops
-                )
+                result = answer_question(messages, schema, stem, version=version, hops=hops)
             except ValueError:
                 result = None
 
             if result is not None:
-                if result["context"]:
-                    augmented = [
-                        {
-                            "role": "system",
-                            "content": f"다음은 문서에서 추출된 관련 정보입니다:\n{result['context']}",
-                        }
-                    ] + messages
-                    model = get_chat_model()
-                    response = invoke_with_telemetry(
-                        "chat.answer", model, to_langchain_messages(augmented)
-                    )
-                    content = response.content
-                else:
-                    content = "관련된 내용을 찾을 수 없습니다."
-                return {
-                    "role": "assistant",
-                    "content": content,
-                    "node_types": result["node_types"],
-                    "edge_types": result["edge_types"],
-                    "related_nodes": result["related_nodes"],
-                    "related_edges": result["related_edges"],
-                }
+                return {"role": "assistant", **result}
 
     model = get_chat_model()
     lc_messages = to_langchain_messages(messages)
@@ -368,6 +352,61 @@ def get_goldenset(filename: str):
     if report is None:
         raise HTTPException(status_code=404, detail="goldenset not found")
     return report
+
+
+class CreateGoldensetAnswerRequest(BaseModel):
+    hops: int = 1
+
+
+@app.post("/api/documents/{filename}/goldenset/{question_id}/answer")
+def create_goldenset_answer(
+    filename: str, question_id: str, request: CreateGoldensetAnswerRequest | None = None
+):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    stem = _stem(filename)
+    goldenset = load_goldenset(stem)
+    if goldenset is None:
+        raise HTTPException(status_code=404, detail="goldenset not found")
+    question = next((q for q in goldenset["questions"] if q["id"] == question_id), None)
+    if question is None:
+        raise HTTPException(status_code=404, detail="question not found")
+
+    version = get_active_version(stem)
+    schema = load_schema(stem, version) if version is not None else None
+    if schema is None or not graphdb.has_graph(stem, version=version):
+        raise HTTPException(
+            status_code=400, detail="스키마/그래프가 없어 GraphRAG 답변을 생성할 수 없습니다"
+        )
+
+    hops = max(1, min(5, request.hops if request else 1))
+    try:
+        result = answer_question(
+            [{"role": "user", "content": question["question"]}], schema, stem, version=version, hops=hops
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    record = record_goldenset_answer(
+        stem,
+        question_id,
+        schema_version=version,
+        hops=hops,
+        content=result["content"],
+        node_types=result["node_types"],
+        edge_types=result["edge_types"],
+        related_nodes=result["related_nodes"],
+        related_edges=result["related_edges"],
+    )
+    return record
+
+
+@app.get("/api/documents/{filename}/goldenset/answers")
+def get_goldenset_answers(filename: str):
+    stem = _stem(filename)
+    version = get_active_version(stem)
+    return {"active_schema_version": version, "answers": latest_goldenset_answers(stem, version)}
 
 
 @app.get("/api/ontology/schemas")

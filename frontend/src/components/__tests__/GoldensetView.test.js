@@ -37,23 +37,39 @@ const REPORT = {
   warnings: [],
 }
 
+function mockApi({ answersStatus = 200, answersBody = { active_schema_version: 1, answers: {} }, chatResponse } = {}) {
+  apiFetch.mockImplementation((path, options) => {
+    if (path.includes('/goldenset/answers')) {
+      return Promise.resolve(jsonResponse(answersBody, answersStatus))
+    }
+    if (path.endsWith('/answer') && options?.method === 'POST') {
+      return Promise.resolve(chatResponse ?? jsonResponse({}, 500))
+    }
+    return Promise.resolve(jsonResponse({}))
+  })
+}
+
 beforeEach(() => {
   apiFetch.mockReset()
 })
 
 describe('GoldensetView', () => {
-  it('shows an empty state when there are no questions', () => {
+  it('shows an empty state when there are no questions', async () => {
+    mockApi()
     const wrapper = mount(GoldensetView, {
       props: { report: { questions: [] }, file: { filename: 'doc_raw.md' }, hops: 1 },
     })
+    await flushPromises()
 
     expect(wrapper.text()).toContain('골든셋이 없습니다')
   })
 
-  it('renders each question with its meta info and golden answer/evidence', () => {
+  it('renders each question with its meta info and golden answer/evidence', async () => {
+    mockApi()
     const wrapper = mount(GoldensetView, {
       props: { report: REPORT, file: { filename: 'doc_raw.md' }, hops: 1 },
     })
+    await flushPromises()
 
     expect(wrapper.text()).toContain('보험금은 언제 지급되나요?')
     expect(wrapper.text()).toContain('attribute')
@@ -63,32 +79,60 @@ describe('GoldensetView', () => {
     expect(wrapper.text()).toContain('이 문서에 없는 것은?')
   })
 
-  it('generates a GraphRAG answer for one question and shows it beside the golden answer', async () => {
-    apiFetch.mockResolvedValue(
-      jsonResponse({
-        role: 'assistant',
+  it('loads and shows the existing schema-matching answer without needing to click generate', async () => {
+    mockApi({
+      answersBody: {
+        active_schema_version: 3,
+        answers: {
+          q001: {
+            schema_version: 3,
+            hops: 2,
+            generated_at: '2026-01-01T00:00:00',
+            content: '기존에 생성된 답변입니다.',
+            node_types: ['Policy'],
+            edge_types: [],
+            related_nodes: [],
+            related_edges: [],
+          },
+        },
+      },
+    })
+    const wrapper = mount(GoldensetView, {
+      props: { report: REPORT, file: { filename: 'doc_raw.md' }, hops: 1 },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('기존에 생성된 답변입니다.')
+    // q002 has no saved answer for the active schema version.
+    expect(wrapper.find('[data-testid="generate-answer-q002"]').exists()).toBe(true)
+  })
+
+  it('generates a GraphRAG answer for one question via the goldenset answer endpoint', async () => {
+    mockApi({
+      chatResponse: jsonResponse({
+        schema_version: 1,
+        hops: 2,
+        generated_at: '2026-01-01T00:00:00',
         content: 'GraphRAG 답변입니다.',
         node_types: ['Policy'],
         edge_types: [],
         related_nodes: [],
-      })
-    )
+        related_edges: [],
+      }),
+    })
     const wrapper = mount(GoldensetView, {
       props: { report: REPORT, file: { filename: 'doc_raw.md' }, hops: 2 },
     })
+    await flushPromises()
 
     await wrapper.find('[data-testid="generate-answer-q001"]').trigger('click')
     await flushPromises()
 
     expect(apiFetch).toHaveBeenCalledWith(
-      '/api/chat',
+      '/api/documents/doc_raw.md/goldenset/q001/answer',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: '보험금은 언제 지급되나요?' }],
-          filename: 'doc_raw.md',
-          hops: 2,
-        }),
+        body: JSON.stringify({ hops: 2 }),
       })
     )
     expect(wrapper.text()).toContain('GraphRAG 답변입니다.')
@@ -98,14 +142,15 @@ describe('GoldensetView', () => {
 
   it('shows a loading state while a generation request is in flight', async () => {
     let resolveFetch
-    apiFetch.mockReturnValue(
-      new Promise((resolve) => {
+    mockApi({
+      chatResponse: new Promise((resolve) => {
         resolveFetch = resolve
-      })
-    )
+      }),
+    })
     const wrapper = mount(GoldensetView, {
       props: { report: REPORT, file: { filename: 'doc_raw.md' }, hops: 1 },
     })
+    await flushPromises()
 
     const clickPromise = wrapper.find('[data-testid="generate-answer-q001"]').trigger('click')
     await Promise.resolve()
@@ -118,10 +163,11 @@ describe('GoldensetView', () => {
   })
 
   it('shows an error message when generation fails', async () => {
-    apiFetch.mockResolvedValue(jsonResponse({ detail: 'boom' }, 500))
+    mockApi({ chatResponse: jsonResponse({ detail: 'boom' }, 500) })
     const wrapper = mount(GoldensetView, {
       props: { report: REPORT, file: { filename: 'doc_raw.md' }, hops: 1 },
     })
+    await flushPromises()
 
     await wrapper.find('[data-testid="generate-answer-q001"]').trigger('click')
     await flushPromises()

@@ -127,6 +127,8 @@ no network calls and negligible overhead when running tests locally
 | GET | `/api/documents/{filename}/summary` | Read back the saved summary |
 | POST | `/api/documents/{filename}/goldenset` | LLM generates a golden QA set from the whole document |
 | GET | `/api/documents/{filename}/goldenset` | Read back the saved golden set |
+| POST | `/api/documents/{filename}/goldenset/{question_id}/answer` | GraphRAG answers one golden question and records the result |
+| GET | `/api/documents/{filename}/goldenset/answers` | Latest recorded answer per question, for the active schema version only |
 | GET | `/api/ontology/schemas` | List every document stem that has a saved schema |
 | POST | `/api/ontology/{filename}/schema` | LLM proposes a node/edge type schema for the document |
 | POST | `/api/ontology/{filename}/schema/use` | Copy another document's schema onto this one |
@@ -307,6 +309,32 @@ empty. Re-running overwrites the previous golden set.
 
 **`GET /api/documents/{filename}/goldenset`** — reads back the saved
 golden set; 404 if none has been generated yet.
+
+**`POST /api/documents/{filename}/goldenset/{question_id}/answer`** — body
+`{"hops": 1}` (optional, clamped server-side to `1..5` like `/api/chat`).
+404 if the document, its goldenset, or that `question_id` doesn't exist;
+400 if the document has no active schema/extracted graph yet (a golden
+question is answered via GraphRAG specifically, so there's deliberately no
+plain-chat fallback here the way `/api/chat` has one). Runs
+`graphrag.answer_question()` — the same function `/api/chat`'s schema+graph
+path uses, given a single-message history of just this question — then
+`app.goldenset.record_goldenset_answer()` appends the result (content,
+node_types, edge_types, related_nodes, related_edges, plus the schema
+version and hop count used and a generated-at timestamp) to
+`documents/{stem}/goldenset_answers.json`, keyed by question id. Returns the
+saved record. Never overwrites or removes a prior record for that
+question — see `app.goldenset`'s module docstring for why history is kept
+even once the schema moves past that version.
+
+**`GET /api/documents/{filename}/goldenset/answers`** — returns
+`{"active_schema_version": N|null, "answers": {question_id: record}}`,
+where each `record` is only the *most recently recorded* answer for that
+question whose `schema_version` equals the document's current active
+schema version (`app.goldenset.latest_goldenset_answers()`) — an answer
+generated against a since-changed schema is never surfaced here, even
+though it's still in the file. A question with no answer recorded against
+the current schema version is simply absent from `answers`; `answers` is
+`{}` entirely when the document has no active schema version.
 
 **`POST /api/ontology/{filename}/schema`** — reads
 `backend/data/documents/{stem}/raw.md`, prompts the LLM (same
@@ -598,14 +626,22 @@ directly.
   is still there when switching back. `GoldensetView.vue` is a
   self-contained child: for each question it shows the
   type/importance/answerable meta chips and the golden `answer`/`evidence`
-  side by side with a "답변 생성" button that POSTs a *fresh*, single-turn
-  `/api/chat` call (`messages: [{role: 'user', content: question.question}]`
-  — deliberately not appended to `ChatPanel`'s own conversation history,
-  since probing N golden questions independently would otherwise flood it)
-  using the same `file`/`hops` props, and renders the GraphRAG response
-  next to the golden answer for manual comparison. Each question's
-  generation state (`loading`/`error`/`content`) is tracked independently
-  keyed by question id, so generating one question's answer never affects
+  side by side with a "답변 생성" button that POSTs
+  `/api/documents/{filename}/goldenset/{question_id}/answer` (`{hops}`) —
+  deliberately not `/api/chat`, and not appended to `ChatPanel`'s own
+  conversation history, since probing N golden questions independently
+  would otherwise flood it — and renders the returned record's
+  content/node_types/edge_types plus its `schema_version`/`hops`/
+  `generated_at` metadata next to the golden answer for manual comparison.
+  On mount (and on every `file`/`report` change), it also fetches
+  `GET /api/documents/{filename}/goldenset/answers` and pre-fills each
+  question's slot with whatever this app already generated for it at the
+  document's *current* schema version, so switching to "골든셋" shows the
+  latest schema-matching answer immediately without requiring a click —
+  "답변 생성" always re-generates and re-records a fresh one regardless of
+  what was pre-filled. Each question's generation state
+  (`loading`/`error`/`content`/…) is tracked independently keyed by
+  question id, so generating one question's answer never affects
   another's already-generated result.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.

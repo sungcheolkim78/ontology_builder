@@ -181,7 +181,23 @@ business logic of its own beyond request/response shaping.
   reports it as `has_goldenset` alongside `has_chunks`/`has_schema`/
   `has_graph`. The prompts (`QUESTION_PROMPT`/`ANSWER_PROMPT`) live in
   `prompts.py`, ported verbatim from the standalone script's own
-  `prompts.py`.
+  `prompts.py`. A second, separate concern in this module is *this app's own*
+  generated answers to those golden questions -- not the golden answers
+  themselves, which never change once generated. `record_goldenset_answer`
+  appends one record per `POST /api/documents/{filename}/goldenset/{id}/answer`
+  call (see `graphrag.py`'s `answer_question` below) to
+  `documents/{stem}/goldenset_answers.json`, keyed by question id, each
+  holding `schema_version`/`hops`/`generated_at` alongside the
+  content/node_types/edge_types/related_nodes/related_edges the answer came
+  with -- an append-only list per question, never overwritten, since an
+  answer generated against schema version 3 is a real data point about how
+  version 3 performed even after the schema moves to version 4.
+  `latest_goldenset_answers(stem, active_schema_version)` is the read side:
+  for each question, the most recent record whose `schema_version` equals
+  the document's *current* active version specifically (`GET
+  /api/documents/{filename}/goldenset/answers`) -- an answer generated
+  against a since-changed schema is no longer shown as "the" current answer,
+  though it stays in the file for later inspection.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
@@ -339,6 +355,14 @@ business logic of its own beyond request/response shaping.
   model's general knowledge — a deliberate behavior change from typical
   RAG fallback; a genuine technical failure (unparseable LLM JSON) is
   different from a miss and still falls back to plain chat.
+  `answer_question(messages, schema, stem, version, hops)` wraps
+  `search_graph()` plus the augmented-context chat-answer call into one
+  function returning `{content, node_types, edge_types, related_nodes,
+  related_edges}` — factored out so `main.py`'s `/api/chat` (schema+graph
+  path, full message history) and the goldenset per-question answer
+  endpoint (`POST /api/documents/{filename}/goldenset/{id}/answer`, a
+  single-message history) share exactly the same answering logic and can
+  never silently drift apart.
 - `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)` wraps
   every chat-completion call site (chat answer, schema generation, graph
   extraction, type analysis, keyword extraction) and
