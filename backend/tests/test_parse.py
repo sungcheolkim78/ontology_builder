@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.parser import DATA_DIR
+from app.paths import document_dir_for
 
 
 @pytest.fixture(autouse=True)
@@ -28,8 +29,11 @@ def test_parse_saves_markdown_and_returns_path(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"filename": "report_raw.md", "path": "data/report_raw.md"}
-    saved = DATA_DIR / "report_raw.md"
+    assert response.json() == {
+        "filename": "report_raw.md",
+        "path": "data/documents/report_raw/raw.md",
+    }
+    saved = document_dir_for("report_raw") / "raw.md"
     assert saved.read_text() == "# hello"
 
 
@@ -46,8 +50,11 @@ def test_parse_registers_markdown_upload_without_anydoc_conversion(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"filename": "notes_raw.md", "path": "data/notes_raw.md"}
-    saved = DATA_DIR / "notes_raw.md"
+    assert response.json() == {
+        "filename": "notes_raw.md",
+        "path": "data/documents/notes_raw/raw.md",
+    }
+    saved = document_dir_for("notes_raw") / "raw.md"
     assert saved.read_text() == "# already markdown"
 
 
@@ -75,7 +82,10 @@ def test_parse_saves_original_filename_to_document_manifest(monkeypatch):
         files={"file": ("report.docx", b"fake docx bytes", "application/octet-stream")},
     )
 
-    assert load_document_manifest("report_raw") == {"original_filename": "report.docx"}
+    assert load_document_manifest("report_raw") == {
+        "original_filename": "report.docx",
+        "converter": "anydoc",
+    }
 
 
 def test_parse_returns_400_on_unsupported_format(monkeypatch):
@@ -103,6 +113,66 @@ def test_parse_returns_400_for_unrecognized_extension():
     response = client.post(
         "/api/parse",
         files={"file": ("weird.xyz", b"not a real document", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+
+
+def test_parse_uses_table_aware_converter_for_pdf_when_requested(monkeypatch):
+    def fail_if_called(data, fmt=None):
+        raise AssertionError("anydoc should not be called when table_aware is requested for a pdf")
+
+    monkeypatch.setattr("app.parser.anydoc.to_markdown_bytes", fail_if_called)
+    monkeypatch.setattr(
+        "app.main.convert_pdf_to_markdown_file",
+        lambda filename, data: {"filename": "report_raw.md", "path": "data/report_raw.md"},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("report.pdf", b"fake pdf bytes", "application/pdf")},
+        data={"converter": "table_aware"},
+    )
+
+    assert response.status_code == 200
+    from app.ontology import load_document_manifest
+
+    assert load_document_manifest("report_raw") == {
+        "original_filename": "report.pdf",
+        "converter": "table_aware",
+    }
+
+
+def test_parse_ignores_table_aware_for_non_pdf_upload(monkeypatch):
+    monkeypatch.setattr(
+        "app.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("report.docx", b"fake docx bytes", "application/octet-stream")},
+        data={"converter": "table_aware"},
+    )
+
+    assert response.status_code == 200
+    from app.ontology import load_document_manifest
+
+    assert load_document_manifest("report_raw")["converter"] == "anydoc"
+
+
+def test_parse_returns_400_when_table_aware_conversion_fails(monkeypatch):
+    def raise_error(filename, data):
+        raise ValueError("not a valid pdf")
+
+    monkeypatch.setattr("app.main.convert_pdf_to_markdown_file", raise_error)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("report.pdf", b"not a real pdf", "application/pdf")},
+        data={"converter": "table_aware"},
     )
 
     assert response.status_code == 400

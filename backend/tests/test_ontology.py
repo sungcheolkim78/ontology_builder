@@ -7,8 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import DEFAULT_SCHEMA, DOMAIN_SCHEMA_DIR, GRAPH_DIR, embed_graph, embed_nodes
+from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR, embed_graph, embed_nodes
 from app.parser import DATA_DIR
+from app.paths import document_dir_for
 
 
 class FakeChatModel:
@@ -33,7 +34,7 @@ def stub_embedding_model(monkeypatch):
 def clean_dirs():
     from app import graphdb
     graphdb.reset_connection()
-    for d in (DATA_DIR, GRAPH_DIR, DOMAIN_SCHEMA_DIR):
+    for d in (DATA_DIR, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR):
         if d.exists():
             shutil.rmtree(d)
     if graphdb.DB_PATH.exists():
@@ -44,7 +45,7 @@ def clean_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     yield
     graphdb.reset_connection()
-    for d in (DATA_DIR, GRAPH_DIR, DOMAIN_SCHEMA_DIR):
+    for d in (DATA_DIR, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR):
         if d.exists():
             shutil.rmtree(d)
     if graphdb.DB_PATH.exists():
@@ -55,11 +56,14 @@ def clean_dirs():
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):
-    (DATA_DIR / filename).write_text(content)
+    stem = filename.removesuffix(".md")
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "raw.md").write_text(content)
 
 
 def seed_schema_version(stem, schema, version=1, document_type="general"):
-    d = GRAPH_DIR / stem
+    d = DOCUMENTS_DIR / stem
     d.mkdir(parents=True, exist_ok=True)
     (d / f"schema_v{version}.json").write_text(json.dumps(schema))
     (d / "versions.json").write_text(
@@ -191,8 +195,8 @@ def test_get_discovery_returns_404_when_none_saved():
 
 def test_generate_schema_ignores_discovery_by_default(monkeypatch):
     write_document()
-    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
-    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    (DOCUMENTS_DIR / "doc_raw").mkdir(parents=True, exist_ok=True)
+    (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
@@ -205,8 +209,8 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
 
 def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     write_document()
-    (GRAPH_DIR / "doc_raw").mkdir(parents=True)
-    (GRAPH_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    (DOCUMENTS_DIR / "doc_raw").mkdir(parents=True, exist_ok=True)
+    (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
@@ -303,7 +307,7 @@ def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
-    saved_schema = json.loads((GRAPH_DIR / "doc_raw" / "schema_v1.json").read_text())
+    saved_schema = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
     assert saved_schema == DEFAULT_SCHEMA
 
 
@@ -412,7 +416,7 @@ def test_list_schemas_returns_stems_with_a_saved_schema():
     for stem in ("doc_raw", "other_raw"):
         seed_schema_version(stem, schema)
     # a graph dir with no versions.json shouldn't be listed
-    (GRAPH_DIR / "no_schema_raw").mkdir(parents=True)
+    (DOCUMENTS_DIR / "no_schema_raw").mkdir(parents=True)
     client = TestClient(app)
 
     response = client.get("/api/ontology/schemas")
@@ -429,7 +433,21 @@ def test_save_and_load_document_manifest_round_trips():
 
     save_document_manifest("doc_raw", "report.docx")
 
-    assert load_document_manifest("doc_raw") == {"original_filename": "report.docx"}
+    assert load_document_manifest("doc_raw") == {
+        "original_filename": "report.docx",
+        "converter": "anydoc",
+    }
+
+
+def test_save_document_manifest_records_given_converter():
+    from app.ontology import load_document_manifest, save_document_manifest
+
+    save_document_manifest("doc_raw", "report.pdf", converter="table_aware")
+
+    assert load_document_manifest("doc_raw") == {
+        "original_filename": "report.pdf",
+        "converter": "table_aware",
+    }
 
 
 def test_load_document_manifest_returns_none_when_missing():
@@ -472,7 +490,7 @@ def test_use_schema_copies_source_schema_to_target():
 
     assert response.status_code == 200
     assert response.json() == {**source_schema, "version": 1}
-    saved = json.loads((GRAPH_DIR / "target_raw" / "schema_v1.json").read_text())
+    saved = json.loads((DOCUMENTS_DIR / "target_raw" / "schema_v1.json").read_text())
     assert saved == source_schema
 
 
@@ -612,7 +630,7 @@ def test_delete_version_removes_schema_file_and_graph_rows():
     delete_version("doc_raw", v1)
 
     assert list_versions("doc_raw") == []
-    assert not (GRAPH_DIR / "doc_raw" / "schema_v1.json").is_file()
+    assert not (DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").is_file()
     assert graphdb.has_graph("doc_raw", version=1) is False
 
 
@@ -654,9 +672,9 @@ def test_generate_schema_response_includes_version(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {**schema, "version": 1}
-    saved = json.loads((GRAPH_DIR / "doc_raw" / "schema_v1.json").read_text())
+    saved = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
     assert saved == schema
-    versions = json.loads((GRAPH_DIR / "doc_raw" / "versions.json").read_text())
+    versions = json.loads((DOCUMENTS_DIR / "doc_raw" / "versions.json").read_text())
     assert versions["active_version"] == 1
 
 
@@ -672,8 +690,8 @@ def test_generate_schema_second_call_creates_second_version(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema")
 
     assert response.json()["version"] == 2
-    assert (GRAPH_DIR / "doc_raw" / "schema_v1.json").is_file()
-    assert (GRAPH_DIR / "doc_raw" / "schema_v2.json").is_file()
+    assert (DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").is_file()
+    assert (DOCUMENTS_DIR / "doc_raw" / "schema_v2.json").is_file()
 
 
 def test_list_schema_versions_endpoint_reports_active_and_graph_status(monkeypatch):
@@ -1650,3 +1668,118 @@ def test_use_domain_schema_endpoint_returns_404_when_domain_missing():
     )
 
     assert response.status_code == 404
+
+
+def test_summarize_document_strips_and_returns_llm_text(monkeypatch):
+    from app.ontology import summarize_document
+
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
+    )
+
+    assert summarize_document("some document text") == "이 문서는 보험약관을 설명합니다."
+
+
+def test_summarize_document_raises_on_empty_response(monkeypatch):
+    from app.ontology import summarize_document
+
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel("   "))
+
+    with pytest.raises(ValueError):
+        summarize_document("some document text")
+
+
+def test_create_summary_endpoint_saves_and_returns_summary(monkeypatch):
+    write_document()
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda: FakeChatModel("문서 요약입니다.")
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/summary")
+
+    assert response.status_code == 200
+    assert response.json() == {"summary": "문서 요약입니다."}
+
+    get_response = client.get("/api/documents/doc_raw.md/summary")
+    assert get_response.status_code == 200
+    assert get_response.json() == {"summary": "문서 요약입니다."}
+
+
+def test_create_summary_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/documents/missing.md/summary")
+
+    assert response.status_code == 404
+
+
+def test_get_summary_returns_404_when_not_generated():
+    write_document()
+    client = TestClient(app)
+
+    response = client.get("/api/documents/doc_raw.md/summary")
+
+    assert response.status_code == 404
+
+
+def test_create_summary_returns_400_on_empty_llm_response(monkeypatch):
+    write_document()
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel("   "))
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/summary")
+
+    assert response.status_code == 400
+
+
+def test_create_chunks_endpoint_saves_and_returns_chunks():
+    write_document(
+        "doc_raw.md",
+        "지엄체크 항목\n### 제1조 [목적]\n\n이 계약은 성립됩니다.\n",
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/documents/doc_raw.md/chunk")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [c["id"] for c in body["chunks"]] == ["0::제1조"]
+
+    get_response = client.get("/api/documents/doc_raw.md/chunk")
+    assert get_response.status_code == 200
+    assert [c["id"] for c in get_response.json()["chunks"]] == ["0::제1조"]
+
+
+def test_create_chunks_returns_404_when_document_missing():
+    client = TestClient(app)
+
+    response = client.post("/api/documents/missing.md/chunk")
+
+    assert response.status_code == 404
+
+
+def test_get_chunks_returns_404_when_not_chunked():
+    write_document()
+    client = TestClient(app)
+
+    response = client.get("/api/documents/doc_raw.md/chunk")
+
+    assert response.status_code == 404
+
+
+def test_list_documents_reports_has_chunks_and_summary():
+    write_document()
+    from app.ontology import save_document_summary
+    from app.chunking import chunk_markdown_file
+
+    save_document_summary("doc_raw", "요약입니다.")
+    chunk_markdown_file("doc_raw")
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    doc = response.json()["documents"][0]
+    assert doc["summary"] == "요약입니다."
+    assert doc["has_chunks"] is True

@@ -4,7 +4,6 @@ import shutil
 import pytest
 
 from app.chunking import (
-    CHUNK_DIR,
     DATA_DIR,
     chunk_markdown,
     chunk_markdown_file,
@@ -15,6 +14,7 @@ from app.chunking import (
     parse_article_heading,
     table_to_markdown,
 )
+from app.paths import document_dir_for
 
 
 @pytest.fixture(autouse=True)
@@ -116,24 +116,25 @@ def test_chunk_markdown_scopes_ids_and_labels_per_rider_section():
     assert rider["path"] == "치아보험특약(갱신형) > 제1조(특약목적)"
 
 
-def test_chunk_markdown_file_reads_from_data_dir_and_writes_json_to_chunk_dir():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "sample_raw.md").write_text(SAMPLE_DOCUMENT, encoding="utf-8")
+def test_chunk_markdown_file_reads_from_document_dir_and_writes_chunks_json():
+    doc_dir = document_dir_for("sample_raw")
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "raw.md").write_text(SAMPLE_DOCUMENT, encoding="utf-8")
 
-    result = chunk_markdown_file("sample_raw.md")
+    result = chunk_markdown_file("sample_raw")
 
-    assert result["filename"] == "sample_raw.json"
-    assert result["path"] == "data/chunks/sample_raw.json"
+    assert result["filename"] == "chunks.json"
+    assert result["path"] == "data/documents/sample_raw/chunks.json"
     assert [chunk["id"] for chunk in result["chunks"]] == ["0::제1조", "0::제2조", "1::제1조"]
 
-    saved = json.loads((CHUNK_DIR / "sample_raw.json").read_text(encoding="utf-8"))
-    assert saved["source"] == "sample_raw.md"
+    saved = json.loads((doc_dir / "chunks.json").read_text(encoding="utf-8"))
+    assert saved["source"] == "sample_raw"
     assert len(saved["chunks"]) == 3
 
 
-def test_chunk_markdown_file_raises_for_missing_file():
+def test_chunk_markdown_file_raises_for_missing_document():
     with pytest.raises(FileNotFoundError):
-        chunk_markdown_file("does_not_exist.md")
+        chunk_markdown_file("does_not_exist")
 
 
 def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatch):
@@ -143,5 +144,8 @@ def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatc
 
     result = convert_pdf_to_markdown_file("report.pdf", b"fake pdf bytes")
 
-    assert result == {"filename": "report_raw.md", "path": "data/report_raw.md"}
-    assert (DATA_DIR / "report_raw.md").read_text() == "# report\n\nbody"
+    assert result == {
+        "filename": "report_raw.md",
+        "path": "data/documents/report_raw/raw.md",
+    }
+    assert (document_dir_for("report_raw") / "raw.md").read_text() == "# report\n\nbody"

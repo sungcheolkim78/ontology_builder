@@ -10,14 +10,14 @@ Usage:
 import json
 
 from app import graphdb
-from app.ontology import GRAPH_DIR
+from app.ontology import DOCUMENTS_DIR
 
 
 def migrate_schema_files():
-    if not GRAPH_DIR.is_dir():
-        print("No graph directory found -- nothing to migrate.")
+    if not DOCUMENTS_DIR.is_dir():
+        print("No documents directory found -- nothing to migrate.")
         return
-    for stem_dir in sorted(GRAPH_DIR.iterdir()):
+    for stem_dir in sorted(DOCUMENTS_DIR.iterdir()):
         if not stem_dir.is_dir():
             continue
         old_schema = stem_dir / "schema.json"

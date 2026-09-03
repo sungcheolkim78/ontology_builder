@@ -97,20 +97,21 @@ against the venv, not inside a container.
 Tests never touch the real `backend/data` — `tests/conftest.py` points
 `ONTOLOGY_DATA_DIR` at a throwaway temp directory before any `app.*` module
 is imported, and `app/paths.py`'s `data_dir()` (used by `parser.DATA_DIR`,
-`ontology.GRAPH_DIR`, `graphdb.DB_PATH`) honors that override. This exists
-because `test_graphdb.py`/`test_ontology.py`/`test_files.py`'s fixtures
-delete and recreate `DATA_DIR`/`GRAPH_DIR`/`graphdb.DB_PATH` before and
-after every test — before this override existed, that meant deleting every
-real extracted document, schema, and the graph DB on every test run. Do not
-remove or bypass this isolation; if you need to inspect what a test
-actually wrote, read `os.environ["ONTOLOGY_DATA_DIR"]` inside the test
-process rather than pointing tests at the project path.
+`ontology.DOCUMENTS_DIR`, `graphdb.DB_PATH`) honors that override. This
+exists because `test_graphdb.py`/`test_ontology.py`/`test_files.py`'s
+fixtures delete and recreate `DATA_DIR`/`DOCUMENTS_DIR`/`graphdb.DB_PATH`
+before and after every test — before this override existed, that meant
+deleting every real extracted document, schema, and the graph DB on every
+test run. Do not remove or bypass this isolation; if you need to inspect
+what a test actually wrote, read `os.environ["ONTOLOGY_DATA_DIR"]` inside
+the test process rather than pointing tests at the project path.
 
 ### Backing up analyzed data
 
-`backend/data` (parsed markdown, `schema.json` files, `graph.ladybugdb`) is
-git-ignored and lives only on the host (podman's bind mount, not a volume),
-so nothing else backs it up. Snapshot it with:
+`backend/data` (`documents/{stem}/` per-document folders holding raw
+markdown, schema versions, chunks, etc., plus `graph/graph.ladybugdb` and
+`domain_schemas/`) is git-ignored and lives only on the host (podman's bind
+mount, not a volume), so nothing else backs it up. Snapshot it with:
 
 ```bash
 ./scripts/backup_data.sh          # writes backups/backend-data_<timestamp>.tar.gz
@@ -138,7 +139,12 @@ doesn't).
 business logic of its own beyond request/response shaping.
 
 - `parser.py` — `anydoc` converts an uploaded document to markdown, saved
-  as `backend/data/{stem}_raw.md`.
+  as `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
+  owns this per-document folder layout; every other per-document artifact
+  -- schema versions, chunks, discovery, summary, manifest -- lives
+  alongside it in that same folder). The `{stem}_raw.md`-shaped filename
+  the rest of the app and the frontend pass around is a synthetic,
+  stable identifier, decoupled from where the file actually sits on disk.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
@@ -191,7 +197,8 @@ business logic of its own beyond request/response shaping.
   code fences, raises `ValueError` on bad JSON — every LLM-JSON caller in
   this codebase reuses this function rather than parsing independently).
   Only the schema is still a JSON file, at
-  `backend/data/graph/{stem}/schema.json`; nodes/edges are persisted in
+  `backend/data/documents/{stem}/schema_v{N}.json` (one file per version,
+  see `versions.json` in the same folder); nodes/edges are persisted in
   LadybugDB via `graphdb.write_graph`/`graphdb.load_graph`, not as
   `nodes.json`/`edges.json`. `save_graph()` calls `embed_nodes()` first,
   which embeds each node's `label`+`detail` text (batched into a single

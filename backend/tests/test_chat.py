@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import GRAPH_DIR
+from app.ontology import DOCUMENTS_DIR
 from app import graphdb
 
 NODES = [
@@ -57,7 +57,7 @@ def stub_embedding_model(monkeypatch):
 
 
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
-    graph_dir = GRAPH_DIR / stem
+    graph_dir = DOCUMENTS_DIR / stem
     graph_dir.mkdir(parents=True)
     (graph_dir / "schema_v1.json").write_text(json.dumps(schema))
     (graph_dir / "versions.json").write_text(
@@ -127,8 +127,8 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
         assert [e["type"] for e in body["related_edges"]] == ["WORKED_ON"]
     finally:
         graphdb.reset_connection()
-        if GRAPH_DIR.exists():
-            shutil.rmtree(GRAPH_DIR)
+        if DOCUMENTS_DIR.exists():
+            shutil.rmtree(DOCUMENTS_DIR)
         if graphdb.DB_PATH.exists():
             if graphdb.DB_PATH.is_file():
                 os.remove(graphdb.DB_PATH)
@@ -162,8 +162,8 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
         assert len(model.calls) == 1  # only type analysis, no final answer call
     finally:
         graphdb.reset_connection()
-        if GRAPH_DIR.exists():
-            shutil.rmtree(GRAPH_DIR)
+        if DOCUMENTS_DIR.exists():
+            shutil.rmtree(DOCUMENTS_DIR)
         if graphdb.DB_PATH.exists():
             if graphdb.DB_PATH.is_file():
                 os.remove(graphdb.DB_PATH)
@@ -212,8 +212,8 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
         assert "Ada Lovelace" in final_messages[0].content
     finally:
         graphdb.reset_connection()
-        if GRAPH_DIR.exists():
-            shutil.rmtree(GRAPH_DIR)
+        if DOCUMENTS_DIR.exists():
+            shutil.rmtree(DOCUMENTS_DIR)
         if graphdb.DB_PATH.exists():
             if graphdb.DB_PATH.is_file():
                 os.remove(graphdb.DB_PATH)
@@ -262,8 +262,8 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
         assert len(model.calls) == 1
     finally:
         graphdb.reset_connection()
-        if GRAPH_DIR.exists():
-            shutil.rmtree(GRAPH_DIR)
+        if DOCUMENTS_DIR.exists():
+            shutil.rmtree(DOCUMENTS_DIR)
         if graphdb.DB_PATH.exists():
             if graphdb.DB_PATH.is_file():
                 os.remove(graphdb.DB_PATH)

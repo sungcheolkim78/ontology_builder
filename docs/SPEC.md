@@ -16,8 +16,8 @@ Vue 3 dashboard frontend, and a podman-compose dev environment.
                     ┌──────────────────────┼──────────────────────┐
                     ▼                      ▼                      ▼
              OpenRouter API           anydoc (Rust)         backend/data/
-             (via langchain,         doc → markdown         {name}_raw.md,
-          chat + schema/extract)                       graph/{stem}/schema.json,
+             (via langchain,         doc → markdown       documents/{stem}/raw.md,
+          chat + schema/extract)                      documents/{stem}/schema_v{N}.json,
                                               graph/graph.ladybugdb (nodes/edges)
 ```
 
@@ -212,54 +212,63 @@ clickable chips that toggle that type's graph filter, and
 `related_nodes` as chips that highlight the matching nodes in the
 ontology graph panel — see the Frontend section.
 
-**`POST /api/parse`** — multipart upload, field `file`. Extracts the
+**`POST /api/parse`** — multipart upload, field `file`, optional field
+`converter` (`"anydoc"` default or `"table_aware"`, the latter only
+applying to actual `.pdf` uploads — see `app.chunking`). Extracts the
 extension from the filename (sanitized via `os.path.basename` to
 prevent path traversal), calls `anydoc.to_markdown_bytes(data, ext)`,
-saves the result to `backend/data/{stem}_raw.md`, returns
+saves the result to `backend/data/documents/{stem}/raw.md`, returns
 `{"filename": "...", "path": "data/..."}` (content is not included in
-the response — fetch it separately via `/api/files/{filename}`).
+the response — fetch it separately via `/api/files/{filename}`). The
+returned `"filename"` (`{stem}_raw.md`) is a synthetic, stable
+identifier — see `app.paths.document_dir_for` — decoupled from the
+actual on-disk path.
 `anydoc.ConvertError` and `ValueError` (e.g. unrecognized extension)
 both map to HTTP 400. A `.md` upload skips `anydoc` entirely (it only
 accepts formats it converts *into* markdown *from* — `md` isn't one of
 them, so the call would just fail) and is registered as-is: the
-uploaded bytes are UTF-8-decoded and written straight to
-`{stem}_raw.md`, with an invalid-UTF-8 upload also mapping to 400.
+uploaded bytes are UTF-8-decoded and written straight to `raw.md`,
+with an invalid-UTF-8 upload also mapping to 400.
 
-**`GET /api/files`** — lists `backend/data/*` (excluding dotfiles like
-`.gitkeep`), sorted by modification time, newest first:
-`{"files": [{"filename": "..."}]}`.
+**`GET /api/files`** — lists every `backend/data/documents/{stem}/`
+folder that has a `raw.md` in it, sorted by that file's modification
+time, newest first: `{"files": [{"filename": "..."}]}`.
 
 **`GET /api/files/{filename}`** — plain-text read of
-`backend/data/{filename}`, 404 if missing, `basename`-sanitized against
-path traversal.
+`backend/data/documents/{stem}/raw.md`, 404 if missing,
+`basename`-sanitized against path traversal.
 
 **`POST /api/ontology/{filename}/schema`** — reads
-`backend/data/{filename}`, prompts the LLM (same `get_chat_model()` as
-chat) to propose an ontology schema for that document, parses the
-response as JSON (stripping markdown code fences if present), saves it
-to `backend/data/graph/{stem}/schema.json` (`stem` = filename without
-extension), and returns it. Schema shape:
+`backend/data/documents/{stem}/raw.md`, prompts the LLM (same
+`get_chat_model()` as chat) to propose an ontology schema for that
+document, parses the response as JSON (stripping markdown code fences
+if present), saves it to
+`backend/data/documents/{stem}/schema_v{N}.json` (`stem` = filename
+without extension, `N` = next version number, tracked in
+`documents/{stem}/versions.json`), and returns it plus `"version"`.
+Schema shape:
 `{"node_types": [{"name", "description"}], "edge_types": [{"name", "description", "source", "target"}]}`.
 404 if the document doesn't exist; 400 if the LLM's response isn't
 parseable/well-shaped JSON.
 
-**`GET /api/ontology/schemas`** — scans `backend/data/graph/*/schema.json`,
-returns `{"schemas": [{"stem": "..."}]}` for the "스키마 라이브러리" list
+**`GET /api/ontology/schemas`** — scans
+`backend/data/documents/*/versions.json`, returns
+`{"schemas": [{"stem": "..."}]}` for the "스키마 라이브러리" list
 in `SettingsPanel`.
 
 **`POST /api/ontology/{filename}/schema/use`** — body
-`{"source_stem": "..."}`. Loads `graph/{source_stem}/schema.json` (404
-if that source has no schema) and saves it as
-`graph/{stem}/schema.json`, i.e. designates it the active schema for
-`filename`. Returns the copied schema.
+`{"source_stem": "..."}`. Loads `documents/{source_stem}`'s active
+schema version (404 if that source has no schema) and saves it as a
+new schema version under `documents/{stem}`, i.e. designates it the
+active schema for `filename`. Returns the copied schema.
 
 **`GET /api/ontology/{filename}/schema`** — reads back
-`graph/{stem}/schema.json`; 404 if none has been generated/assigned
-yet. Used by the frontend to show schema status and to drive the
-"schema preview" graph mode before extraction has run.
+`documents/{stem}`'s active schema version; 404 if none has been
+generated/assigned yet. Used by the frontend to show schema status and
+to drive the "schema preview" graph mode before extraction has run.
 
 **`POST /api/ontology/{filename}/extract`** — loads
-`graph/{stem}/schema.json`; if none exists, falls back to
+`documents/{stem}`'s active schema version; if none exists, falls back to
 `DEFAULT_SCHEMA` (a generic `Entity`/`RELATED_TO` schema) and persists
 it as this document's schema rather than erroring, so "extract" always
 produces *something*. Prompts the LLM to extract nodes/edges from the
@@ -719,9 +728,11 @@ it is a deliberate opt-in, not something `render.yaml` forces.
   per-user/session separation, and chat history is not saved anywhere.
 - **No migration from the pre-LadybugDB JSON storage.** Documents
   extracted before graph storage moved to LadybugDB have leftover
-  `graph/{stem}/nodes.json` / `edges.json` files on disk; the new code
-  never reads or deletes them, so they linger harmlessly but
-  permanently. Such documents behave as if never extracted
+  `nodes.json` / `edges.json` files under the old (pre-`documents/`
+  layout) `data/graph/{stem}/` location on disk; no code reads or
+  deletes them, so they linger harmlessly but permanently — and since
+  the `documents/{stem}/` migration didn't move them either, they're
+  now doubly orphaned. Such documents behave as if never extracted
   (`GET /api/ontology/{f}` → 404) until re-extracted, which populates
   LadybugDB and leaves the stale JSON files in place, unused.
 - **No DDL garbage collection.** Re-extracting a document under a

@@ -20,10 +20,9 @@ from typing import Any
 
 import pdfplumber
 
-from app.paths import data_dir
+from app.paths import data_dir, document_dir_for
 
 DATA_DIR = data_dir()
-CHUNK_DIR = data_dir() / "chunks"
 
 
 # --- PDF -> Markdown (table-aware) -----------------------------------------
@@ -168,17 +167,19 @@ def convert_pdf_to_markdown(data: bytes, title: str) -> str:
 
 
 def convert_pdf_to_markdown_file(filename: str, data: bytes) -> dict:
-    """Convert an uploaded PDF to Markdown and save it as `{stem}_raw.md`,
-    matching the output layout of `app.parser.parse_to_markdown_file`."""
+    """Convert an uploaded PDF to Markdown and save it as
+    documents/{stem}_raw/raw.md, matching the output layout of
+    `app.parser.parse_to_markdown_file`."""
     safe_name = os.path.basename(filename)
     stem = Path(safe_name).stem
     markdown = convert_pdf_to_markdown(data, stem)
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    out_name = f"{stem}_raw.md"
-    (DATA_DIR / out_name).write_text(markdown)
+    out_stem = f"{stem}_raw"
+    doc_dir = document_dir_for(out_stem)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "raw.md").write_text(markdown)
 
-    return {"filename": out_name, "path": f"data/{out_name}"}
+    return {"filename": f"{out_stem}.md", "path": f"data/documents/{out_stem}/raw.md"}
 
 
 # --- Markdown -> per-article JSON chunks ------------------------------------
@@ -283,23 +284,20 @@ def chunk_markdown(text: str, source_name: str) -> dict:
     return {"source": source_name, "preamble": preamble, "chunks": chunks}
 
 
-def chunk_markdown_file(filename: str) -> dict:
-    """Chunk a Markdown file already registered under DATA_DIR (e.g. the
-    `{stem}_raw.md` written by `parse_to_markdown_file`/
-    `convert_pdf_to_markdown_file`) and save the result as
-    `{stem}.json` under CHUNK_DIR."""
-    safe_name = os.path.basename(filename)
-    source_path = DATA_DIR / safe_name
+def chunk_markdown_file(stem: str) -> dict:
+    """Chunk the document's own raw.md (written by parse_to_markdown_file/
+    convert_pdf_to_markdown_file) and save the result as chunks.json in that
+    same document folder."""
+    doc_dir = document_dir_for(stem)
+    source_path = doc_dir / "raw.md"
     if not source_path.is_file():
-        raise FileNotFoundError(f"markdown file not found: {safe_name}")
+        raise FileNotFoundError(f"markdown file not found for document: {stem}")
 
-    stem = Path(safe_name).stem
-    result = chunk_markdown(source_path.read_text(encoding="utf-8"), safe_name)
+    result = chunk_markdown(source_path.read_text(encoding="utf-8"), stem)
 
-    CHUNK_DIR.mkdir(parents=True, exist_ok=True)
-    out_name = f"{stem}.json"
-    (CHUNK_DIR / out_name).write_text(
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "chunks.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    return {"filename": out_name, "path": f"data/chunks/{out_name}", **result}
+    return {"filename": "chunks.json", "path": f"data/documents/{stem}/chunks.json", **result}

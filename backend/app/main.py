@@ -1,8 +1,9 @@
+import json
 import os
 from pathlib import Path
 
 import anydoc
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
@@ -40,6 +41,7 @@ from app.ontology import (
     list_versions,
     load_discovery,
     load_document_manifest,
+    load_document_summary,
     load_domain_pending_review,
     load_domain_schema,
     load_graph,
@@ -49,11 +51,15 @@ from app.ontology import (
     run_domain_convergence,
     save_discovery,
     save_document_manifest,
+    save_document_summary,
     save_graph,
+    summarize_document,
     use_domain_schema,
     validate_ontology,
 )
-from app.parser import DATA_DIR, parse_to_markdown_file
+from app.chunking import chunk_markdown_file, convert_pdf_to_markdown_file
+from app.parser import parse_to_markdown_file
+from app.paths import document_dir_for, documents_dir
 from app.telemetry import configure_telemetry, invoke_with_telemetry
 
 configure_telemetry()
@@ -200,33 +206,53 @@ def chat(request: ChatRequest):
 
 
 @app.post("/api/parse")
-async def parse(file: UploadFile = File(...)):
+async def parse(file: UploadFile = File(...), converter: str = Form("anydoc")):
     data = await file.read()
+    ext = Path(os.path.basename(file.filename)).suffix.lstrip(".").lower()
+    # "table_aware" only applies to actual PDFs -- pdfplumber can't parse
+    # anything else, so any other extension always falls back to anydoc
+    # regardless of what the uploader picked.
+    use_table_aware = converter == "table_aware" and ext == "pdf"
     try:
-        result = parse_to_markdown_file(file.filename, data)
+        if use_table_aware:
+            result = convert_pdf_to_markdown_file(file.filename, data)
+        else:
+            result = parse_to_markdown_file(file.filename, data)
     except (anydoc.ConvertError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
-    save_document_manifest(_stem(result["filename"]), file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF 변환 실패: {e}")
+    save_document_manifest(
+        _stem(result["filename"]), file.filename, converter="table_aware" if use_table_aware else "anydoc"
+    )
     return result
+
+
+def _document_raw_files() -> list[tuple[str, Path]]:
+    """(stem, raw.md path) for every registered document, newest first --
+    the single place that knows a document is "a folder under documents_dir()
+    with a raw.md in it", so /api/files and /api/documents can't drift apart
+    on what counts as a document."""
+    if not documents_dir().is_dir():
+        return []
+    entries = [
+        (d.name, d / "raw.md")
+        for d in documents_dir().iterdir()
+        if d.is_dir() and not d.name.startswith(".") and (d / "raw.md").is_file()
+    ]
+    return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)
 
 
 @app.get("/api/files")
 def list_files():
-    if not DATA_DIR.is_dir():
-        return {"files": []}
-    paths = sorted(DATA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
     return {
-        "files": [
-            {"filename": p.name}
-            for p in paths
-            if p.is_file() and not p.name.startswith(".")
-        ]
+        "files": [{"filename": f"{stem}.md"} for stem, _ in _document_raw_files()]
     }
 
 
 @app.get("/api/files/{filename}", response_class=PlainTextResponse)
 def get_file(filename: str):
-    safe_path = DATA_DIR / os.path.basename(filename)
+    safe_path = _document_path(filename)
     if not safe_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return safe_path.read_text()
@@ -234,20 +260,20 @@ def get_file(filename: str):
 
 @app.get("/api/documents")
 def list_documents():
-    if not DATA_DIR.is_dir():
-        return {"documents": []}
-    paths = sorted(DATA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
     documents = []
-    for p in paths:
-        if not p.is_file() or p.name.startswith("."):
-            continue
-        stem = p.stem
+    for stem, raw_path in _document_raw_files():
         manifest = load_document_manifest(stem)
         active_version = get_active_version(stem)
+        stat = raw_path.stat()
         documents.append(
             {
-                "filename": p.name,
-                "original_filename": (manifest or {}).get("original_filename", p.name),
+                "filename": f"{stem}.md",
+                "original_filename": (manifest or {}).get("original_filename", f"{stem}.md"),
+                "converter": (manifest or {}).get("converter", "anydoc"),
+                "size_bytes": stat.st_size,
+                "modified_at": stat.st_mtime,
+                "summary": load_document_summary(stem),
+                "has_chunks": _chunk_path(stem).is_file(),
                 "has_schema": active_version is not None,
                 "has_graph": active_version is not None
                 and graphdb.has_graph(stem, version=active_version),
@@ -258,11 +284,53 @@ def list_documents():
 
 
 def _document_path(filename: str) -> Path:
-    return DATA_DIR / os.path.basename(filename)
+    return document_dir_for(_stem(filename)) / "raw.md"
 
 
 def _stem(filename: str) -> str:
     return Path(os.path.basename(filename)).stem
+
+
+def _chunk_path(stem: str) -> Path:
+    return document_dir_for(stem) / "chunks.json"
+
+
+@app.post("/api/documents/{filename}/chunk")
+def create_chunks(filename: str):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    result = chunk_markdown_file(_stem(filename))
+    return result
+
+
+@app.get("/api/documents/{filename}/chunk")
+def get_chunks(filename: str):
+    path = _chunk_path(_stem(filename))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="chunks not found")
+    return json.loads(path.read_text())
+
+
+@app.post("/api/documents/{filename}/summary")
+def create_summary(filename: str):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        summary = summarize_document(doc_path.read_text())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_document_summary(_stem(filename), summary)
+    return {"summary": summary}
+
+
+@app.get("/api/documents/{filename}/summary")
+def get_summary(filename: str):
+    summary = load_document_summary(_stem(filename))
+    if summary is None:
+        raise HTTPException(status_code=404, detail="summary not found")
+    return {"summary": summary}
 
 
 @app.get("/api/ontology/schemas")

@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,8 +8,9 @@ from fastapi.testclient import TestClient
 from app import graphdb
 from app.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import GRAPH_DIR
+from app.ontology import DOCUMENTS_DIR
 from app.parser import DATA_DIR
+from app.paths import document_dir_for
 
 
 class FakeChatModel:
@@ -42,13 +42,18 @@ def clean_data_dir():
         shutil.rmtree(DATA_DIR)
 
 
+def write_raw(stem, content="content"):
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "raw.md").write_text(content)
+    return d
+
+
 def test_list_files_returns_saved_filenames_newest_first():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "older_raw.md").write_text("old")
-    (DATA_DIR / "older_raw.md").touch()
-    os.utime(DATA_DIR / "older_raw.md", (1000, 1000))
-    (DATA_DIR / "newer_raw.md").write_text("new")
-    os.utime(DATA_DIR / "newer_raw.md", (2000, 2000))
+    write_raw("older_raw", "old")
+    os.utime(document_dir_for("older_raw") / "raw.md", (1000, 1000))
+    write_raw("newer_raw", "new")
+    os.utime(document_dir_for("newer_raw") / "raw.md", (2000, 2000))
     client = TestClient(app)
 
     response = client.get("/api/files")
@@ -59,10 +64,10 @@ def test_list_files_returns_saved_filenames_newest_first():
     }
 
 
-def test_list_files_excludes_hidden_files():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / ".gitkeep").write_text("")
-    (DATA_DIR / "report_raw.md").write_text("content")
+def test_list_files_excludes_hidden_entries():
+    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    (DOCUMENTS_DIR / ".DS_Store").write_text("")
+    write_raw("report_raw")
     client = TestClient(app)
 
     response = client.get("/api/files")
@@ -83,11 +88,9 @@ def test_list_files_returns_empty_list_when_no_data_dir():
 def test_list_documents_reports_original_filename_and_schema_and_graph_status():
     from app.ontology import save_document_manifest
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "report_raw.md").write_text("content")
+    write_raw("report_raw")
     save_document_manifest("report_raw", "report.docx")
-    d = GRAPH_DIR / "report_raw"
-    d.mkdir(parents=True, exist_ok=True)
+    d = document_dir_for("report_raw")
     (d / "schema_v1.json").write_text(json.dumps({"node_types": [], "edge_types": []}))
     (d / "versions.json").write_text(
         json.dumps(
@@ -99,22 +102,27 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
     response = client.get("/api/documents")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "documents": [
-            {
-                "filename": "report_raw.md",
-                "original_filename": "report.docx",
-                "has_schema": True,
-                "has_graph": False,
-                "graphdb_name": graphdb.DB_PATH.name,
-            }
-        ]
+    body = response.json()
+    assert len(body["documents"]) == 1
+    doc = body["documents"][0]
+    assert doc["size_bytes"] > 0
+    assert isinstance(doc["modified_at"], float)
+    doc.pop("size_bytes")
+    doc.pop("modified_at")
+    assert doc == {
+        "filename": "report_raw.md",
+        "original_filename": "report.docx",
+        "converter": "anydoc",
+        "summary": None,
+        "has_chunks": False,
+        "has_schema": True,
+        "has_graph": False,
+        "graphdb_name": graphdb.DB_PATH.name,
     }
 
 
 def test_list_documents_falls_back_to_derived_filename_without_manifest():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "report_raw.md").write_text("content")
+    write_raw("report_raw")
     client = TestClient(app)
 
     response = client.get("/api/documents")
@@ -136,8 +144,7 @@ def test_list_documents_returns_empty_list_when_no_data_dir():
 
 
 def test_get_file_returns_saved_markdown_content():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "report_raw.md").write_text("# hello")
+    write_raw("report_raw", "# hello")
     client = TestClient(app)
 
     response = client.get("/api/files/report_raw.md")
@@ -155,14 +162,11 @@ def test_get_file_returns_404_for_missing_file():
 
 
 def test_list_files_excludes_ladybugdb_files(monkeypatch):
-    # Regression test: graphdb.DB_PATH must live outside DATA_DIR's top
-    # level, since GET /api/files lists everything directly in DATA_DIR.
-    # Extracting a graph creates the ladybug DB file (and a .wal sidecar);
-    # neither should ever show up as a "document" here.
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "doc_raw.md").write_text("# Doc\nAlice works at Acme.")
-    d = GRAPH_DIR / "doc_raw"
-    d.mkdir(parents=True)
+    # Regression test: graphdb.DB_PATH lives under data/graph/, a sibling of
+    # data/documents/ -- GET /api/files only ever lists document folders, so
+    # the ladybug DB file (and its .wal sidecar) must never show up here.
+    write_raw("doc_raw", "# Doc\nAlice works at Acme.")
+    d = document_dir_for("doc_raw")
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     (d / "schema_v1.json").write_text(json.dumps(schema))
     (d / "versions.json").write_text(

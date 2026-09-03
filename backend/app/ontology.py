@@ -12,9 +12,9 @@ from app.chat import get_chat_model
 from app.embeddings import get_embedding_model, node_embedding_text
 from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 from app import graphdb
-from app.paths import data_dir
+from app.paths import data_dir, document_dir_for, documents_dir
 
-GRAPH_DIR = data_dir() / "graph"
+DOCUMENTS_DIR = documents_dir()
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +387,26 @@ true/false, "rationale": "..."}}], "events": [{{"name": "...", "definition": \
 Document:
 {document}
 """
+
+
+SUMMARY_PROMPT = """다음 문서를 한국어로 2~3문장으로 간결하게 요약하세요. \
+설명이나 머리말 없이 요약문만 출력하세요.
+
+문서:
+{document}
+"""
+
+
+def summarize_document(document_text: str, max_chars: int | None = None) -> str:
+    _check_document_length(document_text, max_chars)
+    model = get_chat_model()
+    response = invoke_with_telemetry(
+        "ontology.summarize_document", model, SUMMARY_PROMPT.format(document=document_text)
+    )
+    summary = response.content.strip()
+    if not summary:
+        raise ValueError("summary generation returned empty content")
+    return summary
 
 
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
@@ -1042,12 +1062,8 @@ def use_domain_schema(stem: str, domain: str, document_type: str = "general") ->
     return create_schema_version(stem, schema, document_type=document_type)
 
 
-def graph_dir_for(stem: str) -> Path:
-    return GRAPH_DIR / stem
-
-
 def versions_path(stem: str) -> Path:
-    return graph_dir_for(stem) / "versions.json"
+    return document_dir_for(stem) / "versions.json"
 
 
 def _load_versions_manifest(stem: str) -> dict:
@@ -1058,7 +1074,7 @@ def _load_versions_manifest(stem: str) -> dict:
 
 
 def _save_versions_manifest(stem: str, manifest: dict) -> None:
-    d = graph_dir_for(stem)
+    d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
     versions_path(stem).write_text(json.dumps(manifest))
 
@@ -1072,11 +1088,11 @@ def get_active_version(stem: str) -> int | None:
 
 
 def schema_path_for_version(stem: str, version: int) -> Path:
-    return graph_dir_for(stem) / f"schema_v{version}.json"
+    return document_dir_for(stem) / f"schema_v{version}.json"
 
 
 def save_schema(stem: str, version: int, schema: dict) -> None:
-    d = graph_dir_for(stem)
+    d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
     schema_path_for_version(stem, version).write_text(json.dumps(schema))
 
@@ -1125,27 +1141,30 @@ def delete_version(stem: str, version: int) -> None:
     _save_versions_manifest(stem, manifest)
 
 
-def save_document_manifest(stem: str, original_filename: str) -> None:
-    """Records the one piece of per-document info the rest of this module's
-    stem-based file layout loses: the filename as originally uploaded (e.g.
-    "report.docx"), before parser.py renames it to "{stem}_raw.md". Schema
-    and graph presence are deliberately NOT duplicated here -- load_schema
-    and graphdb.has_graph already answer those live, so there's nothing to
-    keep in sync."""
-    d = graph_dir_for(stem)
+def save_document_manifest(stem: str, original_filename: str, converter: str = "anydoc") -> None:
+    """Records the per-document info the rest of this module's stem-based
+    file layout loses: the filename as originally uploaded (e.g.
+    "report.docx"), before parser.py renames it to "{stem}_raw.md", and
+    which PDF-to-Markdown converter produced that Markdown ("anydoc" or
+    "table_aware" -- see app.chunking). Schema and graph presence are
+    deliberately NOT duplicated here -- load_schema and graphdb.has_graph
+    already answer those live, so there's nothing to keep in sync."""
+    d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "manifest.json").write_text(json.dumps({"original_filename": original_filename}))
+    (d / "manifest.json").write_text(
+        json.dumps({"original_filename": original_filename, "converter": converter})
+    )
 
 
 def load_document_manifest(stem: str) -> dict | None:
-    path = graph_dir_for(stem) / "manifest.json"
+    path = document_dir_for(stem) / "manifest.json"
     if not path.is_file():
         return None
     return json.loads(path.read_text())
 
 
 def discovery_path_for(stem: str) -> Path:
-    return graph_dir_for(stem) / "discovery.json"
+    return document_dir_for(stem) / "discovery.json"
 
 
 def save_discovery(stem: str, report: dict) -> None:
@@ -1153,7 +1172,7 @@ def save_discovery(stem: str, report: dict) -> None:
     is an exploratory, re-runnable read of the document itself, not tied to
     any particular schema/extraction attempt, so overwriting on every run
     (rather than versioning it like schema_v{N}.json) is intentional."""
-    d = graph_dir_for(stem)
+    d = document_dir_for(stem)
     d.mkdir(parents=True, exist_ok=True)
     discovery_path_for(stem).write_text(json.dumps(report))
 
@@ -1163,6 +1182,25 @@ def load_discovery(stem: str) -> dict | None:
     if not path.is_file():
         return None
     return json.loads(path.read_text())
+
+
+def summary_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "summary.json"
+
+
+def save_document_summary(stem: str, summary: str) -> None:
+    """One summary per document, overwritten on regeneration -- same
+    exploratory-artifact model as discover_ontology/save_discovery above."""
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    summary_path_for(stem).write_text(json.dumps({"summary": summary}, ensure_ascii=False))
+
+
+def load_document_summary(stem: str) -> str | None:
+    path = summary_path_for(stem)
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())["summary"]
 
 
 def embed_nodes(nodes: list) -> list:
@@ -1199,11 +1237,11 @@ def embed_graph(stem: str, version: int = 1) -> int:
 
 
 def list_schema_stems() -> list[str]:
-    if not GRAPH_DIR.is_dir():
+    if not DOCUMENTS_DIR.is_dir():
         return []
     return [
         d.name
-        for d in GRAPH_DIR.iterdir()
+        for d in DOCUMENTS_DIR.iterdir()
         if d.is_dir() and (d / "versions.json").is_file()
     ]
 
