@@ -258,7 +258,20 @@ business logic of its own beyond request/response shaping.
   output shape than discovery's `CONSOLIDATION_PROMPT`. Either way, a
   document small enough to fit in one group skips consolidation entirely and
   returns that group's result untouched, so the common case still costs
-  exactly one LLM call.
+  exactly one LLM call. `extract_graph()` (instance extraction, above) gets
+  the same chunk-based treatment via `extract_graph_from_chunks()`, called
+  from `main.py`'s `/api/ontology/{filename}/extract` route the same way --
+  but its reduce step is deliberately code-only, not a second LLM call: a
+  document's node/edge *count* scales with its length, unlike a schema's
+  small, fixed-size type list, so folding potentially hundreds of instances
+  back through an LLM wouldn't fit the same budget consolidation does for
+  types. Instead, `_merge_group_graphs()` namespaces each group's node ids
+  by group index (a node id is only ever unique within the group that
+  produced it) and merges nodes across group boundaries by exact (type,
+  label) match -- the same entity recurring in a later article is expected
+  to reuse the document's own term for it verbatim, per EXTRACT_PROMPT's own
+  "canonical surface form" instruction -- then rewrites every edge to point
+  at the merged canonical ids and drops exact-duplicate edges.
 - `graphrag.py` — the retrieval side of chat, a schema-aware search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`
   sends the document's schema + the question to the LLM, asking which

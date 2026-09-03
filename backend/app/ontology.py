@@ -360,6 +360,68 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     return graph
 
 
+def _merge_group_graphs(group_graphs: list[dict]) -> dict:
+    """Merges independently-extracted per-group graphs into one, resolving
+    coreference *across* group boundaries by exact (type, label) match --
+    the same entity recurring in a later article is expected to reuse the
+    document's own term for it verbatim (see EXTRACT_PROMPT's "canonical
+    surface form" instruction), so this catches the common case cheaply
+    without a second LLM pass. A node id is only ever unique within the
+    group that produced it (extract_graph's own contract), so every id is
+    first namespaced by its group index before being deduped down to one
+    canonical id per (type, label); edges are then rewritten to point at
+    those canonical ids."""
+    canonical_id_by_key: dict[tuple[str, str], str] = {}
+    id_map: dict[tuple[int, str], str] = {}
+    merged_nodes = []
+    for group_index, graph in enumerate(group_graphs):
+        for node in graph["nodes"]:
+            key = (node["type"], node["label"])
+            canonical_id = canonical_id_by_key.get(key)
+            if canonical_id is None:
+                canonical_id = f"g{group_index}::{node['id']}"
+                canonical_id_by_key[key] = canonical_id
+                merged_nodes.append({**node, "id": canonical_id})
+            id_map[(group_index, node["id"])] = canonical_id
+
+    merged_edges = []
+    for group_index, graph in enumerate(group_graphs):
+        for edge in graph["edges"]:
+            source = id_map.get((group_index, edge["source"]))
+            target = id_map.get((group_index, edge["target"]))
+            if source is None or target is None:
+                continue
+            merged_edges.append({**edge, "source": source, "target": target})
+    merged_edges = _dedupe_by_key(merged_edges, key=lambda e: (e["source"], e["target"], e["type"]))
+
+    return {"nodes": merged_nodes, "edges": merged_edges}
+
+
+def extract_graph_from_chunks(
+    chunk_items: list[dict], schema: dict, max_group_chars: int | None = None
+) -> dict:
+    """Runs extract_graph() once per token-budget-sized group of consecutive
+    chunks (see group_chunks_by_budget), then merges every group's nodes/
+    edges into one graph via _merge_group_graphs. Unlike
+    discover_ontology_from_chunks/generate_schema_from_chunks, this never
+    sends extracted instances back through an LLM to merge -- a document's
+    node/edge count scales with its length, unlike a schema's small,
+    fixed-size type list, so an LLM consolidation pass here wouldn't fit the
+    same budget it does for types; exact (type, label) matching is used
+    instead. A document small enough to fit in one group skips
+    namespacing/merging entirely and returns that single group's graph
+    untouched, so the common case still costs exactly one LLM call."""
+    groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
+    if not groups:
+        raise ValueError("no chunks to extract graph from")
+
+    group_graphs = [extract_graph(_group_document_text(group), schema) for group in groups]
+    if len(group_graphs) == 1:
+        return group_graphs[0]
+
+    return _merge_group_graphs(group_graphs)
+
+
 def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     model = get_chat_model()

@@ -34,6 +34,7 @@ from app.ontology import (
     embed_graph,
     evaluate_domain_schema,
     extract_graph,
+    extract_graph_from_chunks,
     find_redundant_type_pairs,
     generate_schema,
     generate_schema_from_chunks,
@@ -459,8 +460,16 @@ def create_extraction(filename: str):
     if version is None:
         version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
     schema = load_schema(stem, version)
+    chunk_path = _chunk_path(stem)
     try:
-        graph = extract_graph(doc_path.read_text(), schema)
+        if chunk_path.is_file():
+            # Same rationale as /discover and /schema above -- see
+            # extract_graph_from_chunks in app.ontology.
+            chunked = json.loads(chunk_path.read_text())
+            chunk_items = [chunked["preamble"], *chunked["chunks"]]
+            graph = extract_graph_from_chunks(chunk_items, schema)
+        else:
+            graph = extract_graph(doc_path.read_text(), schema)
         save_graph(stem, graph, version=version)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

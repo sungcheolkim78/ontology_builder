@@ -531,6 +531,94 @@ def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
     assert response.json()["edges"] == []
 
 
+def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
+    from app.ontology import extract_graph_from_chunks
+
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    fake_model = RecordingChatModel(json.dumps(graph))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+
+    result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
+
+    assert result == graph
+    assert len(fake_model.prompts) == 1
+
+
+def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeypatch):
+    from app.ontology import extract_graph_from_chunks
+
+    schema = {
+        "node_types": [{"name": "Person", "description": "a person"}, {"name": "Org", "description": "an org"}],
+        "edge_types": [{"name": "WORKS_AT", "description": "works at", "source": "Person", "target": "Org"}],
+    }
+    graph1 = {
+        "nodes": [
+            {"id": "n1", "label": "Alice", "type": "Person"},
+            {"id": "n2", "label": "Acme", "type": "Org"},
+        ],
+        "edges": [{"source": "n1", "target": "n2", "type": "WORKS_AT"}],
+    }
+    graph2 = {
+        # Same real-world entities under the same exact labels (as
+        # EXTRACT_PROMPT's "canonical surface form" instruction expects) but
+        # different, group-local ids -- must merge into graph1's nodes.
+        "nodes": [
+            {"id": "a", "label": "Alice", "type": "Person"},
+            {"id": "b", "label": "Acme", "type": "Org"},
+            {"id": "c", "label": "Bob", "type": "Person"},
+        ],
+        "edges": [
+            {"source": "a", "target": "b", "type": "WORKS_AT"},
+            {"source": "c", "target": "b", "type": "WORKS_AT"},
+        ],
+    }
+    fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = extract_graph_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], schema, max_group_chars=30
+    )
+
+    labels = {(n["type"], n["label"]) for n in result["nodes"]}
+    assert labels == {("Person", "Alice"), ("Org", "Acme"), ("Person", "Bob")}
+    assert len(result["nodes"]) == 3  # Alice/Acme deduped, not double-counted
+    # The duplicate Alice->Acme edge from graph2 collapses into graph1's;
+    # Bob->Acme survives as its own edge.
+    assert len(result["edges"]) == 2
+    alice_id = next(n["id"] for n in result["nodes"] if n["label"] == "Alice")
+    acme_id = next(n["id"] for n in result["nodes"] if n["label"] == "Acme")
+    bob_id = next(n["id"] for n in result["nodes"] if n["label"] == "Bob")
+    edge_pairs = {(e["source"], e["target"]) for e in result["edges"]}
+    assert edge_pairs == {(alice_id, acme_id), (bob_id, acme_id)}
+
+
+def test_extract_endpoint_uses_chunks_when_present(monkeypatch):
+    write_document()
+    stem = "doc_raw"
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    seed_schema_version(stem, schema)
+    (document_dir_for(stem) / "chunks.json").write_text(
+        json.dumps(
+            {
+                "source": stem,
+                "preamble": {"line_start": 1, "line_end": 1, "text": ""},
+                "chunks": [
+                    {"id": "0::제1조", "section_index": 0, "section_label": "주계약", "article_no": "1", "sub_no": None, "title": "목적", "path": "주계약 > 제1조(목적)", "line_start": 1, "line_end": 2, "text": "Alice works here."},
+                ],
+            }
+        )
+    )
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(graph)))
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/extract")
+
+    assert response.status_code == 200
+    assert response.json() == graph
+
+
 def test_get_ontology_returns_saved_graph():
     from app import graphdb
     seed_schema_version("doc_raw", DEFAULT_SCHEMA)
