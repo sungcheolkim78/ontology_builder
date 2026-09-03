@@ -24,6 +24,20 @@ Vue 3 dashboard frontend, and a podman-compose dev environment.
 Both services run as separate containers via `podman-compose.yml`,
 each with source volume-mounted for hot-reload during development.
 
+## Development workflow
+
+For any non-trivial feature (new endpoint, new data layout, new UI
+behavior — not a one-line fix), write a short spec first, then
+implement test-first (TDD): write a failing test, make it pass, repeat.
+`docs/data-layout-proposal.md` and `docs/chunk-view-spec.md` are the
+precedent for the spec step — a focused doc covering what's changing,
+why, and the concrete before/after, written *before* touching code, not
+after. The test-first step means backend changes go through
+`backend/tests/` (pytest, see "Tests" below) and frontend logic/component
+changes go through `frontend/src/**/__tests__/` (Vitest, see "Frontend
+tests" below) — write the test against the not-yet-existing behavior,
+watch it fail, then implement.
+
 ## Backend (`backend/`)
 
 FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
@@ -106,6 +120,11 @@ no network calls and negligible overhead when running tests locally
 | POST | `/api/parse` | Upload a document, convert to markdown |
 | GET | `/api/files` | List parsed documents, newest first |
 | GET | `/api/files/{filename}` | Read back a saved markdown file |
+| GET | `/api/documents` | List documents with converter/size/summary/chunk/schema/graph status |
+| POST | `/api/documents/{filename}/chunk` | Split `raw.md` into per-article JSON chunks |
+| GET | `/api/documents/{filename}/chunk` | Read back the saved chunks |
+| POST | `/api/documents/{filename}/summary` | LLM generates a short document summary |
+| GET | `/api/documents/{filename}/summary` | Read back the saved summary |
 | GET | `/api/ontology/schemas` | List every document stem that has a saved schema |
 | POST | `/api/ontology/{filename}/schema` | LLM proposes a node/edge type schema for the document |
 | POST | `/api/ontology/{filename}/schema/use` | Copy another document's schema onto this one |
@@ -238,6 +257,37 @@ time, newest first: `{"files": [{"filename": "..."}]}`.
 `backend/data/documents/{stem}/raw.md`, 404 if missing,
 `basename`-sanitized against path traversal.
 
+**`GET /api/documents`** — like `GET /api/files` but one row per document
+with everything the File Explorer's right-hand panel needs:
+`original_filename`/`converter` (from `manifest.json`, defaulting to the
+derived filename/`"anydoc"` when no manifest was ever written),
+`size_bytes`/`modified_at` (from `raw.md`'s own `stat()`), `summary`
+(`load_document_summary`, `null` if never generated), `has_chunks`
+(`documents/{stem}/chunks.json` exists), `has_schema`/`has_graph`
+(active schema version / `graphdb.has_graph` for that version), and
+`graphdb_name`.
+
+**`POST /api/documents/{filename}/chunk`** — reads
+`documents/{stem}/raw.md`, runs `app.chunking.chunk_markdown` (Korean
+`제N조` article headings; see `app.chunking`'s module docstring and
+`scripts/data_prep/README.md` for the heading/section heuristics), and
+saves `{"source", "preamble": {...}, "chunks": [...]}` to
+`documents/{stem}/chunks.json`. 404 if the document doesn't exist.
+Re-running overwrites the previous chunks (no versioning, unlike schema).
+
+**`GET /api/documents/{filename}/chunk`** — reads back
+`documents/{stem}/chunks.json`; 404 if chunking hasn't been run yet.
+
+**`POST /api/documents/{filename}/summary`** — reads
+`documents/{stem}/raw.md`, prompts the LLM for a 2-3 sentence plain-text
+(not JSON) summary via `ontology.summarize_document`, saves it to
+`documents/{stem}/summary.json`, and returns `{"summary": "..."}`. 404 if
+the document doesn't exist; 400 if the LLM returns empty content.
+Re-running overwrites the previous summary.
+
+**`GET /api/documents/{filename}/summary`** — reads back the saved
+summary; 404 if none has been generated yet.
+
 **`POST /api/ontology/{filename}/schema`** — reads
 `backend/data/documents/{stem}/raw.md`, prompts the LLM (same
 `get_chat_model()` as chat) to propose an ontology schema for that
@@ -363,8 +413,9 @@ Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 ### Tests
 
 `backend/tests/` (pytest, run via `python -m pytest`): `test_auth.py`,
-`test_chat.py`, `test_config.py`, `test_files.py`, `test_graphdb.py`,
-`test_graphrag.py`, `test_ontology.py`, `test_parse.py`, `test_telemetry.py`.
+`test_chat.py`, `test_chunking.py`, `test_config.py`, `test_files.py`,
+`test_graphdb.py`, `test_graphrag.py`, `test_ontology.py`, `test_parse.py`,
+`test_paths.py`, `test_telemetry.py`.
 `test_auth.py` patches both `app.auth.APP_PASSWORD` and
 `app.main.APP_PASSWORD` per test (the latter is a separate name bound
 by `main.py`'s `from app.auth import APP_PASSWORD`, so patching only
@@ -391,6 +442,15 @@ an autouse fixture that deletes and recreates `graphdb.DB_PATH` before
 and after every test; see the "Backend tests" section of `CLAUDE.md`
 for the operational caveat this implies.
 
+`frontend/src/**/__tests__/` (Vitest + `@vue/test-utils`, run via
+`npm test`): `chunkFormat.test.js`, `ChunkView.test.js`,
+`DocumentPreview.test.js`. Component tests mock `../utils/api.js`'s
+`apiFetch` (`vi.mock`) rather than hitting a real backend, and mount
+with `@vue/test-utils`'s `mount()`; `frontend/vitest.setup.js` stubs
+`ResizeObserver` (unavailable in jsdom) so `DocumentPreview.vue` can be
+mounted at all. No other component has test coverage yet — this is the
+first frontend feature built test-first, not a retrofit.
+
 ## Frontend (`frontend/`)
 
 Vue 3 + Vite. Dashboard layout in `src/App.vue`, split into five
@@ -416,34 +476,47 @@ percentage of the grid's `getBoundingClientRect()` and clamped to
 `grid-template-columns`/`grid-template-rows` (`{split}% 6px 1fr`)
 directly.
 
-- **`SettingsPanel.vue`** — reads `/api/config` for the active model
-  name (read-only) and `/api/files` for the list of previously parsed
-  documents on mount. A file input posts to `/api/parse`, adds the
-  result to the top of the list, and selects it. Clicking any list
-  item emits `file-selected` (`{filename, path}`), highlighting it.
-  Renders one filter checkbox per entry in the `availableTypes` prop
-  (the real node types of whatever graph is currently loaded — nothing
-  hardcoded); toggling emits `filters-changed`. A parallel "그래프 엣지
-  필터" section does the same for `availableEdgeTypes`/
-  `edge-filters-changed`. Both filter sets are still owned locally
-  (`enabledTypes`/`enabledEdgeTypes` reset to "everything on" whenever
-  the corresponding `available*Types` prop changes, e.g. after a new
-  extraction), but can also be driven externally: the `toggleTypeRequest`/
-  `toggleEdgeTypeRequest` props each carry a fresh `{type}` object on
-  every change (a new object each time, so the same type clicked twice
-  in a row still triggers a watcher fire) and a watcher calls the same
-  `toggleType()`/`toggleEdgeType()` a checkbox click would — this is how
-  `ChatPanel`'s type-analysis chips (see below) reach the filter state
-  that actually lives here, via `App.vue` as a relay. Also reads
-  `GET /api/ontology/schemas` for a "스키마 라이브러리" list (every schema
-  generated so far, across all documents); clicking one calls
-  `POST /api/ontology/{selectedFilename}/schema/use` to copy it onto
-  the currently selected document, then emits `schema-used`. Refetches
-  the schema list whenever its `schemaVersion` prop changes. Also
-  renders a "GraphRAG 설정" number input (1–5, default 1) for the
-  retrieval hop count, emitting `hops-changed` on change, and a "채팅
-  표시 설정" checkbox (default checked) for whether chat messages render
-  as HTML markdown or plain text, emitting `markdown-changed`.
+- **`SettingsPanel.vue`** — the sidebar itself renders one filter
+  checkbox per entry in the `availableTypes` prop (the real node types
+  of whatever graph is currently loaded — nothing hardcoded); toggling
+  emits `filters-changed`. A parallel "그래프 엣지 필터" section does the
+  same for `availableEdgeTypes`/`edge-filters-changed`. Both filter sets
+  are still owned locally (`enabledTypes`/`enabledEdgeTypes` reset to
+  "everything on" whenever the corresponding `available*Types` prop
+  changes, e.g. after a new extraction), but can also be driven
+  externally: the `toggleTypeRequest`/`toggleEdgeTypeRequest` props each
+  carry a fresh `{type}` object on every change (a new object each time,
+  so the same type clicked twice in a row still triggers a watcher fire)
+  and a watcher calls the same `toggleType()`/`toggleEdgeType()` a
+  checkbox click would — this is how `ChatPanel`'s type-analysis chips
+  (see below) reach the filter state that actually lives here, via
+  `App.vue` as a relay. Everything else lives in two modals opened from
+  sidebar buttons:
+  - **File Explorer** (`showFileExplorer`) — two columns. Left: a file
+    input (radio choice between `anydoc` and `table_aware` converters,
+    the latter only doing anything for a `.pdf` — see `app.chunking`)
+    that posts to `/api/parse`, and the document list from
+    `GET /api/documents`, each row showing a 4-stage badge strip
+    (MD/Chunk/Schema/Graph, `has_chunks`/`has_schema`/`has_graph`).
+    Clicking a row emits `file-selected` (`{filename, path}`). Right:
+    for the selected document — 메타 정보 (original filename, converter,
+    size, modified time, an "요약 생성"/"재생성" button around
+    `POST /api/documents/{filename}/summary`, and a "청크 생성"/"재생성"
+    button around `POST /api/documents/{filename}/chunk`, both refetching
+    `/api/documents` on success so the badge strip and summary text stay
+    current), the document's schema versions (`GET .../schema/versions`,
+    activate/delete), and the "스키마 라이브러리" list
+    (`GET /api/ontology/schemas`, clicking one calls
+    `POST /api/ontology/{selectedFilename}/schema/use` and emits
+    `schema-used`; refetched whenever `schemaVersion` changes).
+  - **실행 설정** (`showRunSettings`) — LLM model picker
+    (`POST /api/config/model`), a "GraphRAG 설정" number input (1–5,
+    default 1) for the retrieval hop count (`hops-changed`), a "채팅
+    표시 설정" checkbox (default checked) for whether chat messages
+    render as HTML markdown or plain text (`markdown-changed`), and a
+    "스키마 생성 설정" max-chars input. The main sidebar's own "워크플로우"
+    section (온톨로지 발견/도메인 스키마/스키마 생성/그래프 추출/임베딩
+    생성/온톨로지 검증 buttons) isn't detailed in this doc yet.
 - **`ChatPanel.vue`** — self-contained message list + input, calls
   `/api/chat` with the full local history on each send, plus the
   `file`/`hops` props (`filename` and `hops` in the request body) so
@@ -493,7 +566,20 @@ directly.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
-  Limitations history for why.
+  Limitations history for why. On the same file change it also tries
+  `GET /api/documents/{filename}/chunk`; a 404 (no chunks generated yet)
+  is not an error, it just means no chunk view is offered. When chunks
+  exist, a "원문 | 청크" toggle appears in the panel header (`viewMode`,
+  always reset to `"raw"` on file change, even if chunks exist — never
+  auto-opens the chunk view) and switching to "청크" renders
+  `<ChunkView :data="chunkData" />` in place of the raw markdown pane.
+  `ChunkView.vue` is a pure presentational child: it shows the chunk
+  JSON's `source` and the preamble's line count (`line_end - line_start
+  + 1`, from `utils/chunkFormat.js` — never the preamble's own `text`),
+  then one collapsible row per chunk (`path` only when collapsed, the
+  chunk's `text` rendered via `marked` when expanded). Each row toggles
+  independently via a local `Set` of expanded chunk ids — multiple can
+  be open at once, not an accordion — and every chunk starts collapsed.
 - **`OntologyGraph.vue`** — takes `file`, `enabledTypes`,
   `enabledEdgeTypes`, `schemaVersion`, and `highlightedNodeIds` props.
   On file change, checks

@@ -2,10 +2,14 @@
 import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
+import ChunkView from './ChunkView.vue'
 
 const props = defineProps({
   file: { type: Object, default: null },
 })
+
+const chunkData = ref(null)
+const viewMode = ref('raw')
 
 const html = ref('')
 const rawText = ref('')
@@ -68,13 +72,26 @@ const currentLine = computed(() => {
   return Math.min(totalLines.value, Math.round(fraction * (totalLines.value - 1)) + 1)
 })
 
+async function loadChunkData(file) {
+  chunkData.value = null
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(file.filename)}/chunk`)
+    chunkData.value = res.ok ? await res.json() : null
+  } catch (err) {
+    chunkData.value = null
+  }
+}
+
 watch(
   () => props.file,
   async (file) => {
     error.value = ''
     html.value = ''
     rawText.value = ''
+    viewMode.value = 'raw'
+    chunkData.value = null
     if (!file) return
+    loadChunkData(file)
     try {
       const res = await apiFetch(`/api/files/${encodeURIComponent(file.filename)}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -96,10 +113,33 @@ watch(
   <section class="flex h-full flex-col">
     <div class="panel-header">
       <span>문서 Preview</span>
+      <div
+        v-if="chunkData"
+        data-testid="view-toggle"
+        class="flex flex-shrink-0 gap-1 text-[11px]"
+      >
+        <button
+          type="button"
+          data-testid="view-mode-raw"
+          class="rounded px-1.5 py-0.5"
+          :class="viewMode === 'raw' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          @click="viewMode = 'raw'"
+        >원문</button>
+        <button
+          type="button"
+          data-testid="view-mode-chunk"
+          class="rounded px-1.5 py-0.5"
+          :class="viewMode === 'chunk' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          @click="viewMode = 'chunk'"
+        >청크</button>
+      </div>
     </div>
     <div class="flex min-h-0 flex-1 flex-col p-3">
       <p v-if="!file" class="text-xs text-ink-faint">업로드된 문서가 없습니다</p>
       <p v-else-if="error" class="text-xs text-red-400">{{ error }}</p>
+      <div v-else-if="viewMode === 'chunk' && chunkData" class="min-h-0 flex-1 overflow-y-scroll">
+        <ChunkView :data="chunkData" />
+      </div>
       <template v-else>
         <div class="flex min-h-0 flex-1 gap-2">
           <div class="min-h-0 flex-1 overflow-y-scroll" ref="scrollRef" @scroll="onScroll">

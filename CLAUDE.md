@@ -125,11 +125,16 @@ snapshots, not committed history.
 
 ### Frontend
 
-No lint/build/test commands are wired up beyond `vite`. `npm run dev` /
-`npm run build` work if you want to run outside the container, but the
-normal workflow is editing files on the host and letting the bind-mounted
-container's Vite dev server hot-reload them (see the gotcha above when it
-doesn't).
+No lint command is wired up. `npm run dev` / `npm run build` work if you
+want to run outside the container, but the normal workflow is editing
+files on the host and letting the bind-mounted container's Vite dev
+server hot-reload them (see the gotcha above when it doesn't).
+`npm test` (Vitest + `@vue/test-utils`, jsdom environment) runs the
+component/unit test suite in `frontend/src/**/__tests__/`; it needs no
+container or backend and is the way to TDD new frontend logic. jsdom has
+no `ResizeObserver`, which `DocumentPreview.vue` uses to measure its
+scroll container — `frontend/vitest.setup.js` stubs it globally so
+mounting that component in a test doesn't throw.
 
 ## Architecture
 
@@ -145,6 +150,16 @@ business logic of its own beyond request/response shaping.
   alongside it in that same folder). The `{stem}_raw.md`-shaped filename
   the rest of the app and the frontend pass around is a synthetic,
   stable identifier, decoupled from where the file actually sits on disk.
+- `chunking.py` — a second, PDF-only ingestion path alongside `parser.py`'s
+  generic `anydoc` conversion, ported from `scripts/data_prep/`'s
+  Korean-insurance-policy tooling (see that directory's README for the
+  heading/section heuristics and known limitations): `/api/parse`'s
+  `converter=table_aware` field routes a `.pdf` upload through
+  `convert_pdf_to_markdown_file` (pdfplumber-based, preserves tables as
+  Markdown) instead of `anydoc`. `chunk_markdown_file` splits a document's
+  `raw.md` into per-article JSON chunks at `documents/{stem}/chunks.json`
+  (`제N조` headings, rider/section detection) — a separate, on-demand step
+  from parsing, triggered via `POST /api/documents/{filename}/chunk`.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
@@ -159,7 +174,7 @@ business logic of its own beyond request/response shaping.
   (`ontology.embed_nodes`) and query embedding (`graphrag.embed_query`) so
   the two sides of a similarity comparison are computed consistently.
 - `graphdb.py` — owns the single LadybugDB connection
-  (`backend/data/graph.ladybugdb`), opened lazily and cached at module
+  (`backend/data/graph/graph.ladybugdb`), opened lazily and cached at module
   level. There's one Cypher node table and one Cypher rel table per
   distinct node/edge *type name*, shared across every document rather
   than per-document — each row carries a `source_document` property so
@@ -206,6 +221,10 @@ business logic of its own beyond request/response shaping.
   `embedding` field before handing nodes to `graphdb.write_graph` -- the
   embedding call happens here, not in `graphdb.py`, since that module
   owns storage only and never makes LLM/embedding calls itself.
+  `summarize_document()` is a separate, lighter LLM call (a 2-3 sentence
+  plain-text summary, not JSON) cached at `documents/{stem}/summary.json`
+  via `save_document_summary`/`load_document_summary`, following the same
+  regenerate-on-demand model as discovery above.
 - `graphrag.py` — the retrieval side of chat, a schema-aware search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`
   sends the document's schema + the question to the LLM, asking which
@@ -315,5 +334,8 @@ center + collide forces), writing each tick's `{x, y}` into the
 `layouts` ref that `v-network-graph` reads — layout is physics-based,
 not computed once.
 
-No automated frontend tests exist — changes are verified manually or via
-Playwright against the running podman-compose stack, not a test suite.
+Component/unit logic (e.g. `ChunkView.vue`, `DocumentPreview.vue`'s view
+toggle, `utils/chunkFormat.js`) has Vitest coverage — see "Frontend"
+above. Full-stack behavior (a change actually working end-to-end against
+the real backend) is still verified manually against the running
+podman-compose stack, not via an end-to-end test suite.
