@@ -2,9 +2,10 @@
 import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
 import 'katex/dist/katex.min.css'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { colorForNodeType } from '../utils/nodeColors.js'
 import { apiFetch } from '../utils/api.js'
+import GoldensetView from './GoldensetView.vue'
 
 marked.use(markedKatex({ throwOnError: false }))
 
@@ -40,6 +41,22 @@ const messages = ref([])
 const input = ref('')
 const isLoading = ref(false)
 const error = ref('')
+const viewMode = ref('chat')
+const goldensetReport = ref(null)
+
+async function loadGoldenset(file) {
+  viewMode.value = 'chat'
+  goldensetReport.value = null
+  if (!file) return
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(file.filename)}/goldenset`)
+    goldensetReport.value = res.ok ? await res.json() : null
+  } catch (err) {
+    goldensetReport.value = null
+  }
+}
+
+watch(() => props.file, loadGoldenset, { immediate: true })
 
 let abortController = null
 
@@ -99,9 +116,32 @@ async function sendMessage() {
   <section class="flex h-full min-w-0 flex-col">
     <div class="panel-header">
       <span>Chat</span>
+      <div
+        v-if="goldensetReport?.questions?.length"
+        data-testid="chat-view-toggle"
+        class="flex flex-shrink-0 gap-1 text-[11px]"
+      >
+        <button
+          type="button"
+          data-testid="view-mode-chat"
+          class="rounded px-1.5 py-0.5"
+          :class="viewMode === 'chat' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          @click="viewMode = 'chat'"
+        >채팅</button>
+        <button
+          type="button"
+          data-testid="view-mode-golden"
+          class="rounded px-1.5 py-0.5"
+          :class="viewMode === 'golden' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          @click="viewMode = 'golden'"
+        >골든셋</button>
+      </div>
     </div>
 
-    <div class="flex min-h-0 flex-1 flex-col gap-3 p-3">
+    <div v-if="viewMode === 'golden' && goldensetReport" class="min-h-0 flex-1 p-3">
+      <GoldensetView :report="goldensetReport" :file="file" :hops="hops" />
+    </div>
+    <div v-else class="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-lg border border-border bg-surface-sunken p-3">
         <div
           v-for="(msg, i) in messages"

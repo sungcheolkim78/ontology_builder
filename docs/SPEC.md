@@ -587,7 +587,26 @@ directly.
   not specific words within it (see the GraphRAG section above for why:
   those ids come from `search_graph()`'s own matched/expanded set, not
   a citation the LLM invented, so nothing here can point at a node that
-  doesn't exist).
+  doesn't exist). On the same `file` change, `ChatPanel` also tries
+  `GET /api/documents/{filename}/goldenset` (same 404-is-not-an-error
+  pattern as `DocumentPreview`'s chunk fetch below); when a golden set
+  exists, a "채팅 | 골든셋" toggle appears in the panel header (`viewMode`,
+  always reset to `"chat"` on file change, same non-auto-opening rule as
+  `DocumentPreview`'s chunk toggle) and switching to "골든셋" renders
+  `<GoldensetView :report :file :hops />` in place of the message list —
+  the ongoing chat conversation (`messages`) is untouched underneath and
+  is still there when switching back. `GoldensetView.vue` is a
+  self-contained child: for each question it shows the
+  type/importance/answerable meta chips and the golden `answer`/`evidence`
+  side by side with a "답변 생성" button that POSTs a *fresh*, single-turn
+  `/api/chat` call (`messages: [{role: 'user', content: question.question}]`
+  — deliberately not appended to `ChatPanel`'s own conversation history,
+  since probing N golden questions independently would otherwise flood it)
+  using the same `file`/`hops` props, and renders the GraphRAG response
+  next to the golden answer for manual comparison. Each question's
+  generation state (`loading`/`error`/`content`) is tracked independently
+  keyed by question id, so generating one question's answer never affects
+  another's already-generated result.
 - **`DocumentPreview.vue`** — takes the `file` prop (`{filename, path}`),
   fetches `/api/files/{filename}`, renders it as HTML via `marked`.
   Uses an always-visible (non-overlay) scrollbar — see Known
