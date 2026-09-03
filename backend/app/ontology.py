@@ -421,6 +421,193 @@ def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     return report
 
 
+# Chunk-grouped ontology discovery -------------------------------------------
+#
+# discover_ontology() above sends the whole document in one LLM call and is
+# bounded by MAX_DOCUMENT_CHARS -- documents chunked into article-level JSON
+# chunks (app.chunking.chunk_markdown_file) routinely exceed that in total
+# even though no single chunk does. Rather than keeping every group's view of
+# the ontology consistent with every other group's as it goes (which would
+# make each group depend on every earlier one and prevent groups from being
+# processed independently), this runs discovery once per token-budget-sized
+# group of consecutive chunks (map), then folds every group's classes/
+# relationships into one unified set via a single consolidation LLM call
+# (reduce) at the end. Only classes/relationships go through that LLM call --
+# they're the only fields with a cross-group naming-collision problem (the
+# same concept discovered twice under different names); the other discovery
+# fields (attributes/events/rules/terminology/competency_questions/warnings)
+# are deduped in code by name/text instead.
+MAX_DISCOVERY_GROUP_CHARS = int(os.environ.get("MAX_DISCOVERY_GROUP_CHARS", 60_000))
+
+
+def group_chunks_for_discovery(
+    chunk_items: list[dict], max_group_chars: int | None = None
+) -> list[list[dict]]:
+    """Packs `chunk_items` (each needs a "text" key; order is preserved) into
+    consecutive-run groups whose total text length stays under
+    `max_group_chars` where possible. A single chunk longer than the budget
+    on its own still becomes its own group rather than being split mid-chunk
+    -- article-level chunks are the smallest unit this module reasons
+    about."""
+    limit = max_group_chars if max_group_chars is not None else MAX_DISCOVERY_GROUP_CHARS
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    current_len = 0
+    for item in chunk_items:
+        text_len = len(item.get("text") or "")
+        if current and current_len + text_len > limit:
+            groups.append(current)
+            current, current_len = [], 0
+        current.append(item)
+        current_len += text_len
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _group_document_text(chunk_items: list[dict]) -> str:
+    parts = []
+    for item in chunk_items:
+        path = item.get("path")
+        text = item.get("text") or ""
+        parts.append(f"[{path}]\n{text}" if path else text)
+    return "\n\n".join(parts)
+
+
+# The consolidation call only ever sees name/definition/category(/source/
+# target) -- never full group text or instance data -- so its input size
+# stays flat regardless of how many groups or how long the document is, and
+# it can't accidentally re-derive a class/relationship from raw text a
+# per-group pass already read once.
+CONSOLIDATION_PROMPT = """You are a senior Ontology Architect. Multiple independent ontology-discovery \
+passes were run over different sections of the SAME document, each seeing only \
+its own section's text. Their candidate classes and relationships are listed \
+below, grouped by which pass produced them. Merge these into ONE unified set:
+
+- Merge classes that name the same real concept even if the name or wording \
+differs across groups (pick or adapt the clearest name and definition); keep \
+genuinely distinct concepts separate rather than merging on lexical \
+similarity alone.
+- After merging classes, rewrite every relationship's "source"/"target" to \
+use the FINAL merged class names -- never leave a relationship pointing at a \
+class name that no longer exists in the merged set.
+- Merge relationships that describe the same connection between the same \
+pair of (merged) classes, even if named differently across groups; keep \
+genuinely distinct relationships separate.
+- Do not invent a class or relationship that isn't grounded in at least one \
+of the groups below.
+
+Write every definition/rationale value in the same language the input values \
+are already in.
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"classes": [{{"name": "...", "definition": "...", "category": \
+"CONCEPT|ENTITY|EVENT|VALUE_OBJECT|ATTRIBUTE|DOCUMENT|RULE|RELATIONSHIP", \
+"parent": "...", "rationale": "...", "confidence": "HIGH|MEDIUM|LOW|UNKNOWN"}}], \
+"relationships": [{{"name": "...", "definition": "...", "source": "...", \
+"target": "...", "category": "TAXONOMY|BUSINESS", "rationale": "...", \
+"confidence": "HIGH|MEDIUM|LOW|UNKNOWN"}}]}}
+
+Candidate classes and relationships by group:
+{groups}
+"""
+
+
+def _consolidate_types(group_reports: list[dict]) -> dict:
+    payload = [
+        {
+            "group": i,
+            "classes": [
+                {k: c.get(k) for k in ("name", "definition", "category")}
+                for c in report.get("classes", [])
+            ],
+            "relationships": [
+                {k: r.get(k) for k in ("name", "definition", "source", "target", "category")}
+                for r in report.get("relationships", [])
+            ],
+        }
+        for i, report in enumerate(group_reports)
+    ]
+    model = get_chat_model()
+    prompt = CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
+    response = invoke_with_telemetry("ontology.consolidate_discovery_types", model, prompt)
+    consolidated = parse_json_response(response.content)
+    if not isinstance(consolidated.get("classes"), list) or not isinstance(
+        consolidated.get("relationships"), list
+    ):
+        raise ValueError("consolidation JSON missing classes/relationships lists")
+    return consolidated
+
+
+def _dedupe_by_key(items: list, key) -> list:
+    seen = set()
+    deduped = []
+    for item in items:
+        k = key(item)
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(item)
+    return deduped
+
+
+def _merge_domain_models(domain_models: list[dict]) -> dict:
+    domain = next((d.get("domain") for d in domain_models if d.get("domain")), "")
+    merged = {"domain": domain}
+    for field in ("subdomains", "document_types", "business_processes", "major_actors"):
+        merged[field] = _dedupe_by_key(
+            [v for d in domain_models for v in d.get(field, [])], key=lambda v: v
+        )
+    return merged
+
+
+def discover_ontology_from_chunks(
+    chunk_items: list[dict], max_group_chars: int | None = None
+) -> dict:
+    """Runs discover_ontology() once per token-budget-sized group of
+    consecutive chunks (see group_chunks_for_discovery), then consolidates
+    every group's classes/relationships into one unified set via
+    _consolidate_types. Exists for documents whose full text would exceed
+    discover_ontology's own MAX_DOCUMENT_CHARS in a single call; a document
+    small enough to fit in one group skips consolidation entirely and
+    returns that single group's report untouched, so the common case pays
+    for exactly one LLM call, same as discover_ontology()."""
+    groups = group_chunks_for_discovery(chunk_items, max_group_chars=max_group_chars)
+    if not groups:
+        raise ValueError("no chunks to discover ontology from")
+
+    group_reports = [discover_ontology(_group_document_text(group)) for group in groups]
+    if len(group_reports) == 1:
+        return group_reports[0]
+
+    consolidated_types = _consolidate_types(group_reports)
+    return {
+        "domain_model": _merge_domain_models([r.get("domain_model", {}) for r in group_reports]),
+        "classes": consolidated_types["classes"],
+        "relationships": consolidated_types["relationships"],
+        "attributes": _dedupe_by_key(
+            [a for r in group_reports for a in r.get("attributes", [])],
+            key=lambda a: (a.get("name"), a.get("defined_on")),
+        ),
+        "events": _dedupe_by_key(
+            [e for r in group_reports for e in r.get("events", [])], key=lambda e: e.get("name")
+        ),
+        "rules": _dedupe_by_key(
+            [ru for r in group_reports for ru in r.get("rules", [])], key=lambda ru: ru.get("name")
+        ),
+        "terminology": _dedupe_by_key(
+            [t for r in group_reports for t in r.get("terminology", [])],
+            key=lambda t: t.get("canonical_term"),
+        ),
+        "competency_questions": _dedupe_by_key(
+            [q for r in group_reports for q in r.get("competency_questions", [])], key=lambda q: q
+        ),
+        "warnings": _dedupe_by_key(
+            [w for r in group_reports for w in r.get("warnings", [])], key=lambda w: w
+        ),
+    }
+
+
 def generate_schema(
     document_text: str,
     document_type: str = "general",

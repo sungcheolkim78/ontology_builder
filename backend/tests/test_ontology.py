@@ -193,6 +193,113 @@ def test_get_discovery_returns_404_when_none_saved():
     assert response.status_code == 404
 
 
+def _discovery_report(domain="d", classes=None, relationships=None, competency_questions=None):
+    return {
+        "domain_model": {"domain": domain, "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
+        "classes": classes or [],
+        "relationships": relationships or [],
+        "attributes": [],
+        "events": [],
+        "rules": [],
+        "terminology": [],
+        "competency_questions": competency_questions or [],
+        "warnings": [],
+    }
+
+
+def test_group_chunks_for_discovery_packs_by_budget():
+    from app.ontology import group_chunks_for_discovery
+
+    chunks = [{"text": "a" * 30}, {"text": "b" * 30}, {"text": "c" * 30}, {"text": "d" * 30}]
+
+    groups = group_chunks_for_discovery(chunks, max_group_chars=50)
+
+    assert [len(g) for g in groups] == [1, 1, 1, 1]
+    groups = group_chunks_for_discovery(chunks, max_group_chars=65)
+    assert [len(g) for g in groups] == [2, 2]
+
+
+def test_group_chunks_for_discovery_keeps_oversized_chunk_alone():
+    from app.ontology import group_chunks_for_discovery
+
+    chunks = [{"text": "x" * 10}, {"text": "y" * 200}, {"text": "z" * 10}]
+
+    groups = group_chunks_for_discovery(chunks, max_group_chars=50)
+
+    assert [len(g) for g in groups] == [1, 1, 1]
+
+
+def test_discover_ontology_from_chunks_single_group_skips_consolidation(monkeypatch):
+    from app.ontology import discover_ontology_from_chunks
+
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    fake_model = RecordingChatModel(json.dumps(report))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
+
+    assert result == report
+    assert len(fake_model.prompts) == 1
+
+
+def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch):
+    from app.ontology import discover_ontology_from_chunks
+
+    group1 = _discovery_report(
+        domain="insurance",
+        classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        relationships=[],
+        competency_questions=["What does this cover?"],
+    )
+    group2 = _discovery_report(
+        domain="insurance",
+        classes=[{"name": "InsurancePolicy", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        relationships=[],
+        competency_questions=["What does this cover?"],
+    )
+    consolidated = {
+        "classes": [{"name": "Policy", "definition": "merged", "category": "CONCEPT", "parent": "", "rationale": "merged d1/d2", "confidence": "HIGH"}],
+        "relationships": [],
+    }
+    fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: fake_model)
+
+    result = discover_ontology_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
+    )
+
+    assert result["classes"] == consolidated["classes"]
+    assert result["relationships"] == []
+    # competency_questions deduped across groups (identical string in both)
+    assert result["competency_questions"] == ["What does this cover?"]
+    assert result["domain_model"]["domain"] == "insurance"
+    assert fake_model.calls == 3
+
+
+def test_discover_endpoint_uses_chunks_when_present(monkeypatch):
+    write_document()
+    stem = "doc_raw"
+    (document_dir_for(stem) / "chunks.json").write_text(
+        json.dumps(
+            {
+                "source": stem,
+                "preamble": {"line_start": 1, "line_end": 1, "text": ""},
+                "chunks": [
+                    {"id": "0::제1조", "section_index": 0, "section_label": "주계약", "article_no": "1", "sub_no": None, "title": "목적", "path": "주계약 > 제1조(목적)", "line_start": 1, "line_end": 2, "text": "Alice works at Acme."},
+                ],
+            }
+        )
+    )
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda: FakeChatModel(json.dumps(report)))
+    client = TestClient(app)
+
+    response = client.post("/api/ontology/doc_raw.md/discover")
+
+    assert response.status_code == 200
+    assert response.json() == report
+
+
 def test_generate_schema_ignores_discovery_by_default(monkeypatch):
     write_document()
     (DOCUMENTS_DIR / "doc_raw").mkdir(parents=True, exist_ok=True)

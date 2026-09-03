@@ -4,6 +4,8 @@
 
 ![실행 화면](docs/screenshots/app-overview.jpg)
 
+🔗 **서비스 중**: [ontology-builder-frontend.onrender.com](https://ontology-builder-frontend.onrender.com/)
+
 ## 주요 기능
 
 - **문서 업로드 → 마크다운 변환**: PDF, Word, PPT, CSV 등 다양한 형식을 지원 (`anydoc` 기반), 원본 파일명은 별도 매니페스트에 보존

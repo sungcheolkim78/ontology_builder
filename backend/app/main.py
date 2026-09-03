@@ -28,6 +28,7 @@ from app.ontology import (
     create_schema_version,
     delete_version,
     discover_ontology,
+    discover_ontology_from_chunks,
     domain_calibration_stems,
     domain_convergence_history,
     embed_graph,
@@ -354,11 +355,22 @@ def discover(filename: str, request: DiscoverRequest | None = None):
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
     max_chars = request.max_chars if request else None
+    stem = _stem(filename)
+    chunk_path = _chunk_path(stem)
     try:
-        report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
+        if chunk_path.is_file():
+            # Chunked documents skip the single-call, whole-raw.md path
+            # entirely (and its MAX_DOCUMENT_CHARS ceiling) in favor of the
+            # group-then-consolidate approach -- see
+            # discover_ontology_from_chunks in app.ontology.
+            chunked = json.loads(chunk_path.read_text())
+            chunk_items = [chunked["preamble"], *chunked["chunks"]]
+            report = discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
+        else:
+            report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    save_discovery(_stem(filename), report)
+    save_discovery(stem, report)
     return report
 
 
