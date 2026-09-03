@@ -36,6 +36,7 @@ from app.ontology import (
     extract_graph,
     find_redundant_type_pairs,
     generate_schema,
+    generate_schema_from_chunks,
     get_active_version,
     list_domains,
     list_schema_stems,
@@ -395,14 +396,25 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
         raise HTTPException(status_code=404, detail="document not found")
     document_type = request.document_type if request else "general"
     max_chars = request.max_chars if request else None
-    discovery = load_discovery(_stem(filename)) if (request and request.use_discovery) else None
+    stem = _stem(filename)
+    discovery = load_discovery(stem) if (request and request.use_discovery) else None
+    chunk_path = _chunk_path(stem)
     try:
-        schema = generate_schema(
-            doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
-        )
+        if chunk_path.is_file():
+            # Same rationale as /discover above -- see
+            # generate_schema_from_chunks in app.ontology.
+            chunked = json.loads(chunk_path.read_text())
+            chunk_items = [chunked["preamble"], *chunked["chunks"]]
+            schema = generate_schema_from_chunks(
+                chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
+            )
+        else:
+            schema = generate_schema(
+                doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    version = create_schema_version(_stem(filename), schema, document_type=document_type)
+    version = create_schema_version(stem, schema, document_type=document_type)
     return {**schema, "version": version}
 
 

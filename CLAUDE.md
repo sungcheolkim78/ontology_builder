@@ -206,8 +206,8 @@ business logic of its own beyond request/response shaping.
   logic so the prompt text can be read or edited on its own. `ontology.py`
   imports each constant it needs (`SCHEMA_PROMPTS`, `EXTRACT_PROMPT`,
   `VALIDATION_PROMPT`, `DISCOVERY_PROMPT`, `SUMMARY_PROMPT`,
-  `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`); nothing else in the backend
-  references them.
+  `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`, `SCHEMA_CONSOLIDATION_PROMPT`);
+  nothing else in the backend references them.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
@@ -234,25 +234,30 @@ business logic of its own beyond request/response shaping.
   via `save_document_summary`/`load_document_summary`, following the same
   regenerate-on-demand model as discovery above. `discover_ontology()` (the
   richer, exploratory "candidate ontology" pass — see its own module-level
-  comment) sends the whole document in one call and is bounded by
-  `MAX_DOCUMENT_CHARS`; for a document with `chunks.json` (article-level
-  JSON chunks from `app.chunking.chunk_markdown_file`), `main.py`'s
-  `/api/ontology/{filename}/discover` route instead calls
-  `discover_ontology_from_chunks()`, which packs consecutive chunks into
-  `MAX_DISCOVERY_GROUP_CHARS`-budgeted groups (`group_chunks_for_discovery`),
-  runs `discover_ontology()` once per group (map), then folds every group's
-  `classes`/`relationships` into one unified set via a dedicated
-  consolidation LLM call (reduce) — deliberately *not* trying to keep every
-  group mutually consistent as it goes, since that would make each group's
-  result depend on every earlier group's and prevent groups from being
-  processed independently. Only `classes`/`relationships` (name+definition
-  +category, no instance data) go through that consolidation call, since
-  those are the only fields with a cross-group naming-collision problem (the
-  same concept discovered twice under a different name in two groups); the
-  other discovery fields (attributes/events/rules/terminology/
-  competency_questions/warnings) are deduped in code by name/text instead. A
+  comment) and `generate_schema()` each send the whole document in one call
+  and are bounded by `MAX_DOCUMENT_CHARS`; for a document with `chunks.json`
+  (article-level JSON chunks from `app.chunking.chunk_markdown_file`),
+  `main.py`'s `/api/ontology/{filename}/discover` and `.../schema` routes
+  instead call `discover_ontology_from_chunks()`/`generate_schema_from_chunks()`,
+  which both pack consecutive chunks into `MAX_CHUNK_GROUP_CHARS`-budgeted
+  groups (`group_chunks_by_budget`), run the single-document function once
+  per group (map), then fold every group's result into one unified set via a
+  dedicated consolidation LLM call (reduce) — deliberately *not* trying to
+  keep every group mutually consistent as it goes, since that would make
+  each group's result depend on every earlier group's and prevent groups
+  from being processed independently. For discovery, only
+  `classes`/`relationships` (name+definition+category, no instance data) go
+  through that consolidation call, since those are the only fields with a
+  cross-group naming-collision problem (the same concept discovered twice
+  under a different name in two groups); the other discovery fields
+  (attributes/events/rules/terminology/competency_questions/warnings) are
+  deduped in code by name/text instead. For schema generation, the
+  consolidation call covers `node_types`/`edge_types` in full, since that's
+  the entirety of a schema's shape — same merge-then-repoint-edges logic
+  (`SCHEMA_CONSOLIDATION_PROMPT` in `prompts.py`), applied to a different
+  output shape than discovery's `CONSOLIDATION_PROMPT`. Either way, a
   document small enough to fit in one group skips consolidation entirely and
-  returns that group's report untouched, so the common case still costs
+  returns that group's result untouched, so the common case still costs
   exactly one LLM call.
 - `graphrag.py` — the retrieval side of chat, a schema-aware search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`

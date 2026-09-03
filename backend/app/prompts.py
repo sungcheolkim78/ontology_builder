@@ -451,3 +451,45 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 Candidate classes and relationships by group:
 {groups}
 """
+
+
+# Same map/reduce shape as CONSOLIDATION_PROMPT above, but for
+# generate_schema()'s node_types/edge_types output instead of
+# discover_ontology()'s classes/relationships -- the two prompts read almost
+# identically because the underlying problem (merge same-concept types found
+# independently by different groups, then re-point every edge/relationship at
+# the merged names) is the same one either way.
+SCHEMA_CONSOLIDATION_PROMPT = """You are a senior Ontology Architect. Multiple independent ontology-schema-\
+generation passes were run over different sections of the SAME document, each \
+seeing only its own section's text. Their candidate node_types and edge_types \
+are listed below, grouped by which pass produced them. Merge these into ONE \
+unified schema:
+
+- Merge node_types that name the same real concept even if the name or \
+wording differs across groups (pick or adapt the clearest name and \
+description); keep genuinely distinct types separate rather than merging on \
+lexical similarity alone.
+- After merging node_types, rewrite every edge_type's "source"/"target" to \
+use the FINAL merged node_type names -- never leave an edge_type pointing at \
+a node_type name that no longer exists in the merged set.
+- Merge edge_types that describe the same connection between the same pair \
+of (merged) node_types, even if named differently across groups; keep \
+genuinely distinct edge_types separate.
+- Do not invent a node_type or edge_type that isn't grounded in at least one \
+of the groups below.
+- Every "name" value MUST stay a valid identifier (letters, digits, \
+underscores only, starting with a letter or underscore); if merging forces a \
+rename, keep it a valid identifier and disambiguate any collision with \
+another type's identifier.
+
+Write every "description" value in the same language the input values are \
+already in.
+
+Respond with ONLY valid JSON in this exact shape, no other text:
+{{"node_types": [{{"name": "...", "description": "..."}}], \
+"edge_types": [{{"name": "...", "description": "...", "source": "<node type name>", \
+"target": "<node type name>"}}]}}
+
+Candidate node_types and edge_types by group:
+{groups}
+"""

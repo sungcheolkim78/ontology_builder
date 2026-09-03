@@ -18,6 +18,7 @@ from app.prompts import (
     DISCOVERY_PROMPT,
     EVOLUTION_PROMPT,
     EXTRACT_PROMPT,
+    SCHEMA_CONSOLIDATION_PROMPT,
     SCHEMA_PROMPTS,
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
@@ -96,26 +97,24 @@ def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     return report
 
 
-# Chunk-grouped ontology discovery -------------------------------------------
+# Chunk-grouped ontology discovery/schema generation -------------------------
 #
-# discover_ontology() above sends the whole document in one LLM call and is
-# bounded by MAX_DOCUMENT_CHARS -- documents chunked into article-level JSON
-# chunks (app.chunking.chunk_markdown_file) routinely exceed that in total
-# even though no single chunk does. Rather than keeping every group's view of
-# the ontology consistent with every other group's as it goes (which would
-# make each group depend on every earlier one and prevent groups from being
-# processed independently), this runs discovery once per token-budget-sized
-# group of consecutive chunks (map), then folds every group's classes/
-# relationships into one unified set via a single consolidation LLM call
-# (reduce) at the end. Only classes/relationships go through that LLM call --
-# they're the only fields with a cross-group naming-collision problem (the
-# same concept discovered twice under different names); the other discovery
-# fields (attributes/events/rules/terminology/competency_questions/warnings)
-# are deduped in code by name/text instead.
-MAX_DISCOVERY_GROUP_CHARS = int(os.environ.get("MAX_DISCOVERY_GROUP_CHARS", 60_000))
+# discover_ontology() and generate_schema() below each send the whole document
+# in one LLM call and are bounded by MAX_DOCUMENT_CHARS -- documents chunked
+# into article-level JSON chunks (app.chunking.chunk_markdown_file) routinely
+# exceed that in total even though no single chunk does. Rather than keeping
+# every group's view of the ontology consistent with every other group's as it
+# goes (which would make each group depend on every earlier one and prevent
+# groups from being processed independently), discover_ontology_from_chunks
+# and generate_schema_from_chunks below both run their single-document
+# function once per token-budget-sized group of consecutive chunks (map), then
+# fold every group's result into one unified set via a single consolidation
+# LLM call (reduce) at the end -- see each function's own docstring for what
+# exactly gets consolidated vs. merged in code.
+MAX_CHUNK_GROUP_CHARS = int(os.environ.get("MAX_CHUNK_GROUP_CHARS", 60_000))
 
 
-def group_chunks_for_discovery(
+def group_chunks_by_budget(
     chunk_items: list[dict], max_group_chars: int | None = None
 ) -> list[list[dict]]:
     """Packs `chunk_items` (each needs a "text" key; order is preserved) into
@@ -124,7 +123,7 @@ def group_chunks_for_discovery(
     on its own still becomes its own group rather than being split mid-chunk
     -- article-level chunks are the smallest unit this module reasons
     about."""
-    limit = max_group_chars if max_group_chars is not None else MAX_DISCOVERY_GROUP_CHARS
+    limit = max_group_chars if max_group_chars is not None else MAX_CHUNK_GROUP_CHARS
     groups: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
@@ -201,14 +200,14 @@ def discover_ontology_from_chunks(
     chunk_items: list[dict], max_group_chars: int | None = None
 ) -> dict:
     """Runs discover_ontology() once per token-budget-sized group of
-    consecutive chunks (see group_chunks_for_discovery), then consolidates
+    consecutive chunks (see group_chunks_by_budget), then consolidates
     every group's classes/relationships into one unified set via
     _consolidate_types. Exists for documents whose full text would exceed
     discover_ontology's own MAX_DOCUMENT_CHARS in a single call; a document
     small enough to fit in one group skips consolidation entirely and
     returns that single group's report untouched, so the common case pays
     for exactly one LLM call, same as discover_ontology()."""
-    groups = group_chunks_for_discovery(chunk_items, max_group_chars=max_group_chars)
+    groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to discover ontology from")
 
@@ -277,6 +276,56 @@ def generate_schema(
     ):
         raise ValueError("schema JSON missing node_types/edge_types lists")
     return schema
+
+
+def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
+    payload = [
+        {
+            "group": i,
+            "node_types": schema.get("node_types", []),
+            "edge_types": schema.get("edge_types", []),
+        }
+        for i, schema in enumerate(group_schemas)
+    ]
+    model = get_chat_model()
+    prompt = SCHEMA_CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
+    response = invoke_with_telemetry("ontology.consolidate_schema_types", model, prompt)
+    consolidated = parse_json_response(response.content)
+    if not isinstance(consolidated.get("node_types"), list) or not isinstance(
+        consolidated.get("edge_types"), list
+    ):
+        raise ValueError("schema consolidation JSON missing node_types/edge_types lists")
+    return consolidated
+
+
+def generate_schema_from_chunks(
+    chunk_items: list[dict],
+    document_type: str = "general",
+    max_group_chars: int | None = None,
+    discovery: dict | None = None,
+) -> dict:
+    """Runs generate_schema() once per token-budget-sized group of
+    consecutive chunks (see group_chunks_by_budget), then consolidates every
+    group's node_types/edge_types into one unified schema via
+    _consolidate_schema_types. Same shape as discover_ontology_from_chunks:
+    a document small enough to fit in one group skips consolidation
+    entirely and returns that single group's schema untouched, so the
+    common case still costs exactly one LLM call. `discovery`, if given, is
+    passed through to every group's generate_schema() call unchanged (it's
+    already a document-level hint, not something that needs re-deriving per
+    group)."""
+    groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
+    if not groups:
+        raise ValueError("no chunks to generate schema from")
+
+    group_schemas = [
+        generate_schema(_group_document_text(group), document_type=document_type, discovery=discovery)
+        for group in groups
+    ]
+    if len(group_schemas) == 1:
+        return group_schemas[0]
+
+    return _consolidate_schema_types(group_schemas)
 
 
 def extract_graph(document_text: str, schema: dict) -> dict:
