@@ -160,6 +160,28 @@ business logic of its own beyond request/response shaping.
   `raw.md` into per-article JSON chunks at `documents/{stem}/chunks.json`
   (`제N조` headings, rider/section detection) — a separate, on-demand step
   from parsing, triggered via `POST /api/documents/{filename}/chunk`.
+- `goldenset.py` — per-document golden QA generation, adapted from
+  `scripts/prepare_goldenset/prepare_goldenset.py` (the standalone CLI tool)
+  so a single already-uploaded document can get one from a UI button
+  (`POST /api/documents/{filename}/goldenset`) instead of only via that
+  script's offline pass over a folder of Markdown files. `generate_goldenset`
+  always reads the document's whole `raw.md`, never `chunks.json` — a golden
+  set is the ground truth used to *validate* the chunk-grouped
+  discover/schema/extract pipelines in `ontology.py` (see below), so building
+  it the same chunked way would risk baking those pipelines' own blind spots
+  into the ground truth meant to catch them. `compact_document_for_questions`
+  still keeps the question-generation prompt inside a character budget for a
+  large document, but does so by truncating *within* every section rather
+  than dropping whole sections, so the LLM still sees a whole-document-shaped
+  view; answer generation's evidence quotes are then re-verified in code
+  against the full, uncompacted document text before being accepted, exactly
+  like the standalone script. Result is cached at
+  `documents/{stem}/goldenset.json` (`save_goldenset`/`load_goldenset`,
+  regenerate-on-demand like `discovery.json`/`summary.json`); `list_documents`
+  reports it as `has_goldenset` alongside `has_chunks`/`has_schema`/
+  `has_graph`. The prompts (`QUESTION_PROMPT`/`ANSWER_PROMPT`) live in
+  `prompts.py`, ported verbatim from the standalone script's own
+  `prompts.py`.
 - `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
@@ -207,7 +229,7 @@ business logic of its own beyond request/response shaping.
   imports each constant it needs (`SCHEMA_PROMPTS`, `EXTRACT_PROMPT`,
   `VALIDATION_PROMPT`, `DISCOVERY_PROMPT`, `SUMMARY_PROMPT`,
   `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`, `SCHEMA_CONSOLIDATION_PROMPT`);
-  nothing else in the backend references them.
+  `goldenset.py` imports `QUESTION_PROMPT`/`ANSWER_PROMPT` the same way.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,

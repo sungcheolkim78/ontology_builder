@@ -73,11 +73,16 @@ const isChunking = ref(false)
 const chunkError = ref('')
 const isSummarizing = ref(false)
 const summaryError = ref('')
+const isGeneratingGoldenset = ref(false)
+const goldensetError = ref('')
+const goldensetReport = ref(null)
+const showGoldensetReport = ref(false)
 
 function fileStageBadges(f) {
   return [
     { key: 'md', label: 'MD', done: true },
     { key: 'chunk', label: 'Chunk', done: !!f.has_chunks },
+    { key: 'goldenset', label: 'Golden', done: !!f.has_goldenset },
     { key: 'schema', label: 'Schema', done: !!f.has_schema },
     { key: 'graph', label: 'Graph', done: !!f.has_graph },
   ]
@@ -126,6 +131,43 @@ async function createSummary() {
     isSummarizing.value = false
   }
 }
+
+async function createGoldenset() {
+  if (!props.selectedFilename) return
+  isGeneratingGoldenset.value = true
+  goldensetError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/documents/${encodeURIComponent(props.selectedFilename)}/goldenset`,
+      { method: 'POST' }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    goldensetReport.value = await res.json()
+    showGoldensetReport.value = true
+    await loadDocuments()
+  } catch (err) {
+    goldensetError.value = '골든셋 작성 실패: ' + err.message
+  } finally {
+    isGeneratingGoldenset.value = false
+  }
+}
+
+async function loadGoldenset() {
+  if (!props.selectedFilename) {
+    goldensetReport.value = null
+    return
+  }
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(props.selectedFilename)}/goldenset`)
+    goldensetReport.value = res.ok ? await res.json() : null
+  } catch (err) {
+    goldensetReport.value = null
+  }
+}
+watch(() => props.selectedFilename, loadGoldenset, { immediate: true })
 
 const schemaDocumentType = ref('general')
 const isGeneratingSchema = ref(false)
@@ -1252,6 +1294,30 @@ function toggleEdgeType(type) {
                   <p v-if="isChunking" class="mt-1 text-[11px] text-ink-muted">청크 생성 중...</p>
                   <p v-if="chunkError" class="mt-1 text-[11px] text-red-400">{{ chunkError }}</p>
                 </div>
+
+                <div class="mt-3">
+                  <div class="mb-1 flex items-center justify-between">
+                    <span class="text-[10px] uppercase tracking-wide text-ink-faint">골든셋</span>
+                    <button
+                      type="button"
+                      class="btn px-2 py-0.5 text-[11px]"
+                      :disabled="!selectedFilename || isGeneratingGoldenset"
+                      @click="createGoldenset"
+                    >{{ isGeneratingGoldenset ? '작성 중...' : (currentFile?.has_goldenset ? '골든셋 재작성' : '골든셋 작성') }}</button>
+                  </div>
+                  <p class="text-[11px] leading-snug text-ink-faint">
+                    문서 전체를 기준으로 질문·정답·근거 인용을 생성합니다 (청크 단위가 아닌 문서 전체 기준).
+                  </p>
+                  <p v-if="goldensetError" class="mt-1 text-[11px] text-red-400">{{ goldensetError }}</p>
+                  <button
+                    v-if="goldensetReport && !showGoldensetReport"
+                    type="button"
+                    class="mt-1 text-[11px] text-accent hover:underline"
+                    @click="showGoldensetReport = true"
+                  >
+                    골든셋 보기 ({{ goldensetReport.questions?.length ?? 0 }}문항)
+                  </button>
+                </div>
               </section>
 
               <section class="mb-5">
@@ -1762,6 +1828,49 @@ function toggleEdgeType(type) {
             />
             참고하여 생성
           </label>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showGoldensetReport && goldensetReport"
+      class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50"
+      @click.self="showGoldensetReport = false"
+    >
+      <div class="flex max-h-[85vh] w-[760px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-2xl">
+        <div class="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
+          <h2 class="text-sm font-semibold text-ink">골든셋 ({{ goldensetReport.questions?.length ?? 0 }}문항, 문서 전체 기준)</h2>
+          <button type="button" class="btn" @click="showGoldensetReport = false">닫기</button>
+        </div>
+        <div class="flex-1 space-y-2 overflow-y-auto p-4">
+          <div
+            v-for="(q, i) in goldensetReport.questions"
+            :key="q.id ?? i"
+            class="rounded-md border border-border bg-surface-sunken p-2.5"
+          >
+            <div class="mb-1 flex flex-wrap items-center gap-1.5">
+              <span class="chip border-border bg-white/5 text-ink-muted">{{ q.question_type }}</span>
+              <span class="text-[10px] text-ink-faint">{{ q.importance }}</span>
+              <span
+                class="chip"
+                :class="q.answerable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-400'"
+              >{{ q.answerable ? '답변 가능' : '답변 불가' }}</span>
+            </div>
+            <p class="text-xs font-medium text-ink">{{ q.question }}</p>
+            <p v-if="q.answer" class="mt-1 text-[11px] text-ink-muted">{{ q.answer }}</p>
+            <ul v-if="q.evidence?.length" class="mt-1 space-y-0.5 text-[11px] text-ink-faint">
+              <li v-for="(e, ei) in q.evidence" :key="ei">
+                "{{ e.quote }}" (L{{ e.line_start }}{{ e.line_end !== e.line_start ? `-${e.line_end}` : '' }})
+              </li>
+            </ul>
+            <p v-if="q.rationale" class="mt-1 text-[11px] italic text-ink-faint">{{ q.rationale }}</p>
+          </div>
+          <div v-if="goldensetReport.warnings?.length">
+            <h3 class="section-label">주의/검증 필요</h3>
+            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-400">
+              <li v-for="(w, i) in goldensetReport.warnings" :key="i">{{ w }}</li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>

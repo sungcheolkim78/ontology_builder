@@ -115,6 +115,7 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
         "converter": "anydoc",
         "summary": None,
         "has_chunks": False,
+        "has_goldenset": False,
         "has_schema": True,
         "has_graph": False,
         "graphdb_name": graphdb.DB_PATH.name,
@@ -132,6 +133,19 @@ def test_list_documents_falls_back_to_derived_filename_without_manifest():
     assert doc["original_filename"] == "report_raw.md"
     assert doc["has_schema"] is False
     assert doc["has_graph"] is False
+
+
+def test_list_documents_reports_goldenset_status():
+    write_raw("report_raw")
+    from app.goldenset import save_goldenset
+
+    save_goldenset("report_raw", {"source_file": "report_raw.md", "source_sha256": "x", "questions": []})
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert response.json()["documents"][0]["has_goldenset"] is True
 
 
 def test_list_documents_returns_empty_list_when_no_data_dir():

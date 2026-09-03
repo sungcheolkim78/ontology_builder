@@ -125,6 +125,8 @@ no network calls and negligible overhead when running tests locally
 | GET | `/api/documents/{filename}/chunk` | Read back the saved chunks |
 | POST | `/api/documents/{filename}/summary` | LLM generates a short document summary |
 | GET | `/api/documents/{filename}/summary` | Read back the saved summary |
+| POST | `/api/documents/{filename}/goldenset` | LLM generates a golden QA set from the whole document |
+| GET | `/api/documents/{filename}/goldenset` | Read back the saved golden set |
 | GET | `/api/ontology/schemas` | List every document stem that has a saved schema |
 | POST | `/api/ontology/{filename}/schema` | LLM proposes a node/edge type schema for the document |
 | POST | `/api/ontology/{filename}/schema/use` | Copy another document's schema onto this one |
@@ -263,7 +265,8 @@ with everything the File Explorer's right-hand panel needs:
 derived filename/`"anydoc"` when no manifest was ever written),
 `size_bytes`/`modified_at` (from `raw.md`'s own `stat()`), `summary`
 (`load_document_summary`, `null` if never generated), `has_chunks`
-(`documents/{stem}/chunks.json` exists), `has_schema`/`has_graph`
+(`documents/{stem}/chunks.json` exists), `has_goldenset`
+(`documents/{stem}/goldenset.json` exists), `has_schema`/`has_graph`
 (active schema version / `graphdb.has_graph` for that version), and
 `graphdb_name`.
 
@@ -287,6 +290,23 @@ Re-running overwrites the previous summary.
 
 **`GET /api/documents/{filename}/summary`** — reads back the saved
 summary; 404 if none has been generated yet.
+
+**`POST /api/documents/{filename}/goldenset`** — always reads the whole
+`documents/{stem}/raw.md` (never `chunks.json` — see `app.goldenset`'s
+module docstring for why a golden set must not be built the same chunked
+way as the discover/schema/extract pipelines it exists to validate),
+generates `question_count` (default 10) questions via
+`app.goldenset.generate_goldenset`, then a separate LLM call answers them
+with evidence quotes that are re-verified in code against the full
+original document text (an unverifiable or missing-evidence answer is
+downgraded to `answerable: false`, same rule as
+`scripts/prepare_goldenset`'s standalone CLI tool). Saves the result to
+`documents/{stem}/goldenset.json` and returns it. 404 if the document
+doesn't exist; 400 if the LLM output doesn't parse or the document is
+empty. Re-running overwrites the previous golden set.
+
+**`GET /api/documents/{filename}/goldenset`** — reads back the saved
+golden set; 404 if none has been generated yet.
 
 **`POST /api/ontology/{filename}/schema`** — reads
 `backend/data/documents/{stem}/raw.md`, prompts the LLM (same
@@ -496,15 +516,20 @@ directly.
     input (radio choice between `anydoc` and `table_aware` converters,
     the latter only doing anything for a `.pdf` — see `app.chunking`)
     that posts to `/api/parse`, and the document list from
-    `GET /api/documents`, each row showing a 4-stage badge strip
-    (MD/Chunk/Schema/Graph, `has_chunks`/`has_schema`/`has_graph`).
-    Clicking a row emits `file-selected` (`{filename, path}`). Right:
-    for the selected document — 메타 정보 (original filename, converter,
-    size, modified time, an "요약 생성"/"재생성" button around
-    `POST /api/documents/{filename}/summary`, and a "청크 생성"/"재생성"
-    button around `POST /api/documents/{filename}/chunk`, both refetching
-    `/api/documents` on success so the badge strip and summary text stay
-    current), the document's schema versions (`GET .../schema/versions`,
+    `GET /api/documents`, each row showing a 5-stage badge strip
+    (MD/Chunk/Golden/Schema/Graph, `has_chunks`/`has_goldenset`/
+    `has_schema`/`has_graph`). Clicking a row emits `file-selected`
+    (`{filename, path}`). Right: for the selected document — 메타 정보
+    (original filename, converter, size, modified time, an "요약 생성"/
+    "재생성" button around `POST /api/documents/{filename}/summary`, and a
+    "청크 생성"/"재생성" button around `POST /api/documents/{filename}/chunk`,
+    both refetching `/api/documents` on success so the badge strip and
+    summary text stay current), a "골든셋 작성"/"재작성" button around
+    `POST /api/documents/{filename}/goldenset` (always whole-document, never
+    chunked — see `app.goldenset`) that opens a modal listing every
+    generated question with its type/importance/answerable badge, answer,
+    and verified evidence quotes with line numbers, the document's schema
+    versions (`GET .../schema/versions`,
     activate/delete), and the "스키마 라이브러리" list
     (`GET /api/ontology/schemas`, clicking one calls
     `POST /api/ontology/{selectedFilename}/schema/use` and emits

@@ -61,6 +61,7 @@ from app.ontology import (
     validate_ontology,
 )
 from app.chunking import chunk_markdown_file, convert_pdf_to_markdown_file
+from app.goldenset import generate_goldenset, goldenset_path_for, load_goldenset, save_goldenset
 from app.parser import parse_to_markdown_file
 from app.paths import document_dir_for, documents_dir
 from app.telemetry import configure_telemetry, invoke_with_telemetry
@@ -277,6 +278,7 @@ def list_documents():
                 "modified_at": stat.st_mtime,
                 "summary": load_document_summary(stem),
                 "has_chunks": _chunk_path(stem).is_file(),
+                "has_goldenset": goldenset_path_for(stem).is_file(),
                 "has_schema": active_version is not None,
                 "has_graph": active_version is not None
                 and graphdb.has_graph(stem, version=active_version),
@@ -334,6 +336,38 @@ def get_summary(filename: str):
     if summary is None:
         raise HTTPException(status_code=404, detail="summary not found")
     return {"summary": summary}
+
+
+class CreateGoldensetRequest(BaseModel):
+    question_count: int = 10
+
+
+@app.post("/api/documents/{filename}/goldenset")
+def create_goldenset(filename: str, request: CreateGoldensetRequest | None = None):
+    doc_path = _document_path(filename)
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    stem = _stem(filename)
+    question_count = request.question_count if request else 10
+    try:
+        # Always the whole raw.md, never chunks.json -- see the module-level
+        # rationale in app.goldenset for why a golden set must not be built
+        # the same chunked way as the pipelines it's meant to validate.
+        report = generate_goldenset(
+            doc_path.read_text(), source_name=f"{stem}.md", question_count=question_count
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_goldenset(stem, report)
+    return report
+
+
+@app.get("/api/documents/{filename}/goldenset")
+def get_goldenset(filename: str):
+    report = load_goldenset(_stem(filename))
+    if report is None:
+        raise HTTPException(status_code=404, detail="goldenset not found")
+    return report
 
 
 @app.get("/api/ontology/schemas")
