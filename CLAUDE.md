@@ -200,6 +200,14 @@ business logic of its own beyond request/response shaping.
   single type's own nodes by `array_cosine_similarity()` against a
   query vector, filtering out `NULL` rows rather than sorting them
   arbitrarily.
+- `prompts.py` — every LLM prompt template this app sends, as plain string
+  constants (with the design-rationale comments explaining why each one asks
+  for what it does), kept separate from `ontology.py`'s extraction/storage
+  logic so the prompt text can be read or edited on its own. `ontology.py`
+  imports each constant it needs (`SCHEMA_PROMPTS`, `EXTRACT_PROMPT`,
+  `VALIDATION_PROMPT`, `DISCOVERY_PROMPT`, `SUMMARY_PROMPT`,
+  `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`); nothing else in the backend
+  references them.
 - `ontology.py` — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
