@@ -26,6 +26,50 @@
   "cross_references": [
     {"from": "제17조①", "to": "제1조①", "via_term": "가입금액"}
   ],
+  "reference_graph": {
+    "note": "Hand-authored, spec-shaped extraction output for legal_policy_sample.md's 제17조 (see design spec section 5.3) -- used to test legal graph modeling helpers (app.ontology) without a live LLM call.",
+    "nodes": [
+      {"id": "article17", "type": "Article", "label": "제17조", "detail": ""},
+      {"id": "norm1", "type": "Norm", "label": "암 진단 보험금 지급 규정", "properties": {"modality": "OBLIGATION"}},
+      {"id": "insurer", "type": "Party", "label": "회사"},
+      {"id": "payment1", "type": "Benefit", "label": "보험금 지급"},
+      {"id": "condition1", "type": "Condition", "label": "암 진단 확정"},
+      {"id": "amount1", "type": "PaymentAmount", "label": "가입금액의 50%", "properties": {"expression": "가입금액의 50%"}},
+      {"id": "exclusion1", "type": "Exclusion", "label": "계약일로부터 90일 이내 면책", "properties": {"duration": "90일"}},
+      {"id": "evidence1", "type": "EvidenceSpan", "label": "제17조① 근거", "evidence_text": "회사는 피보험자가 이 계약의 보험기간 중 암 진단 확정을 받은 경우"}
+    ],
+    "edges": [
+      {"source": "article17", "target": "norm1", "type": "STATES"},
+      {"source": "norm1", "target": "insurer", "type": "HAS_BEARER"},
+      {"source": "norm1", "target": "payment1", "type": "HAS_ACTION"},
+      {"source": "norm1", "target": "condition1", "type": "HAS_CONDITION"},
+      {"source": "norm1", "target": "amount1", "type": "HAS_AMOUNT"},
+      {"source": "norm1", "target": "exclusion1", "type": "HAS_EXCEPTION"},
+      {"source": "norm1", "target": "evidence1", "type": "SUPPORTED_BY"}
+    ]
+  },
+  "reference_graph_with_catchall_violation": {
+    "note": "A structural Article node used as a semantic catch-all: substantive detail packed directly onto it with no edge out to any semantic node. flag_structural_catchall_nodes() must flag article17 here.",
+    "nodes": [
+      {
+        "id": "article17",
+        "type": "Article",
+        "label": "제17조",
+        "detail": "암 진단 확정 시 가입금액의 50%를 지급하되, 계약일로부터 90일 이내에는 지급하지 않는다."
+      }
+    ],
+    "edges": []
+  },
+  "reference_graph_with_bad_edge_shape": {
+    "note": "HAS_CONDITION pointed at a Benefit instead of a Condition -- validate_legal_edge_shapes() must flag this.",
+    "nodes": [
+      {"id": "norm1", "type": "Norm", "label": "규정"},
+      {"id": "payment1", "type": "Benefit", "label": "보험금 지급"}
+    ],
+    "edges": [
+      {"source": "norm1", "target": "payment1", "type": "HAS_CONDITION"}
+    ]
+  },
   "competency_questions": [
     {
       "id": "cq1",

@@ -138,6 +138,19 @@ article it comes from with an edge_type (e.g. "STATES", "DEFINES", "TRIGGERS"). 
 The same rule applies to any other structural/sectioning node_type you \
 introduce (e.g. "Clause", "Schedule", "Appendix").
 
+For a simple, single relationship, propose a direct edge_type between the two \
+concepts it connects (e.g. "PAYS", "REQUIRES", "EXCLUDES"). But when a single \
+provision states a relationship with several conditions, exceptions, or \
+qualifiers at once (e.g. "암 진단 확정 시 가입금액의 50%를 지급하되, 계약일로부터 \
+90일 이내에는 지급하지 않는다" -- one payment obligation with a bearer, a \
+condition, an amount, AND an exception), don't try to squeeze all of that onto \
+one edge's properties. Instead, propose a node_type for the rule itself (e.g. \
+"Norm", "Rule", "PaymentNorm") and connect it to each of its participants with \
+its own edge_type (e.g. "HAS_BEARER", "HAS_CONDITION", "HAS_AMOUNT", \
+"HAS_EXCEPTION") -- this keeps every qualifier independently searchable and \
+citable instead of flattened into one edge no one part of which can be found \
+on its own.
+
 """ + _SCHEMA_OUTPUT_INSTRUCTIONS
 
 SCHEMA_PROMPTS = {

@@ -716,6 +716,64 @@ def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(mo
     assert "source_section" not in result["nodes"][1]
 
 
+def _load_legal_fixture():
+    fixture_path = os.path.join(os.path.dirname(__file__), "fixtures", "legal_policy_expected.json")
+    with open(fixture_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_flag_structural_catchall_nodes_accepts_reified_legal_graph():
+    from app.ontology import flag_structural_catchall_nodes
+
+    fixture = _load_legal_fixture()
+    assert flag_structural_catchall_nodes(fixture["reference_graph"]) == []
+
+
+def test_flag_structural_catchall_nodes_flags_detail_only_article():
+    from app.ontology import flag_structural_catchall_nodes
+
+    fixture = _load_legal_fixture()
+    issues = flag_structural_catchall_nodes(fixture["reference_graph_with_catchall_violation"])
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "structural_catchall"
+    assert issues[0]["node_id"] == "article17"
+
+
+def test_flag_structural_catchall_nodes_ignores_structural_node_with_no_detail():
+    from app.ontology import flag_structural_catchall_nodes
+
+    graph = {"nodes": [{"id": "a1", "type": "Article", "label": "제1조", "detail": ""}], "edges": []}
+    assert flag_structural_catchall_nodes(graph) == []
+
+
+def test_validate_legal_edge_shapes_accepts_reified_legal_graph():
+    from app.ontology import validate_legal_edge_shapes
+
+    fixture = _load_legal_fixture()
+    assert validate_legal_edge_shapes(fixture["reference_graph"]) == []
+
+
+def test_validate_legal_edge_shapes_flags_has_condition_pointed_at_a_benefit():
+    from app.ontology import validate_legal_edge_shapes
+
+    fixture = _load_legal_fixture()
+    issues = validate_legal_edge_shapes(fixture["reference_graph_with_bad_edge_shape"])
+
+    assert len(issues) == 1
+    assert issues[0]["code"] == "unexpected_endpoint_type"
+
+
+def test_validate_legal_edge_shapes_ignores_edge_types_it_has_no_hint_for():
+    from app.ontology import validate_legal_edge_shapes
+
+    graph = {
+        "nodes": [{"id": "a", "type": "Person", "label": "x"}, {"id": "b", "type": "Person", "label": "y"}],
+        "edges": [{"source": "a", "target": "b", "type": "KNOWS"}],
+    }
+    assert validate_legal_edge_shapes(graph) == []
+
+
 def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
     from app.ontology import extract_graph_from_chunks
 

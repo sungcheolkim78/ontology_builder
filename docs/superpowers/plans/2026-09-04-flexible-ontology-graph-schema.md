@@ -114,13 +114,13 @@
 - Consumes: legal schema declarations and structured extraction output.
 - Produces: `Article`/`Paragraph` structural nodes; `Norm`, `Condition`, `Exclusion`, `Benefit`, `DefinedTerm`, and `EvidenceSpan` semantic nodes when supported by the text.
 
-- [ ] Write failing tests proving an article can state multiple independent semantic nodes.
-- [ ] Write failing tests proving a payment rule can connect to bearer, action/benefit, condition, amount, exception, and evidence.
-- [ ] Add explicit direction and endpoint checks for `STATES`, `HAS_CONDITION`, `HAS_EXCEPTION`, and `SUPPORTED_BY`.
-- [ ] Use a first-class `Norm`/`Rule` node when a relation has multiple qualifiers instead of packing all qualifiers into one edge property.
-- [ ] Keep simple intrinsic values as typed properties and simple relation qualifiers as edge properties.
-- [ ] Add a guard that prevents structural nodes from receiving semantic catch-all `detail` content as their only representation.
-- [ ] Run the representative fixture assertions without requiring a live LLM by testing normalized model payloads.
+- [x] Write failing tests proving an article can state multiple independent semantic nodes. (`reference_graph` fixture: `article17` STATES a single `Norm` which fans out to bearer/action/condition/amount/exception/evidence — the multiple-independent-nodes shape lives one hop below the article, matching the reification guidance below rather than direct `Article -> N` edges)
+- [x] Write failing tests proving a payment rule can connect to bearer, action/benefit, condition, amount, exception, and evidence. (`reference_graph` in `legal_policy_expected.json`)
+- [x] Add explicit direction and endpoint checks for `STATES`, `HAS_CONDITION`, `HAS_EXCEPTION`, and `SUPPORTED_BY`. (`validate_legal_edge_shapes`)
+- [x] Use a first-class `Norm`/`Rule` node when a relation has multiple qualifiers instead of packing all qualifiers into one edge property. (`LEGAL_SCHEMA_PROMPT` reification paragraph)
+- [x] Keep simple intrinsic values as typed properties and simple relation qualifiers as edge properties. (already supported by Task 2/3's `properties` handling; no new code needed)
+- [x] Add a guard that prevents structural nodes from receiving semantic catch-all `detail` content as their only representation. (`flag_structural_catchall_nodes`)
+- [x] Run the representative fixture assertions without requiring a live LLM by testing normalized model payloads. (`_load_legal_fixture()` + `reference_graph`/`reference_graph_with_catchall_violation`/`reference_graph_with_bad_edge_shape` in the fixture; 6 tests, no LLM call)
 
 **Commit:** `git commit -m "Model legal norms conditions exceptions and evidence"`
 
