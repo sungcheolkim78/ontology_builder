@@ -66,6 +66,111 @@ def test_load_graph_returns_none_for_unextracted_document():
     assert graphdb.load_graph("never_extracted") is None
 
 
+STRUCTURED_NODES = [
+    {
+        "id": "n1",
+        "label": "Coverage A",
+        "type": "Coverage",
+        "detail": "50% of the insured amount",
+        "properties": {"amount": "50%"},
+        "confidence": "HIGH",
+        "evidence_text": "가입금액의 50%를 지급한다",
+        "start_offset": 10,
+        "end_offset": 25,
+        "source_section": "제17조①",
+        "valid_from": "2020-01-01",
+        "valid_to": "2030-01-01",
+    },
+    {"id": "n2", "label": "Waiting Period", "type": "Exclusion"},
+]
+STRUCTURED_EDGES = [
+    {
+        "source": "n1",
+        "target": "n2",
+        "type": "HAS_EXCEPTION",
+        "properties": {"basis": "계약일"},
+        "confidence": "MEDIUM",
+        "evidence_text": "계약일로부터 90일 이내",
+        "start_offset": 30,
+        "end_offset": 45,
+    },
+]
+
+
+def test_write_and_load_graph_round_trips_structured_metadata():
+    graphdb.write_graph("doc_structured", STRUCTURED_NODES, STRUCTURED_EDGES)
+
+    loaded = graphdb.load_graph("doc_structured")
+    node = next(n for n in loaded["nodes"] if n["id"] == "n1")
+
+    assert node["properties"] == {"amount": "50%"}
+    assert node["confidence"] == "HIGH"
+    assert node["evidence_text"] == "가입금액의 50%를 지급한다"
+    assert node["start_offset"] == 10
+    assert node["end_offset"] == 25
+    assert node["source_section"] == "제17조①"
+    assert node["valid_from"] == "2020-01-01"
+    assert node["valid_to"] == "2030-01-01"
+
+    other_node = next(n for n in loaded["nodes"] if n["id"] == "n2")
+    assert "properties" not in other_node
+    assert "confidence" not in other_node
+
+    edge = loaded["edges"][0]
+    assert edge["properties"] == {"basis": "계약일"}
+    assert edge["confidence"] == "MEDIUM"
+    assert edge["evidence_text"] == "계약일로부터 90일 이내"
+    assert edge["start_offset"] == 30
+    assert edge["end_offset"] == 45
+
+
+def test_load_graph_omits_structured_fields_when_not_present():
+    # Old-shape nodes/edges (Task 5's own NODES/EDGES fixtures, pre-dating
+    # structured metadata) must round-trip with exactly their old shape --
+    # no properties/confidence/evidence/source_section/temporal key appears
+    # out of nowhere.
+    graphdb.write_graph("doc_legacy", NODES, EDGES)
+
+    loaded = graphdb.load_graph("doc_legacy")
+
+    for node in loaded["nodes"]:
+        assert set(node.keys()) <= {"id", "label", "type", "detail"}
+    for edge in loaded["edges"]:
+        assert set(edge.keys()) <= {"source", "target", "type", "detail"}
+
+
+def test_write_graph_reuses_existing_table_and_adds_missing_envelope_columns():
+    # Simulates a node table created by a version of write_graph that
+    # pre-dates structured metadata: a bare table with only the original
+    # envelope columns. A later write_graph call for the same type must
+    # ALTER TABLE ADD the missing columns rather than failing.
+    graphdb._get_connection().execute(
+        "CREATE NODE TABLE Coverage(id STRING PRIMARY KEY, original_id STRING, "
+        "label STRING, detail STRING, source_document STRING, version INT64, "
+        f"embedding FLOAT[{EMBEDDING_DIM}])"
+    )
+    # DDL run outside write_graph's own commit/reset_connection dance leaves
+    # the WAL unflushed -- close and reopen now so the table is durably on
+    # the main file before continuing (see write_graph's own comment on why
+    # closing, not just committing, is what triggers the checkpoint here).
+    graphdb.reset_connection()
+
+    graphdb.write_graph("doc_migrated", [STRUCTURED_NODES[0]], [])
+
+    loaded = graphdb.load_graph("doc_migrated")
+    assert loaded["nodes"][0]["properties"] == {"amount": "50%"}
+    assert loaded["nodes"][0]["confidence"] == "HIGH"
+
+
+def test_delete_version_data_removes_structured_metadata_with_the_rest():
+    graphdb.write_graph("doc_structured", STRUCTURED_NODES, STRUCTURED_EDGES, version=1)
+
+    graphdb.delete_version_data("doc_structured", version=1)
+
+    assert graphdb.has_graph("doc_structured", version=1) is False
+    assert graphdb.load_graph("doc_structured", version=1) is None
+
+
 def test_reset_database_clears_all_documents_and_deletes_files_on_disk():
     graphdb.write_graph("doc_a", NODES, EDGES)
     graphdb.write_graph(
@@ -691,6 +796,15 @@ def test_find_matching_edges_and_expand_hops_resolve_legacy_two_part_ids_via_ori
         "CREATE REL TABLE GROUP WORKED_ON(FROM Person TO Person, type STRING, "
         "detail STRING, source_document STRING, version INT64)"
     )
+    # A real legacy table gets these columns the next time write_graph
+    # touches it (_ensure_envelope_columns); this test never calls
+    # write_graph, so add them explicitly to keep read queries (which now
+    # always select the envelope extras) working against this hand-built
+    # table -- this test is about legacy *id* resolution, not envelope
+    # columns, so its setup should reflect a table write_graph has migrated,
+    # not one frozen from before this feature existed.
+    graphdb._ensure_envelope_columns(conn, "Person")
+    graphdb._ensure_envelope_columns(conn, "WORKED_ON")
     conn.execute(
         "CREATE (:Person {id: 'doc_a::n1', original_id: 'n1', label: 'Ada Lovelace', "
         "detail: '', source_document: 'doc_a', version: 1})"

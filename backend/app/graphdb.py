@@ -156,11 +156,125 @@ def _existing_pairs(conn, rel_type: str) -> set:
     return {(row["source table name"], row["destination table name"]) for row in rows}
 
 
+# The common graph envelope's optional metadata fields (design spec section
+# 4.1), added to every existing NODE/REL table via ALTER TABLE ADD rather
+# than baked into the CREATE statement -- verified experimentally that
+# ALTER TABLE ADD works on this engine (ladybug==0.19.1), so a table created
+# before this feature existed and one created after it both end up with the
+# same columns, and _ensure_envelope_columns (below) is what makes that
+# true regardless of which case a given table is in. `properties` is one
+# open MAP(STRING, STRING) column rather than one physical column per
+# declared property, since a node/edge type's table is shared by every
+# domain schema that uses that type name -- two schemas declaring the same
+# type with different property sets would otherwise conflict on fixed
+# columns (see design spec section 4.2). `valid_from`/`valid_to` are plain
+# strings (ISO dates), not typed as a discrete DATE/interval column: nothing
+# in this codebase generates or compares them as dates yet, and a string
+# column is the simplest thing that can be widened later without another
+# migration once that need is concrete.
+_ENVELOPE_EXTRA_COLUMNS = [
+    ("confidence", "STRING"),
+    ("evidence_text", "STRING"),
+    ("source_section", "STRING"),
+    ("start_offset", "INT64"),
+    ("end_offset", "INT64"),
+    ("valid_from", "STRING"),
+    ("valid_to", "STRING"),
+    ("properties", "MAP(STRING, STRING)"),
+]
+
+
+def _existing_columns(conn, table_name: str) -> set:
+    return {
+        row["name"] for row in conn.execute(f'CALL TABLE_INFO("{table_name}") RETURN *').rows_as_dict()
+    }
+
+
+def _ensure_envelope_columns(conn, table_name: str) -> None:
+    existing_columns = _existing_columns(conn, table_name)
+    for column_name, column_type in _ENVELOPE_EXTRA_COLUMNS:
+        if column_name not in existing_columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD {column_name} {column_type}")
+
+
+def _property_lists(properties) -> tuple:
+    properties = properties or {}
+    return list(properties.keys()), [str(v) for v in properties.values()]
+
+
+def _envelope_extra_row_values(item: dict) -> dict:
+    keys, values = _property_lists(item.get("properties"))
+    return {
+        "confidence": item.get("confidence"),
+        "evidence_text": item.get("evidence_text"),
+        "source_section": item.get("source_section"),
+        "start_offset": item.get("start_offset"),
+        "end_offset": item.get("end_offset"),
+        "valid_from": item.get("valid_from"),
+        "valid_to": item.get("valid_to"),
+        "properties_keys": keys,
+        "properties_values": values,
+    }
+
+
+# The CAST(... AS INT64) around start_offset/end_offset is required, not
+# decorative -- verified experimentally that an UNWIND row batch where every
+# row's start_offset/end_offset is None binds fine as a plain node CREATE,
+# but the same all-NULL field in a `MATCH ... CREATE (a)-[:TYPE {...}]->(b)`
+# relationship-creation query raises "STRUCT_EXTRACT(row,start_offset) has
+# data type STRING but expected INT64" -- the engine infers an untyped-NULL
+# struct field as STRING in this query shape, which doesn't implicitly cast
+# to the column's actual INT64 type. The CAST makes the target type explicit
+# regardless of what the engine inferred for a NULL value.
+_ENVELOPE_EXTRA_CREATE_FIELDS = (
+    "confidence: row.confidence, evidence_text: row.evidence_text, "
+    "source_section: row.source_section, start_offset: CAST(row.start_offset AS INT64), "
+    "end_offset: CAST(row.end_offset AS INT64), valid_from: row.valid_from, valid_to: row.valid_to, "
+    "properties: map(row.properties_keys, row.properties_values)"
+)
+
+def _envelope_return_fields(alias: str) -> str:
+    """Builds `<alias>.confidence AS confidence, ...` for every envelope
+    extra column -- a plain shared string constant (like
+    _ENVELOPE_EXTRA_CREATE_FIELDS) can't work here because RETURN clauses
+    combine multiple aliases in one query (e.g. `a`/`b`/`r` in an edge
+    query), so each field needs its own alias prefix bound correctly."""
+    return ", ".join(
+        f"{alias}.{name} AS {name}" for name, _ in _ENVELOPE_EXTRA_COLUMNS
+    )
+
+
+def _apply_envelope_extras(item: dict, row: dict) -> dict:
+    """Adds properties/confidence/evidence*/source_section/valid_from/
+    valid_to to `item` only when the row actually has a value for them --
+    the same additive-only rule as app.ontology's extraction-side
+    normalization, so a legacy row (written before this feature, or simply
+    never given this metadata) round-trips with exactly its old shape."""
+    properties = row.get("properties") or {}
+    if properties:
+        item["properties"] = properties
+    if row.get("confidence"):
+        item["confidence"] = row["confidence"]
+    if row.get("evidence_text"):
+        item["evidence_text"] = row["evidence_text"]
+        if row.get("start_offset") is not None:
+            item["start_offset"] = row["start_offset"]
+        if row.get("end_offset") is not None:
+            item["end_offset"] = row["end_offset"]
+    if row.get("source_section"):
+        item["source_section"] = row["source_section"]
+    if row.get("valid_from"):
+        item["valid_from"] = row["valid_from"]
+    if row.get("valid_to"):
+        item["valid_to"] = row["valid_to"]
+    return item
+
+
 def _node_from_row(row: dict) -> dict:
     node = {"id": row["original_id"], "label": row["label"], "type": row["type"]}
     if row.get("detail"):
         node["detail"] = row["detail"]
-    return node
+    return _apply_envelope_extras(node, row)
 
 
 def _edge_from_row(row: dict) -> dict:
@@ -171,7 +285,7 @@ def _edge_from_row(row: dict) -> dict:
     }
     if row.get("detail"):
         edge["detail"] = row["detail"]
-    return edge
+    return _apply_envelope_extras(edge, row)
 
 
 @_synchronized
@@ -233,6 +347,11 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
             )
             existing[t] = "NODE"
             existing_lower.add(t.lower())
+        # Applies equally to a table just created above (a no-op, since it
+        # already has every column) and one that predates this feature --
+        # see _ENVELOPE_EXTRA_COLUMNS' own rationale for why this isn't
+        # folded into the CREATE statement instead.
+        _ensure_envelope_columns(conn, t)
 
     for etype, src, dst in edge_specs:
         if etype.lower() not in existing_lower:
@@ -246,6 +365,7 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
             (s.lower(), d.lower()) for s, d in _existing_pairs(conn, etype)
         }:
             conn.execute(f"ALTER TABLE {etype} ADD FROM {src} TO {dst}")
+        _ensure_envelope_columns(conn, etype)
 
     conn.execute("BEGIN TRANSACTION")
     try:
@@ -271,7 +391,8 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
                 f"UNWIND $rows AS row "
                 f"CREATE (:{node_type} {{id: row.id, original_id: row.original_id, "
                 f"label: row.label, detail: row.detail, source_document: row.stem, "
-                f"version: row.version, embedding: row.embedding}})",
+                f"version: row.version, embedding: row.embedding, "
+                f"{_ENVELOPE_EXTRA_CREATE_FIELDS}}})",
                 {
                     "rows": [
                         {
@@ -282,6 +403,7 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
                             "stem": stem,
                             "version": version,
                             "embedding": node.get("embedding"),
+                            **_envelope_extra_row_values(node),
                         }
                         for node in type_nodes
                     ]
@@ -298,7 +420,8 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
                 f"UNWIND $rows AS row "
                 f"MATCH (a:{src_type} {{id: row.src}}), (b:{dst_type} {{id: row.dst}}) "
                 f"CREATE (a)-[:{etype} {{type: row.type, detail: row.detail, "
-                f"source_document: row.stem, version: row.version}}]->(b)",
+                f"source_document: row.stem, version: row.version, "
+                f"{_ENVELOPE_EXTRA_CREATE_FIELDS}}}]->(b)",
                 {
                     "rows": [
                         {
@@ -308,6 +431,7 @@ def write_graph(stem: str, nodes: list, edges: list, version: int = 1) -> None:
                             "detail": edge.get("detail") or "",
                             "stem": stem,
                             "version": version,
+                            **_envelope_extra_row_values(edge),
                         }
                         for edge in spec_edges
                     ]
@@ -434,7 +558,7 @@ def load_graph(stem: str, version: int = 1) -> dict | None:
         node_rows = conn.execute(
             "MATCH (n) WHERE n.source_document = $stem AND n.version = $version "
             "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
-            "n.detail AS detail ORDER BY n.id",
+            f"n.detail AS detail, {_envelope_return_fields('n')} ORDER BY n.id",
             {"stem": stem, "version": version},
         ).rows_as_dict()
         nodes = [_node_from_row(row) for row in node_rows]
@@ -448,7 +572,8 @@ def load_graph(stem: str, version: int = 1) -> dict | None:
         edge_rows = conn.execute(
             "MATCH (a)-[r]->(b) WHERE r.source_document = $stem AND r.version = $version "
             "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-            "b.original_id AS target ORDER BY r.type, a.id, b.id",
+            f"b.original_id AS target, {_envelope_return_fields('r')} "
+            "ORDER BY r.type, a.id, b.id",
             {"stem": stem, "version": version},
         ).rows_as_dict()
         edges = [_edge_from_row(row) for row in edge_rows]
@@ -548,7 +673,7 @@ def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set, v
         "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
         "AND r.version = $version AND (a.original_id IN $ids OR b.original_id IN $ids) "
         "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        "b.original_id AS target",
+        f"b.original_id AS target, {_envelope_return_fields('r')}",
         {"types": allowed_types, "stem": stem, "version": version, "ids": list(matched_node_ids)},
     )
     return [_edge_from_row(row) for row in result.rows_as_dict()]
@@ -566,7 +691,7 @@ def all_edges_of_types(stem: str, allowed_types: list, version: int = 1) -> list
         "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
         "AND r.version = $version "
         "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        "b.original_id AS target",
+        f"b.original_id AS target, {_envelope_return_fields('r')}",
         {"types": allowed_types, "stem": stem, "version": version},
     )
     return [_edge_from_row(row) for row in result.rows_as_dict()]
@@ -621,7 +746,7 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
             f"AND n.source_document = $stem AND n.version = $version "
             f"AND m.source_document = $stem AND m.version = $version "
             f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
-            f"m.label AS label, m.detail AS detail",
+            f"m.label AS label, m.detail AS detail, {_envelope_return_fields('m')}",
             {"seeds": list(seed_ids), "stem": stem, "version": version},
         )
     else:
@@ -629,7 +754,7 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
             "MATCH (n) WHERE n.original_id IN $seeds AND n.source_document = $stem "
             "AND n.version = $version "
             "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
-            "n.detail AS detail",
+            f"n.detail AS detail, {_envelope_return_fields('n')}",
             {"seeds": list(seed_ids), "stem": stem, "version": version},
         )
     nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
@@ -642,7 +767,7 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
         "MATCH (a)-[r]->(b) WHERE a.original_id IN $ids AND b.original_id IN $ids "
         "AND r.source_document = $stem AND r.version = $version "
         "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        "b.original_id AS target",
+        f"b.original_id AS target, {_envelope_return_fields('r')}",
         {"ids": expanded_ids, "stem": stem, "version": version},
     )
     edges = [_edge_from_row(row) for row in edge_rows.rows_as_dict()]

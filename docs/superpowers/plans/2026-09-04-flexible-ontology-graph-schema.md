@@ -134,14 +134,15 @@
 - Consumes: normalized node/edge dictionaries with optional structured metadata.
 - Produces: persisted common envelope and structured metadata; existing `load_graph`, type search, edge search, and hop expansion remain callable with current signatures/defaults.
 
-- [ ] Write failing round-trip tests for common provenance fields, typed property payloads, and temporal fields.
-- [ ] Write failing tests proving old graph rows with only `detail` still load.
-- [ ] Write failing tests proving document/version deletion removes all new metadata together with graph rows.
-- [ ] Choose the least disruptive physical representation supported by LadybugDB: common scalar columns first; dedicated metadata/evidence nodes where heterogeneous columns are unsafe.
-- [ ] Add explicit serialization/deserialization helpers so database representation is not coupled to API response formatting.
-- [ ] Keep internal primary-key handling separate from application-level `original_id` lookup.
-- [ ] Preserve transactionality and document/version scoping for writes, re-extraction, embedding updates, and deletion.
-- [ ] Run all graphdb tests, including deterministic ordering and fresh-database cases.
+- [x] Write failing round-trip tests for common provenance fields, typed property payloads, and temporal fields. (`valid_from`/`valid_to` are persisted as plain ISO-date strings — nothing in the pipeline generates or compares them as real dates yet, so a string column is the simplest thing that can be widened later without another migration)
+- [x] Write failing tests proving old graph rows with only `detail` still load.
+- [x] Write failing tests proving document/version deletion removes all new metadata together with graph rows.
+- [x] Verified experimentally against the pinned `ladybug==0.19.1` engine: `ALTER TABLE ... ADD <column> <type>` on an existing table, and `MAP(STRING, STRING)`/`STRUCT(...)` column types, all work. Defaulted to `ALTER TABLE ADD` on each existing per-type NODE/REL table (`_ensure_envelope_columns`, called for every table `write_graph` touches, so it's a no-op on a freshly-created table and a real migration on a pre-existing one) to add the common envelope columns, plus one open `properties MAP(STRING, STRING)` column per table for schema-declared typed properties. Did **not** add `extraction_run_id`: nothing in the pipeline generates one yet, unlike `valid_from`/`valid_to`/`confidence`/evidence fields which Tasks 3–4 already produce — adding an always-NULL column with zero producers was deferred rather than spent here.
+- [x] Found and fixed one more real engine quirk beyond the two already verified: an UNWIND row batch where every row's `start_offset`/`end_offset` is `None` binds fine as a plain node `CREATE`, but the identical all-NULL field in a `MATCH ... CREATE (a)-[:TYPE {...}]->(b)` relationship-creation query raises `Binder exception: STRUCT_EXTRACT(row,start_offset) has data type STRING but expected INT64` — the engine infers an untyped NULL as STRING in that query shape. Fixed with an explicit `CAST(row.start_offset AS INT64)` in the edge (and, for consistency, node) CREATE clause.
+- [x] Add explicit serialization/deserialization helpers so database representation is not coupled to API response formatting. (`_envelope_extra_row_values`/`_apply_envelope_extras` — write-side and read-side halves of the same additive-only contract used by `_node_from_row`/`_edge_from_row`)
+- [x] Keep internal primary-key handling separate from application-level `original_id` lookup. (already true pre-Task-5; unchanged)
+- [x] Preserve transactionality and document/version scoping for writes, re-extraction, embedding updates, and deletion. (no changes to the transaction/scoping logic itself — only the columns and CREATE/RETURN clauses inside the existing transaction changed)
+- [x] Run all graphdb tests, including deterministic ordering and fresh-database cases. (62 passed; full suite 297 passed)
 
 **Commit:** `git commit -m "Persist governed graph metadata in LadybugDB"`
 

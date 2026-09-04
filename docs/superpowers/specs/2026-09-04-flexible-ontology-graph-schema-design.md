@@ -140,10 +140,36 @@ separate from legal validity dates. A schema/extraction version answers “which
 representation was produced”; `valid_from`/`valid_to` answer “when does the
 provision apply.”
 
-If the embedded graph engine cannot add all fields to existing heterogeneous
-tables safely, the implementation may keep a minimal physical envelope and
-store the remainder in dedicated `EvidenceSpan`, `TemporalExtent`, or
-`ExtractionRun` nodes. The semantic contract must remain the same.
+Verified experimentally against the pinned `ladybug==0.19.1` engine:
+`ALTER TABLE ... ADD <column> <type>` on an existing NODE/REL table, and
+`MAP(STRING, STRING)`/`STRUCT(...)` column types, all work. So the common
+envelope fields above can be added to every existing per-type table with
+`ALTER TABLE ADD` rather than requiring a parallel "minimal envelope +
+separate metadata node" fallback path. The implementation should default to
+this direct approach; a dedicated `EvidenceSpan`/`TemporalExtent`/
+`ExtractionRun` node is still the right shape for evidence that must be
+independently cited or that has its own lifecycle (per §4.3's node-vs-property
+rule), not a fallback forced by a physical-schema limitation that turned out
+not to exist.
+
+Two provenance fields need an explicit caveat because of how extraction
+actually runs today:
+
+- `source_section`/other chunk-derived provenance is only obtainable for
+  documents ingested through the PDF `table_aware` path
+  (`app.chunking.chunk_markdown_file`), which produces article-level chunk
+  ids. A document parsed only through the generic `anydoc` path (`parser.py`)
+  has no chunk structure at all, so these fields must be optional and absent
+  (not fabricated) for such documents.
+- Even for chunked documents, `extract_graph_from_chunks`'s reduce step
+  (`_merge_group_graphs`) currently namespaces and merges nodes at the
+  granularity of a whole *budget group* (several consecutive chunks packed
+  together under `MAX_CHUNK_GROUP_CHARS`), not at the granularity of a single
+  chunk/article. Attributing `source_section`/evidence offsets to the exact
+  originating article therefore requires the extraction prompt and its parsed
+  output to carry a chunk identifier per extracted node/edge from within a
+  group, not just a group index — this is additional prompt/output-contract
+  work beyond what today's group-level merge already tracks.
 
 ### 4.2 Domain schema contract
 
@@ -183,6 +209,17 @@ extended with optional type-specific declarations:
 
 The existing minimal schema remains valid. New fields are additive and must
 not make current general-document schemas unusable.
+
+Note on physical representation: a node/edge type's table is one shared table
+per type *name*, reused across every document and every domain schema (see
+`graphdb.py`). If two domain schemas declare the same type name (e.g.
+`Condition`) with different typed-property sets, per-type fixed columns would
+conflict across schemas. Since `MAP(STRING, STRING)` columns are supported
+(see §4.1), the implementation should store declared typed properties in one
+open `properties MAP(STRING, STRING)` column per table rather than adding one
+physical column per declared property — this sidesteps the conflict and keeps
+schema-declared properties additive regardless of which domain schema wrote
+them.
 
 ### 4.3 Property versus node decision rule
 
