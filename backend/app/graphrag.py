@@ -1,9 +1,11 @@
 import json
+import os
 
 from app import graphdb
 from app.chat import get_chat_model, to_langchain_messages
 from app.embeddings import get_embedding_model
 from app.ontology import parse_json_response
+from app.schema_validation import normalize_schema
 from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 
 # How many of a type's own nodes to keep when keyword matching finds none
@@ -11,7 +13,29 @@ from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 # of dumping every instance of the type into the context.
 EMBEDDING_FALLBACK_TOP_K = 5
 
-ANALYSIS_PROMPT = """Given this ontology schema and a user's question, do two things:
+# Comparison operators a property_filter's "operator" field may use --
+# see graphdb.find_nodes_by_property, which this maps 1:1 onto.
+PROPERTY_FILTER_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
+
+_CONFIDENCE_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+# Config-driven and permissive by default (unset = no filtering at all) --
+# design spec section 7.3: a node/edge written before this feature existed
+# has no `confidence` field at all and must always be included regardless of
+# this threshold, since a stricter-than-before default would silently
+# regress retrieval for every document extracted before this design.
+MIN_CONFIDENCE = os.environ.get("GRAPHRAG_MIN_CONFIDENCE")
+
+
+def _passes_confidence(item: dict) -> bool:
+    if not MIN_CONFIDENCE:
+        return True
+    confidence = item.get("confidence")
+    if confidence is None:
+        return True
+    return _CONFIDENCE_RANK.get(confidence, 0) >= _CONFIDENCE_RANK.get(MIN_CONFIDENCE, 0)
+
+ANALYSIS_PROMPT = """Given this ontology schema and a user's question, do three things:
 
 1. Decide which node types and edge types (using their exact names from the schema) are \
 relevant to answering the question. Only use type names that appear in the schema below. \
@@ -22,6 +46,16 @@ mentioned in the question that might refer to an instance of that node type. Onl
 a type in "keywords" if the question actually names a specific instance of it -- omit \
 types with no matching terms.
 
+3. For each relevant node type whose schema entry below declares typed "properties" \
+(an object mapping property names to datatype declarations), decide whether the question \
+implies a specific comparison against one of those declared properties -- e.g. "50% \
+이상인 보장" implies a Coverage property named "amount" compared >= 50. If so, include a \
+"property_filters" entry for that type: {{"property": "<declared property name>", \
+"operator": "eq|ne|gt|gte|lt|lte", "value": "<comparison value as a string>"}}. Only use \
+property names actually declared for that exact type in the schema below, never one you \
+invent. Omit a type from "property_filters" entirely if the question doesn't imply a \
+specific property comparison for it, or if that type declares no properties.
+
 Schema:
 {schema}
 
@@ -29,7 +63,8 @@ Question:
 {question}
 
 Respond with ONLY valid JSON in this exact shape, no other text:
-{{"node_types": ["..."], "edge_types": ["..."], "keywords": {{"TypeName": ["term1", "term2"]}}}}
+{{"node_types": ["..."], "edge_types": ["..."], "keywords": {{"TypeName": ["term1", "term2"]}}, \
+"property_filters": {{"TypeName": {{"property": "...", "operator": "eq|ne|gt|gte|lt|lte", "value": "..."}}}}}}
 """
 
 
@@ -72,13 +107,63 @@ def analyze_question(question: str, schema: dict) -> dict:
             if t in node_types and isinstance(kws, list)
         }
 
-    return {"node_types": node_types, "edge_types": edge_types, "keywords": keywords}
+    # Declared properties per node type, from the normalized schema -- used
+    # only to validate property_filters below (analyze_question's own
+    # node_types/edge_types validation above stays against the raw `schema`
+    # dict, unchanged, so this doesn't alter existing behavior for a schema
+    # with no typed properties at all).
+    declared_properties_by_type = {
+        t["name"]: t.get("properties", {})
+        for t in normalize_schema(schema).get("node_types", [])
+    }
+    property_filters_raw = result.get("property_filters")
+    property_filters = {}
+    if isinstance(property_filters_raw, dict):
+        for type_name, filt in property_filters_raw.items():
+            if type_name not in node_types or not isinstance(filt, dict):
+                continue
+            prop_name = filt.get("property")
+            operator = filt.get("operator")
+            value = filt.get("value")
+            if (
+                prop_name in declared_properties_by_type.get(type_name, {})
+                and operator in PROPERTY_FILTER_OPERATORS
+                and value is not None
+            ):
+                property_filters[type_name] = {
+                    "property": prop_name,
+                    "operator": operator,
+                    "value": str(value),
+                }
+
+    return {
+        "node_types": node_types,
+        "edge_types": edge_types,
+        "keywords": keywords,
+        "property_filters": property_filters,
+    }
+
+
+def _format_evidence_suffix(item: dict) -> str:
+    # `detail` is an LLM-written paraphrase kept for readability;
+    # evidence_text is the exact source wording a user can verify against
+    # raw.md -- shown alongside detail, never instead of it (design spec
+    # section 7.2). source_section can be present without evidence_text
+    # (they're set independently -- see app.ontology's extraction
+    # normalization), so each is checked on its own.
+    bits = []
+    if item.get("evidence_text"):
+        bits.append(f"근거: {item['evidence_text']}")
+    if item.get("source_section"):
+        bits.append(f"출처: {item['source_section']}")
+    return f" [{'; '.join(bits)}]" if bits else ""
 
 
 def _format_node_line(node: dict) -> str:
     line = f"- {node['label']} ({node['type']})"
     if node.get("detail"):
         line += f": {node['detail']}"
+    line += _format_evidence_suffix(node)
     return line
 
 
@@ -86,6 +171,7 @@ def _format_edge_line(nodes_by_id: dict, edge: dict) -> str:
     line = f"- {nodes_by_id[edge['source']]['label']} --{edge['type']}--> {nodes_by_id[edge['target']]['label']}"
     if edge.get("detail"):
         line += f": {edge['detail']}"
+    line += _format_evidence_suffix(edge)
     return line
 
 
@@ -93,9 +179,14 @@ def _build_context_text(nodes: list, edges: list) -> str | None:
     if not nodes:
         return None
 
+    # nodes_by_id stays unfiltered so an edge's source/target label lookup
+    # never fails even when that endpoint's own node line was dropped by the
+    # confidence filter below.
     nodes_by_id = {n["id"]: n for n in nodes}
-    node_lines = [_format_node_line(n) for n in nodes]
-    edge_lines = [_format_edge_line(nodes_by_id, e) for e in edges]
+    node_lines = [_format_node_line(n) for n in nodes if _passes_confidence(n)]
+    if not node_lines:
+        return None
+    edge_lines = [_format_edge_line(nodes_by_id, e) for e in edges if _passes_confidence(e)]
 
     parts = ["Entities:", *node_lines]
     if edge_lines:
@@ -116,6 +207,7 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
     node_types = analysis["node_types"]
     edge_types = analysis["edge_types"]
     keywords = analysis["keywords"]
+    property_filters = analysis["property_filters"]
 
     if not node_types and not edge_types:
         return {
@@ -144,6 +236,19 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
             type_ids = graphdb.find_relevant_nodes(
                 stem, {node_type: keywords.get(node_type, [])}, [node_type], version=version
             )
+            if not type_ids and node_type in property_filters:
+                # Keyword matching found nothing, but the question implies a
+                # comparison against one of this type's own declared typed
+                # properties (e.g. "50% 이상인 보장") -- neither a label
+                # substring match nor embedding similarity can answer a
+                # threshold/exact-value question like this, so it's tried
+                # before falling further to the embedding fallback below
+                # (design spec section 7.1).
+                filt = property_filters[node_type]
+                type_ids = graphdb.find_nodes_by_property(
+                    stem, node_type, filt["property"], filt["operator"], filt["value"],
+                    version=version,
+                )
             if not type_ids:
                 # No keyword was extracted for this type, or the extracted
                 # keyword didn't match any instance -- either the question

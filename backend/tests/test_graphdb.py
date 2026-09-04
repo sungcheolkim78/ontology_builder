@@ -483,6 +483,68 @@ def test_find_similar_nodes_handles_zero_node_tables_on_fresh_database():
     assert graphdb.find_similar_nodes("doc_empty", "Person", _vec(EMBEDDING_DIM, 0), top_k=5) == []
 
 
+COVERAGE_NODES = [
+    {"id": "c1", "label": "암보장", "type": "Coverage", "properties": {"amount": "50"}},
+    {"id": "c2", "label": "골절보장", "type": "Coverage", "properties": {"amount": "10"}},
+    {"id": "c3", "label": "무속성보장", "type": "Coverage"},
+]
+
+
+def test_find_nodes_by_property_matches_numeric_gte():
+    graphdb.write_graph("doc_a", COVERAGE_NODES, [])
+
+    ids = graphdb.find_nodes_by_property("doc_a", "Coverage", "amount", "gte", "30")
+
+    assert ids == ["c1"]
+
+
+def test_find_nodes_by_property_matches_numeric_lt():
+    graphdb.write_graph("doc_a", COVERAGE_NODES, [])
+
+    ids = graphdb.find_nodes_by_property("doc_a", "Coverage", "amount", "lt", "30")
+
+    assert ids == ["c2"]
+
+
+def test_find_nodes_by_property_ignores_nodes_missing_the_property():
+    graphdb.write_graph("doc_a", COVERAGE_NODES, [])
+
+    ids = graphdb.find_nodes_by_property("doc_a", "Coverage", "amount", "gte", "0")
+
+    assert set(ids) == {"c1", "c2"}
+
+
+def test_find_nodes_by_property_matches_string_equality():
+    nodes = [
+        {"id": "c1", "label": "a", "type": "Coverage", "properties": {"basis": "가입금액"}},
+        {"id": "c2", "label": "b", "type": "Coverage", "properties": {"basis": "실손"}},
+    ]
+    graphdb.write_graph("doc_a", nodes, [])
+
+    ids = graphdb.find_nodes_by_property("doc_a", "Coverage", "basis", "eq", "가입금액")
+
+    assert ids == ["c1"]
+
+
+def test_find_nodes_by_property_unknown_type_matches_nothing():
+    graphdb.write_graph("doc_a", COVERAGE_NODES, [])
+
+    assert graphdb.find_nodes_by_property("doc_a", "NoSuchType", "amount", "gte", "0") == []
+
+
+def test_find_nodes_by_property_handles_zero_node_tables_on_fresh_database():
+    graphdb.write_graph("doc_empty", [], [])
+
+    assert graphdb.find_nodes_by_property("doc_empty", "Coverage", "amount", "gte", "0") == []
+
+
+def test_find_nodes_by_property_rejects_unsupported_operator():
+    graphdb.write_graph("doc_a", COVERAGE_NODES, [])
+
+    with pytest.raises(ValueError):
+        graphdb.find_nodes_by_property("doc_a", "Coverage", "amount", "regex", "0")
+
+
 def test_all_nodes_of_types_returns_every_instance():
     nodes = NODES + [{"id": "n3", "label": "Charles Babbage", "type": "Person"}]
     graphdb.write_graph("doc_a", nodes, EDGES)

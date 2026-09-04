@@ -352,7 +352,83 @@ needed to verify a number, condition, exception, or date.
 The design is compatible with W3C PROV-style provenance concepts, but this
 phase does not require full PROV-O serialization.
 
-## 7. Validation and schema governance
+## 7. GraphRAG consumption layer
+
+Storage and extraction changes only pay off if `graphrag.py`'s search/answer
+path actually reads the new fields; none of this happens automatically as a
+side effect of a richer graph.
+
+### 7.1 Property-filtered node matching
+
+`search_graph()` currently tries three tiers per relevant node type, in
+order: (a) `find_relevant_nodes()` — keyword match against `label`; (b)
+`find_similar_nodes()` — embedding similarity fallback; (c)
+`all_nodes_of_types()` — every instance, as a last resort. None of these can
+answer a question that hinges on a typed property value (a threshold, a
+duration, an exact amount) rather than a label or an approximate meaning
+match.
+
+Add a property-filtered tier, tried between (a) and (b), for a node type
+whose active schema declares typed `properties` relevant to the question.
+Verified experimentally against `ladybug==0.19.1`: bracket indexing on a
+`MAP` (`n.properties['amount']`) is rejected by `LIST_EXTRACT` ("did not
+receive correct arguments... Actual: (MAP(STRING, STRING),STRING)") — the
+working form is `map_extract(n.properties, 'amount')[1]`, which returns a
+list and must be cast to compare numerically, since a
+`MAP(STRING, STRING)` column stores every value as a string regardless of
+the schema's declared `datatype`:
+
+```text
+MATCH (n:Coverage)
+WHERE CAST(map_extract(n.properties, 'amount')[1] AS DOUBLE) >= $threshold
+```
+
+The query builder must pick the `CAST` target type from the property's
+declared `datatype` in the active schema (`string`/numeric/etc.), not guess
+it from the literal value. This is additive: a general-document schema with
+no typed properties has nothing for this tier to filter on and falls through
+to the existing keyword/embedding/all-instances tiers exactly as today.
+`determine_relevant_types()` and `extract_keywords()` may need to also
+surface which declared property (and comparison) a question implies, not
+only which node/edge types are relevant.
+
+### 7.2 Evidence-augmented context
+
+The `Entities:`/`Relations:` context block currently includes each node's/
+edge's `detail` line when present. When `evidence_text`/`source_section` are
+present, include them alongside `detail` rather than instead of it — `detail`
+is an LLM-written paraphrase useful for readability, while `evidence_text` is
+the exact source wording a user can verify against `raw.md`. Neither field
+should silently replace the other.
+
+### 7.3 Confidence-based filtering
+
+Nodes/edges with a `confidence` value below a configurable threshold should
+be excluded from the answer context (or included with a visible caveat),
+since chunk-grouped extraction can produce lower-confidence rule
+decompositions than a single-document extraction. Legacy nodes/edges with no
+`confidence` field predate this mechanism and must be treated as
+always-included — a stricter-than-before default would silently regress
+retrieval for every document extracted before this design.
+
+### 7.4 Temporal validity is a different axis than version scoping
+
+`expand_hops()` and the rest of the search path are scoped by
+`source_document`/`version` today (which representation was produced). A
+`valid_from`/`valid_to` filter answers a different question (whether a
+provision currently applies) and must be applied independently, not folded
+into version scoping — a node with no temporal fields (legacy data, or a
+provision with no stated effective date) must not be dropped by a query that
+only intends to filter by validity date.
+
+### 7.5 One shared answering path
+
+`answer_question()` is the single function both `/api/chat` and the
+goldenset per-question answer endpoint call. Every consumption-layer change
+above must land there so the two callers cannot silently drift, per the
+existing design rationale for that function.
+
+## 8. Validation and schema governance
 
 Validation has two layers:
 
@@ -376,7 +452,7 @@ Automatic addition of a type, property, or relation is not approval for
 production use. Changes involving legal interpretation, obligation modality,
 exceptions, or canonical identity require human review.
 
-## 8. Compatibility and migration
+## 9. Compatibility and migration
 
 - Existing `nodes`/`edges` API responses remain compatible during the first
   implementation phase.
@@ -391,7 +467,7 @@ exceptions, or canonical identity require human review.
 - Re-extraction of a document under the new schema is preferred to destructive
   in-place transformation of uncertain old facts.
 
-## 9. Non-goals
+## 10. Non-goals
 
 This design does not include:
 
@@ -403,7 +479,7 @@ This design does not include:
 - deletion of old graph tables as part of schema evolution;
 - a new cross-document legal question-answering UI.
 
-## 10. Acceptance criteria for implementation
+## 11. Acceptance criteria for implementation
 
 The implementation plan is complete when:
 
@@ -415,6 +491,10 @@ The implementation plan is complete when:
 - structural `Article`/`Paragraph` nodes remain navigable and are not semantic
   catch-all nodes;
 - schema evolution is reviewable, versioned, and re-extractable;
+- GraphRAG search (`answer_question()`, shared by `/api/chat` and the
+  goldenset answer endpoint) consumes typed properties, confidence, and
+  evidence for both fallback tiers and citation, without regressing existing
+  keyword/embedding matching for general-document schemas;
 - existing tests and current general-document workflows remain green; and
 - at least one representative insurance-policy fixture answers predefined
   competency questions with source evidence.

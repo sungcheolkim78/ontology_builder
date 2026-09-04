@@ -28,9 +28,11 @@
 - Modify: `backend/app/ontology.py` — schema normalization, extraction normalization, evidence metadata, and version-aware persistence.
 - Modify: `backend/app/prompts.py` — additive legal extraction contract for structured properties and evidence.
 - Modify: `backend/app/main.py` — only if API serialization or validation endpoints need explicit exposure.
+- Modify: `backend/app/graphrag.py` — consume typed properties, confidence, and evidence in search/answer construction.
 - Create: `backend/app/schema_validation.py` — isolated validation of domain schema declarations and extracted graph shape.
 - Modify: `backend/tests/test_graphdb.py` — persistence and backward-compatibility coverage.
 - Modify: `backend/tests/test_ontology.py` — schema normalization and extraction output coverage.
+- Modify: `backend/tests/test_graphrag.py` — property-filtered search, confidence handling, and evidence-augmented context coverage.
 - Create: `backend/tests/test_schema_validation.py` — validation contract tests.
 - Create: `backend/tests/fixtures/legal_policy_sample.md` — small representative insurance-policy fixture.
 - Create: `backend/tests/fixtures/legal_policy_expected.json` — expected rule, condition, exception, and evidence assertions.
@@ -190,7 +192,28 @@
 
 **Commit:** `git commit -m "Version and review domain graph schema changes"`
 
-### Task 8: Re-extract and verify the representative legal document
+### Task 8: Extend GraphRAG to consume typed properties, confidence, and evidence
+
+**Files:**
+- Modify: `backend/app/graphrag.py`
+- Modify: `backend/tests/test_graphrag.py`
+
+**Interfaces:**
+- Consumes: nodes/edges now carrying `properties` (MAP), `confidence`, `evidence_text`, `source_section`, `valid_from`/`valid_to` (Tasks 3–5).
+- Produces: property-aware node matching, confidence-based filtering, and an evidence-augmented context block; `search_graph()`'s return shape stays additive so existing callers (`/api/chat`, the goldenset answer endpoint) keep working unchanged.
+
+- [x] Write failing tests for a question that only a typed-property filter can answer (e.g. an amount/duration threshold) where label-substring matching (`find_relevant_nodes`) and embedding similarity (`find_similar_nodes`) both currently miss. (`test_search_graph_uses_property_filter_when_keyword_and_embedding_both_miss`)
+- [x] Add a property-filtered match path in `graphrag.py`, tried between the existing keyword tier (a) and embedding-similarity tier (b) for a node type whose schema declares typed properties relevant to the question — do not replace either existing tier, since general-document schemas have no typed properties to filter on and must keep working exactly as before. (`ANALYSIS_PROMPT`'s new step 3 + `analyze_question`'s `property_filters` parsing/validation + the new tier in `search_graph`)
+- [x] Use `map_extract(n.properties, '<key>')[1]` cast to the property's declared `datatype`, not `n.properties['<key>']` — verified experimentally that bracket indexing on a `MAP` fails on `ladybug==0.19.1` (`LIST_EXTRACT` rejects a `MAP` argument), and `MAP(STRING, STRING)` stores every value as a string regardless of the schema's declared datatype (see spec §7.1). (`graphdb.find_nodes_by_property`; numeric operators CAST to DOUBLE, `eq`/`ne` compare the raw string)
+- [x] Extend the `Entities:`/`Relations:` context block construction to include `evidence_text`/`source_section` per node/edge when present, alongside the existing `detail` line, so answers can cite exact source wording instead of only a paraphrased `detail`. (`_format_evidence_suffix`, used by both `_format_node_line`/`_format_edge_line`)
+- [x] Add a confidence threshold (config-driven, default permissive) that excludes low-confidence nodes/edges from the answer context; nodes with no `confidence` (pre-existing data) are treated as always-included, not excluded by a stricter-than-before default. (`GRAPHRAG_MIN_CONFIDENCE` env var, unset by default; `_passes_confidence`)
+- [x] Decide and test how `valid_from`/`valid_to` interact with `expand_hops()` — at minimum, do not silently drop a node with no temporal fields (legacy data); a document-version-scoped query is not the same axis as a validity-date-scoped query and must not be conflated. **Decision: no filtering added.** No caller anywhere in this codebase supplies a reference/as-of date yet (no UI control, no API parameter), so there is nothing for a temporal filter to compare against — adding one now would be speculative. `expand_hops()` already doesn't touch `valid_from`/`valid_to` at all, so "doesn't drop a node with no temporal fields" holds trivially; revisit when an actual caller needs point-in-time filtering (see design spec §7.4, unchanged).
+- [x] Verify `answer_question()`'s single shared code path (used by both `/api/chat` and the goldenset per-question answer endpoint) exercises all of the above so the two callers cannot silently drift. (`answer_question` has no logic of its own beyond formatting `search_graph()`'s result into a system message — it contains nothing property/confidence/evidence-specific to test separately; `search_graph`'s own 16 tests already cover all four behaviors, and both callers share this one function unchanged)
+- [x] Run `OPENROUTER_API_KEY=dummy .venv/bin/python -m pytest tests/test_graphrag.py tests/test_main.py -q`. (16 + full suite 320 passed)
+
+**Commit:** `git commit -m "Consume typed properties, confidence, and evidence in GraphRAG search"`
+
+### Task 9: Re-extract and verify the representative legal document
 
 **Files:**
 - Modify: `backend/tests/fixtures/legal_policy_expected.json` as needed for verified output

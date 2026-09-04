@@ -645,6 +645,58 @@ def find_similar_nodes(
     ]
 
 
+# Cypher operator per supported comparison -- deliberately not
+# parameterizable (the operator itself is interpolated into the query
+# string, never a bound value), so callers must pass one of these exact
+# keys; anything else raises rather than silently falling through to a
+# default. Numeric operators CAST the stored (always-string, per
+# MAP(STRING, STRING)) value to DOUBLE before comparing; "eq"/"ne" compare
+# the raw string instead, since not every declared datatype is numeric.
+_PROPERTY_OPERATORS = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+_NUMERIC_PROPERTY_OPERATORS = {"gt", "gte", "lt", "lte"}
+
+
+@_synchronized
+def find_nodes_by_property(
+    stem: str, node_type: str, property_name: str, operator: str, value, version: int = 1
+) -> list:
+    """Property-filtered match for a single type's own `properties` MAP
+    column (design spec section 7.1) -- e.g. "coverage amount >= 30". Tried
+    by graphrag.search_graph between the keyword tier (find_relevant_nodes)
+    and the embedding-similarity fallback (find_similar_nodes), for a
+    question that hinges on a typed property value rather than a label or a
+    meaning match. Verified experimentally against `ladybug==0.19.1`:
+    bracket indexing on a MAP (`n.properties[key]`) is rejected by
+    LIST_EXTRACT, so this uses `map_extract(n.properties, key)[1]` instead,
+    guarded by `size(...) > 0` so a node missing the property entirely
+    doesn't reach the comparison at all (an empty list can't be CAST)."""
+    _validate_identifier(node_type)
+    if operator not in _PROPERTY_OPERATORS:
+        raise ValueError(f"unsupported property operator: {operator!r}")
+    conn = _get_connection()
+    # No NODE table exists at all, or none under this exact type name --
+    # see _has_table_of_kind.
+    if not _has_table_of_kind(conn, "NODE") or node_type not in _existing_tables(conn):
+        return []
+
+    cypher_op = _PROPERTY_OPERATORS[operator]
+    if operator in _NUMERIC_PROPERTY_OPERATORS:
+        value_expr = "CAST(map_extract(n.properties, $prop)[1] AS DOUBLE)"
+        bind_value = float(value)
+    else:
+        value_expr = "map_extract(n.properties, $prop)[1]"
+        bind_value = str(value)
+
+    result = conn.execute(
+        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
+        f"AND size(map_extract(n.properties, $prop)) > 0 "
+        f"AND {value_expr} {cypher_op} $value "
+        f"RETURN n.original_id AS id",
+        {"stem": stem, "version": version, "prop": property_name, "value": bind_value},
+    )
+    return [row["id"] for row in result.rows_as_dict()]
+
+
 @_synchronized
 def all_nodes_of_types(stem: str, allowed_types: list, version: int = 1) -> list:
     if not allowed_types:

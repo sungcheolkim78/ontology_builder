@@ -114,6 +114,7 @@ def test_analyze_question_parses_and_filters_hallucinated_types(monkeypatch):
         "node_types": ["Person"],
         "edge_types": ["WORKED_ON"],
         "keywords": {"Person": ["Ada Lovelace"]},
+        "property_filters": {},
     }
 
 
@@ -252,6 +253,51 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
     assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace"}
 
 
+def test_search_graph_uses_property_filter_when_keyword_and_embedding_both_miss(monkeypatch):
+    # Neither find_relevant_nodes (no keyword names a specific instance --
+    # this is a threshold question, not a named one) nor find_similar_nodes
+    # (no node here has a stored embedding) can answer "which coverage pays
+    # >= 30". Only the property-filter tier can -- if it didn't run, this
+    # would fall through to "every Coverage instance" and wrongly include
+    # the 10-amount node too.
+    schema_with_properties = {
+        "node_types": [
+            {
+                "name": "Coverage",
+                "description": "a coverage",
+                "properties": {"amount": {"datatype": "number"}},
+            }
+        ],
+        "edge_types": [],
+    }
+    nodes = [
+        {"id": "c1", "label": "암보장", "type": "Coverage", "properties": {"amount": "50"}},
+        {"id": "c2", "label": "골절보장", "type": "Coverage", "properties": {"amount": "10"}},
+    ]
+    graphdb.write_graph(STEM, nodes, [])
+    model = SequencedChatModel(
+        [
+            json.dumps(
+                {
+                    "node_types": ["Coverage"],
+                    "edge_types": [],
+                    "keywords": {},
+                    "property_filters": {
+                        "Coverage": {"property": "amount", "operator": "gte", "value": "30"}
+                    },
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+
+    result = search_graph(
+        "30 이상 지급하는 보장은?", schema_with_properties, STEM, hops=0
+    )
+
+    assert {n["label"] for n in result["related_nodes"]} == {"암보장"}
+
+
 def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
     model = SequencedChatModel(
@@ -347,6 +393,90 @@ def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
 
     assert result["context"] is not None
     assert "None" not in result["context"]
+
+
+def test_search_graph_includes_evidence_and_source_section_in_context(monkeypatch):
+    nodes_with_evidence = [
+        {
+            "id": "n1",
+            "label": "Ada Lovelace",
+            "type": "Person",
+            "evidence_text": "Ada Lovelace worked on the Analytical Engine.",
+            "source_section": "제1조",
+        },
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+    ]
+    edges_with_evidence = [
+        {
+            "source": "n1",
+            "target": "n2",
+            "type": "WORKED_ON",
+            "evidence_text": "worked on the Analytical Engine",
+        },
+    ]
+    graphdb.write_graph(STEM, nodes_with_evidence, edges_with_evidence)
+    model = SequencedChatModel(
+        [
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
+
+    assert "Ada Lovelace worked on the Analytical Engine." in result["context"]
+    assert "제1조" in result["context"]
+    assert "worked on the Analytical Engine" in result["context"]
+
+
+def test_search_graph_excludes_low_confidence_nodes_when_threshold_set(monkeypatch):
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "confidence": "HIGH"},
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept", "confidence": "LOW"},
+    ]
+    graphdb.write_graph(STEM, nodes, [])
+    model = SequencedChatModel(
+        [
+            json.dumps(
+                {
+                    "node_types": ["Person", "Concept"],
+                    "edge_types": [],
+                    "keywords": {"Person": ["Ada Lovelace"], "Concept": ["Analytical Engine"]},
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graphrag.MIN_CONFIDENCE", "MEDIUM")
+
+    result = search_graph("Tell me about Ada Lovelace and the Analytical Engine", SCHEMA, STEM, hops=0)
+
+    assert "Ada Lovelace" in result["context"]
+    assert "Analytical Engine" not in result["context"]
+
+
+def test_search_graph_includes_nodes_with_no_confidence_regardless_of_threshold(monkeypatch):
+    nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
+    graphdb.write_graph(STEM, nodes, [])
+    model = SequencedChatModel(
+        [
+            json.dumps(
+                {"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Ada Lovelace"]}}
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graphrag.MIN_CONFIDENCE", "HIGH")
+
+    result = search_graph("Who is Ada Lovelace?", SCHEMA, STEM, hops=0)
+
+    assert "Ada Lovelace" in result["context"]
 
 
 def test_search_graph_scoped_to_active_version(monkeypatch):
