@@ -1,0 +1,80 @@
+{
+  "document": "legal_policy_sample.md",
+  "note": "Extraction is an LLM-derived reading aid, not a legally authoritative interpretation. Every assertion below must be traceable to article/paragraph text in legal_policy_sample.md; this fixture records what a correct extraction/GraphRAG answer looks like, not ground truth about actual insurance law.",
+  "defined_terms": [
+    {"term": "가입금액", "defined_in": "제1조", "paragraph": "①"},
+    {"term": "계약일", "defined_in": "제1조", "paragraph": "②"}
+  ],
+  "structural_units": [
+    {"id": "제1조", "title": "정의", "paragraphs": ["①", "②"]},
+    {"id": "제17조", "title": "보험금의 지급", "paragraphs": ["①", "②"]}
+  ],
+  "payment_rule": {
+    "source_article": "제17조",
+    "source_paragraph": "①",
+    "bearer": "회사",
+    "condition": "암 진단 확정",
+    "amount_expression": "가입금액의 50%",
+    "amount_reference": "가입금액 (제1조에서 정의)",
+    "exception": {
+      "source_paragraph": "②",
+      "description": "계약일로부터 90일 이내 암 진단 확정 시 보험금 미지급",
+      "duration_expression": "90일",
+      "duration_anchor": "계약일"
+    }
+  },
+  "cross_references": [
+    {"from": "제17조①", "to": "제1조①", "via_term": "가입금액"}
+  ],
+  "competency_questions": [
+    {
+      "id": "cq1",
+      "question": "암 진단 확정 시 보험금으로 얼마를 지급하는가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["가입금액의 50%"],
+      "expected_evidence_section": "제17조①"
+    },
+    {
+      "id": "cq2",
+      "question": "어떤 조건에서 얼마를 지급하는가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["암 진단 확정", "가입금액의 50%"],
+      "expected_evidence_section": "제17조①"
+    },
+    {
+      "id": "cq3",
+      "question": "어떤 기간 동안 지급하지 않는가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["계약일로부터 90일"],
+      "expected_evidence_section": "제17조②"
+    },
+    {
+      "id": "cq4",
+      "question": "가입금액이란 무엇을 뜻하는가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["보험가입금액", "보험금 지급의 기준"],
+      "expected_evidence_section": "제1조①"
+    },
+    {
+      "id": "cq5",
+      "question": "근거 조항은 무엇인가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["제17조"],
+      "expected_evidence_section": "제17조"
+    },
+    {
+      "id": "cq6",
+      "question": "계약일은 언제인가?",
+      "answer_shape": "source_text",
+      "expected_answer_contains": ["제1회 보험료를 받은 날"],
+      "expected_evidence_section": "제1조②"
+    },
+    {
+      "id": "cq7",
+      "question": "제17조는 어떤 조항을 참조하는가?",
+      "answer_shape": "graph",
+      "expected_answer_contains": ["제1조"],
+      "expected_evidence_section": "제17조①"
+    }
+  ]
+}

@@ -43,17 +43,16 @@
 **Files:**
 - Create: `backend/tests/fixtures/legal_policy_sample.md`
 - Create: `backend/tests/fixtures/legal_policy_expected.json`
-- Create: `docs/superpowers/plans/2026-09-04-flexible-ontology-graph-schema.md` (this plan is the design reference)
 - Modify: `docs/ontology/ONTOLOGY_DESIGN_PRINCIPLES.md` only if fixture terminology exposes a contradiction
 
 **Interfaces:**
 - Produces: a fixed sample document and assertions for coverage, payment amount, waiting period, exclusion, article location, and evidence traceability.
 
-- [ ] Write a short Korean insurance-policy fixture containing a defined term, article/paragraph structure, one payment rule, one condition, one exception, one amount, one duration, and one cross-reference.
-- [ ] Define 5–7 competency questions in the expected fixture metadata, including “어떤 조건에서 얼마를 지급하는가?”, “어떤 기간 동안 지급하지 않는가?”, and “근거 조항은 무엇인가?”.
-- [ ] Record which answers must be graph-structured and which may remain source-text retrieval.
-- [ ] Review that the fixture does not imply legal authority beyond extraction and traceability.
-- [ ] Run the existing focused tests before changing implementation to record the baseline.
+- [x] Write a short Korean insurance-policy fixture containing a defined term, article/paragraph structure, one payment rule, one condition, one exception, one amount, one duration, and one cross-reference.
+- [x] Define 5–7 competency questions in the expected fixture metadata, including “어떤 조건에서 얼마를 지급하는가?”, “어떤 기간 동안 지급하지 않는가?”, and “근거 조항은 무엇인가?”.
+- [x] Record which answers must be graph-structured and which may remain source-text retrieval. (`answer_shape` per competency question; cq6 is `source_text`, the rest are `graph`)
+- [x] Review that the fixture does not imply legal authority beyond extraction and traceability. (see the fixture's top-level `note`)
+- [x] Run the existing focused tests before changing implementation to record the baseline. (279 passed on `tests/` before Task 3+ changes)
 
 **Commit:** `git commit -m "Add legal graph schema acceptance fixture"`
 
