@@ -90,13 +90,15 @@
 - Consumes: normalized domain schema and source chunk metadata.
 - Produces: backward-compatible nodes/edges with optional `properties`, `evidence`, `source_section`, offsets, confidence, and temporal fields.
 
-- [ ] Add failing parser tests for missing optional metadata, malformed property maps, invalid evidence offsets, and unknown typed properties.
-- [ ] Extend the extraction prompt so exact figures and qualifying wording remain available as structured properties plus quoted evidence.
-- [ ] Keep `detail` as a compatibility/fallback field; do not remove or silently reinterpret it.
-- [ ] Normalize evidence from chunk/section context into a stable shape with `document_id`, `document_version`, `chunk_id`, offsets, quote, and confidence.
-- [ ] Reject or mark for review any extracted property that is not declared by the active domain schema.
-- [ ] Preserve deterministic ordering of nodes, edges, properties, and evidence arrays.
-- [ ] Run focused ontology tests and prompt JSON-contract tests.
+- [x] Add failing parser tests for missing optional metadata, malformed property maps, invalid evidence offsets, and unknown typed properties.
+- [x] Extend the extraction prompt so exact figures and qualifying wording remain available as structured properties plus quoted evidence.
+- [x] Keep `detail` as a compatibility/fallback field; do not remove or silently reinterpret it.
+- [x] Normalize evidence into a stable shape with offsets, quote, and confidence. (`document_id`/`document_version`/`chunk_id` are not part of this shape -- see next item for why, and note the same document/version identity is already available from the caller's own context, not from the LLM.)
+- [x] `source_section` is only populated when the document text actually contains bracketed labels (only true for the `_group_document_text()`-labeled group text `extract_graph_from_chunks` builds for chunked documents); a plain `anydoc` document has no such labels, so the field is simply absent for it, not fabricated.
+- [x] Resolved the group-vs-chunk granularity gap differently than anticipated, and more simply: `_group_document_text()` already prints each chunk's own `[path]` label inline in the text handed to the LLM, so `EXTRACT_PROMPT` just asks the model to copy the nearest visible label into `source_section` — no new per-node chunk-id output field or `_merge_group_graphs` change was needed. `_normalize_extracted_item` verifies the returned label against the real labels found in that call's `document_text` (`_section_labels_in`) and drops it if it doesn't match one exactly, so a hallucinated section reference is dropped rather than trusted.
+- [x] Reject or mark for review any extracted property that is not declared by the active domain schema. (`_normalize_extracted_properties` drops any key not declared for that exact type; "mark for review" for a declared-but-unverifiable property is deferred to Task 6's validation pass.)
+- [x] Preserve deterministic ordering of nodes, edges, properties, and evidence arrays. (list comprehensions preserve input order; property dict insertion order follows the LLM's own JSON key order)
+- [x] Run focused ontology tests and prompt JSON-contract tests. (10 new/updated `extract_graph*` tests pass; full suite 287 passed)
 
 **Commit:** `git commit -m "Preserve structured legal properties and source evidence"`
 

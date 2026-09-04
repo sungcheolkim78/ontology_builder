@@ -178,10 +178,41 @@ state it with its unit exactly as the document does (e.g. "90일 이내", "가�
 Omit "detail" (or leave it an empty string) if the document has nothing beyond \
 the label worth adding.
 
+If the schema's entry for this node/edge's exact type declares a "properties" \
+object (property name -> {{"datatype": ..., "required": ...}}), also include a \
+"properties" object on the node/edge with a value for every declared property \
+the document text actually supports -- use only property names the schema \
+declares for that exact type, expressed as plain strings even for a numeric, \
+boolean, or date datatype (e.g. "50" not 50), and omit any declared property \
+the document doesn't clearly support rather than guessing. Never invent a \
+property name the schema didn't declare for that type.
+
+For each node and edge, also include an "evidence" field: the single shortest \
+verbatim span (a clause or sentence) copied character-for-character from the \
+document text that most directly supports this node/edge. This is checked \
+against the document text afterward, and any "evidence" that isn't found \
+verbatim is discarded -- so copy it exactly rather than paraphrasing or \
+lightly editing it. Omit "evidence" if no single span of the text supports \
+this node/edge better than the surrounding text in general.
+
+If the document text contains bracketed section labels marking distinct \
+parts (e.g. a line reading exactly "[주계약 > 제17조(보험금의 지급)]"), also \
+include a "source_section" field copying the single nearest such label \
+exactly, character-for-character, for wherever this node/edge's evidence \
+appears. Omit "source_section" if the document text has no such labels, or if \
+you're not sure which one applies.
+
+For each node and edge, also include a "confidence" field: "HIGH" if the \
+document states this fact directly and unambiguously, "MEDIUM" if it requires \
+minor inference (e.g. resolving a pronoun or an implied subject), or "LOW" if \
+it's a plausible but uncertain reading.
+
 Respond with ONLY valid JSON in this exact shape, no other text:
 {{"nodes": [{{"id": "...", "label": "...", "type": "<a node type name from the schema>", \
-"detail": "..."}}], "edges": [{{"source": "<node id>", "target": "<node id>", \
-"type": "<an edge type name from the schema>", "detail": "..."}}]}}
+"detail": "...", "properties": {{}}, "evidence": "...", "source_section": "...", \
+"confidence": "HIGH|MEDIUM|LOW"}}], "edges": [{{"source": "<node id>", "target": "<node id>", \
+"type": "<an edge type name from the schema>", "detail": "...", "properties": {{}}, \
+"evidence": "...", "source_section": "...", "confidence": "HIGH|MEDIUM|LOW"}}]}}
 
 Document:
 {document}

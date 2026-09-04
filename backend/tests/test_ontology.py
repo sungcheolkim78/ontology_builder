@@ -531,6 +531,191 @@ def test_extract_drops_edges_with_unknown_node_ids(monkeypatch):
     assert response.json()["edges"] == []
 
 
+def test_extract_graph_preserves_minimal_shape_when_no_structured_metadata(monkeypatch):
+    # An LLM response with none of the new optional fields must round-trip
+    # with exactly the old node/edge shape -- no properties/confidence/
+    # evidence/source_section key should appear out of nowhere.
+    from app.ontology import extract_graph
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("Alice works here.", schema)
+
+    assert result == graph
+
+
+def test_extract_graph_verifies_evidence_against_document_text(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "label": "Alice",
+                "type": "Person",
+                "evidence": "Alice works at Acme.",
+            }
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("Alice works at Acme.", schema)
+
+    node = result["nodes"][0]
+    assert node["evidence_text"] == "Alice works at Acme."
+    assert node["start_offset"] == 0
+    assert node["end_offset"] == len("Alice works at Acme.")
+
+
+def test_extract_graph_drops_evidence_not_found_verbatim_in_document():
+    from app.ontology import extract_graph as _  # noqa: F401 -- import sanity only
+    from app.ontology import _find_evidence_span
+
+    assert _find_evidence_span("hallucinated quote", "Alice works at Acme.") is None
+    assert _find_evidence_span(None, "Alice works at Acme.") is None
+    assert _find_evidence_span("", "Alice works at Acme.") is None
+
+
+def test_extract_graph_drops_evidence_offsets_for_hallucinated_quote(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph = {
+        "nodes": [
+            {"id": "n1", "label": "Alice", "type": "Person", "evidence": "not in the document"}
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("Alice works at Acme.", schema)
+
+    node = result["nodes"][0]
+    assert "evidence" not in node
+    assert "evidence_text" not in node
+    assert "start_offset" not in node
+    assert "end_offset" not in node
+
+
+def test_extract_graph_keeps_only_schema_declared_properties(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {
+        "node_types": [
+            {
+                "name": "Coverage",
+                "description": "a coverage",
+                "properties": {"amount": {"datatype": "string"}},
+            }
+        ],
+        "edge_types": [],
+    }
+    graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "label": "암보장",
+                "type": "Coverage",
+                # "amount" is declared; "made_up" is not and must be dropped.
+                "properties": {"amount": "50%", "made_up": "should not survive"},
+            }
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("document text", schema)
+
+    assert result["nodes"][0]["properties"] == {"amount": "50%"}
+
+
+def test_extract_graph_ignores_malformed_property_map(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {
+        "node_types": [
+            {"name": "Coverage", "description": "d", "properties": {"amount": {"datatype": "string"}}}
+        ],
+        "edge_types": [],
+    }
+    graph = {
+        "nodes": [{"id": "n1", "label": "x", "type": "Coverage", "properties": "not-a-dict"}],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("document text", schema)
+
+    assert "properties" not in result["nodes"][0]
+
+
+def test_extract_graph_normalizes_confidence_and_drops_invalid_values(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph = {
+        "nodes": [
+            {"id": "n1", "label": "Alice", "type": "Person", "confidence": "HIGH"},
+            {"id": "n2", "label": "Bob", "type": "Person", "confidence": "MAYBE"},
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph("Alice and Bob.", schema)
+
+    assert result["nodes"][0]["confidence"] == "HIGH"
+    assert "confidence" not in result["nodes"][1]
+
+
+def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(monkeypatch):
+    from app.ontology import extract_graph
+
+    schema = {"node_types": [{"name": "Coverage", "description": "d"}], "edge_types": []}
+    document_text = "[주계약 > 제17조(보험금의 지급)]\n암 진단 확정 시 지급한다."
+    graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "label": "암보장",
+                "type": "Coverage",
+                "source_section": "주계약 > 제17조(보험금의 지급)",
+            },
+            {
+                "id": "n2",
+                "label": "다른보장",
+                "type": "Coverage",
+                "source_section": "존재하지 않는 조항",
+            },
+        ],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph(document_text, schema)
+
+    assert result["nodes"][0]["source_section"] == "주계약 > 제17조(보험금의 지급)"
+    assert "source_section" not in result["nodes"][1]
+
+
 def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
     from app.ontology import extract_graph_from_chunks
 

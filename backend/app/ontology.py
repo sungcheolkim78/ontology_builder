@@ -23,6 +23,7 @@ from app.prompts import (
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
 )
+from app.schema_validation import normalize_schema
 
 DOCUMENTS_DIR = documents_dir()
 
@@ -328,10 +329,111 @@ def generate_schema_from_chunks(
     return _consolidate_schema_types(group_schemas)
 
 
+_CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
+
+# Matches a bracketed section label on its own line, exactly the shape
+# _group_document_text() prepends to each chunk (f"[{path}]\n{text}") --
+# this is how EXTRACT_PROMPT's "source_section" instruction lets an LLM call
+# that only ever sees one group's concatenated text still attribute a node/
+# edge to a specific chunk *within* that group, not just the group as a
+# whole: it copies the nearest label already printed in the text it read,
+# and this regex is what lets the parser tell a genuine copy from a
+# hallucinated one (see _normalize_extracted_item).
+_SECTION_LABEL_RE = re.compile(r"^\[(?P<label>.+)\]$", re.MULTILINE)
+
+
+def _section_labels_in(document_text: str) -> set[str]:
+    return {m.group("label") for m in _SECTION_LABEL_RE.finditer(document_text)}
+
+
+def _find_evidence_span(evidence: str | None, document_text: str) -> dict | None:
+    """Verifies `evidence` appears verbatim in `document_text` -- an LLM can
+    claim any string as supporting quote, so this is what actually enforces
+    "evidence must be exact" rather than trusting the model's own claim (same
+    verify-in-code precedent as goldenset.py's answer-evidence check)."""
+    if not evidence:
+        return None
+    start = document_text.find(evidence)
+    if start == -1:
+        return None
+    return {
+        "evidence_text": evidence,
+        "start_offset": start,
+        "end_offset": start + len(evidence),
+    }
+
+
+def _normalize_extracted_properties(raw_properties, declared_properties: dict) -> dict:
+    if not isinstance(raw_properties, dict) or not declared_properties:
+        return {}
+    declared_lower = {name.lower(): name for name in declared_properties}
+    normalized = {}
+    for key, value in raw_properties.items():
+        canonical = declared_lower.get(str(key).lower())
+        if canonical is None:
+            # Not declared by the active schema for this exact type -- drop
+            # rather than invent a property the schema doesn't govern.
+            continue
+        normalized[canonical] = "" if value is None else str(value)
+    return normalized
+
+
+def _properties_by_type(normalized_schema: dict) -> dict[str, dict]:
+    by_type = {}
+    for type_kind in ("node_types", "edge_types"):
+        for entry in normalized_schema.get(type_kind, []):
+            by_type[entry["name"]] = entry.get("properties", {})
+    return by_type
+
+
+def _normalize_extracted_item(
+    item: dict, declared_properties: dict, document_text: str, section_labels: set[str]
+) -> dict:
+    """Adds properties/confidence/evidence*/source_section to `item` only
+    when there's a genuine, verified value for them -- an item with none of
+    these in the raw LLM output round-trips with exactly its old shape, so
+    this is purely additive for documents/schemas that don't use the new
+    fields."""
+    normalized = dict(item)
+
+    properties = _normalize_extracted_properties(
+        item.get("properties"), declared_properties
+    )
+    if properties:
+        normalized["properties"] = properties
+    else:
+        normalized.pop("properties", None)
+
+    confidence = item.get("confidence")
+    if confidence in _CONFIDENCE_LEVELS:
+        normalized["confidence"] = confidence
+    else:
+        normalized.pop("confidence", None)
+
+    evidence = item.get("evidence")
+    span = _find_evidence_span(evidence, document_text) if isinstance(evidence, str) else None
+    if span:
+        normalized.update(span)
+    else:
+        normalized.pop("evidence", None)
+        normalized.pop("evidence_text", None)
+        normalized.pop("start_offset", None)
+        normalized.pop("end_offset", None)
+
+    source_section = item.get("source_section")
+    if isinstance(source_section, str) and source_section in section_labels:
+        normalized["source_section"] = source_section
+    else:
+        normalized.pop("source_section", None)
+
+    return normalized
+
+
 def extract_graph(document_text: str, schema: dict) -> dict:
     model = get_chat_model("extract_graph")
+    normalized_schema = normalize_schema(schema)
     prompt = EXTRACT_PROMPT.format(
-        schema=json.dumps(schema), document=document_text
+        schema=json.dumps(normalized_schema), document=document_text
     )
     response = invoke_with_telemetry("ontology.extract_graph", model, prompt)
     graph = parse_json_response(response.content)
@@ -339,6 +441,15 @@ def extract_graph(document_text: str, schema: dict) -> dict:
         graph.get("edges"), list
     ):
         raise ValueError("extraction JSON missing nodes/edges lists")
+
+    properties_by_type = _properties_by_type(normalized_schema)
+    section_labels = _section_labels_in(document_text)
+    graph["nodes"] = [
+        _normalize_extracted_item(
+            node, properties_by_type.get(node.get("type"), {}), document_text, section_labels
+        )
+        for node in graph["nodes"]
+    ]
 
     # The LLM occasionally hallucinates an edge endpoint that isn't among
     # its own extracted nodes (e.g. an implied node it never fully emitted,
@@ -354,7 +465,11 @@ def extract_graph(document_text: str, schema: dict) -> dict:
                 edge.get("source"), edge.get("target"), edge.get("type"),
             )
             continue
-        valid_edges.append(edge)
+        valid_edges.append(
+            _normalize_extracted_item(
+                edge, properties_by_type.get(edge.get("type"), {}), document_text, section_labels
+            )
+        )
     graph["edges"] = valid_edges
 
     return graph
