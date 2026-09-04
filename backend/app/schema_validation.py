@@ -28,6 +28,16 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 # layers cast to and from, not the raw storage type.
 SUPPORTED_DATATYPES = {"string", "number", "integer", "boolean", "date"}
 
+# Identifies which shape of the schema contract a stored/generated schema
+# was produced under -- 1 is the original names/descriptions-only shape
+# (node_types/edge_types with no properties/category/validation), 2 is this
+# design's additive typed-properties/validation/evidence contract (see
+# design spec section 4.2/8). Recorded in domain convergence history
+# (app.ontology.run_domain_convergence) so a later reader can tell which
+# contract a given convergence run was validated against without having to
+# re-derive it from the schema's own shape.
+SCHEMA_CONTRACT_VERSION = 2
+
 _DEFAULT_VALIDATION = {"required_provenance": False, "closed_world_types": False}
 
 

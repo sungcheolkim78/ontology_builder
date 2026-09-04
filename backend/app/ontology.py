@@ -23,7 +23,13 @@ from app.prompts import (
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
 )
-from app.schema_validation import normalize_schema, validate_graph
+from app.schema_validation import (
+    SCHEMA_CONTRACT_VERSION,
+    normalize_schema,
+    summarize_validation_issues,
+    validate_graph,
+    validate_schema,
+)
 
 DOCUMENTS_DIR = documents_dir()
 
@@ -1146,6 +1152,10 @@ def run_domain_convergence(domain: str, documents: list[dict], max_chars: int | 
             "changes_applied_count": sum(len(it["changes_applied"]) for it in result["iterations"]),
             "changes_pending_review_count": len(result["pending_review"]),
             "converged_at": datetime.now().isoformat(),
+            "schema_contract_version": SCHEMA_CONTRACT_VERSION,
+            "schema_validation_summary": summarize_validation_issues(
+                validate_schema(result["schema"])
+            ),
         }
     )
     _save_domain_manifest(domain, manifest)

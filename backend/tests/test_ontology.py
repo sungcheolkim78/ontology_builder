@@ -988,6 +988,14 @@ def test_load_document_manifest_returns_none_when_missing():
 
 
 def test_get_schema_returns_saved_schema():
+    from app.schema_validation import normalize_schema
+
+    # The stored file itself stays exactly as saved (see
+    # test_use_domain_schema_creates_new_version_for_document and friends,
+    # which assert load_schema()'s raw round-trip) -- normalization happens
+    # only at this API boundary, so a legacy schema.json with no typed
+    # properties still returns with additive defaults filled in for any
+    # client that relies on them being present.
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     seed_schema_version("doc_raw", schema)
     client = TestClient(app)
@@ -995,7 +1003,7 @@ def test_get_schema_returns_saved_schema():
     response = client.get("/api/ontology/doc_raw.md/schema")
 
     assert response.status_code == 200
-    assert response.json() == schema
+    assert response.json() == normalize_schema(schema)
 
 
 def test_get_schema_returns_404_when_missing():
@@ -1257,7 +1265,9 @@ def test_activate_schema_version_endpoint_switches_active_version(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema/versions/1/activate")
 
     assert response.status_code == 200
-    assert client.get("/api/ontology/doc_raw.md/schema").json() == schema_v1
+    from app.schema_validation import normalize_schema
+
+    assert client.get("/api/ontology/doc_raw.md/schema").json() == normalize_schema(schema_v1)
 
 
 def test_activate_schema_version_endpoint_returns_404_for_unknown_version():
@@ -1935,6 +1945,25 @@ def test_run_domain_convergence_seeds_from_first_document_when_domain_is_new(mon
     assert history[0]["stems"] == ["doc1_raw", "doc2_raw"]
 
 
+def test_run_domain_convergence_records_schema_contract_version_and_validation_summary(monkeypatch):
+    from app.ontology import domain_convergence_history, run_domain_convergence
+    from app.schema_validation import SCHEMA_CONTRACT_VERSION
+
+    seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    fake_model = SequencedChatModel([json.dumps(seed_schema)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    run_domain_convergence("insurance_policy", [{"stem": "doc1_raw", "text": "doc1"}])
+
+    entry = domain_convergence_history("insurance_policy")[0]
+    assert entry["schema_contract_version"] == SCHEMA_CONTRACT_VERSION
+    # Distinct from iterations[i]["validation_summary"] (per-document
+    # extraction/graph quality, from validate_ontology's own LLM report) --
+    # this is the converged schema's own structural validity, from
+    # app.schema_validation.validate_schema.
+    assert entry["schema_validation_summary"] == {"error_count": 0, "warning_count": 0}
+
+
 def test_run_domain_convergence_reuses_existing_domain_schema_as_seed(monkeypatch):
     from app.ontology import domain_calibration_stems, run_domain_convergence, save_domain_schema
 
@@ -2090,10 +2119,26 @@ def test_get_domain_schema_endpoint_returns_schema_and_metadata():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["node_types"] == schema["node_types"]
+    from app.schema_validation import normalize_schema
+
+    assert body["node_types"] == normalize_schema(schema)["node_types"]
     assert body["calibration_stems"] == []
     assert body["history"] == []
     assert body["pending_review"] == []
+
+
+def test_get_domain_schema_endpoint_returns_legacy_schema_with_additive_defaults():
+    from app.ontology import save_domain_schema
+
+    legacy_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    save_domain_schema("legacy_domain", legacy_schema)
+    client = TestClient(app)
+
+    body = client.get("/api/ontology/domain-schema/legacy_domain").json()
+
+    assert body["node_types"][0]["properties"] == {}
+    assert body["node_types"][0]["category"] is None
+    assert body["validation"] == {"required_provenance": False, "closed_world_types": False}
 
 
 def test_get_domain_schema_endpoint_returns_404_when_missing():

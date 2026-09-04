@@ -20,6 +20,7 @@ from app.chat import (
     to_langchain_messages,
 )
 from app.graphrag import answer_question, search_graph
+from app.schema_validation import normalize_schema
 from app.ontology import (
     DEFAULT_SCHEMA,
     activate_version,
@@ -525,7 +526,12 @@ def get_schema(filename: str):
     version = get_active_version(stem)
     if version is None:
         raise HTTPException(status_code=404, detail="schema not found")
-    return load_schema(stem, version)
+    # Normalized only at this API boundary -- the stored schema_v{N}.json
+    # file itself is untouched, so a legacy schema with no typed properties
+    # still returns with additive defaults filled in for any client that
+    # relies on them being present (properties/category per type, a
+    # top-level validation block).
+    return normalize_schema(load_schema(stem, version))
 
 
 @app.post("/api/ontology/{filename}/extract")
@@ -693,8 +699,10 @@ def get_domain_schema(domain: str):
     schema = load_domain_schema(domain)
     if schema is None:
         raise HTTPException(status_code=404, detail="domain schema not found")
+    # See get_schema's identical rationale: normalized only at the API
+    # boundary, domain_schema.json on disk is untouched.
     return {
-        **schema,
+        **normalize_schema(schema),
         "calibration_stems": domain_calibration_stems(domain),
         "history": domain_convergence_history(domain),
         "pending_review": load_domain_pending_review(domain),

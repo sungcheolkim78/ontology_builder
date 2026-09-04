@@ -180,13 +180,13 @@
 - Consumes: normalized schema, validation report, pending-review records, and existing schema version APIs.
 - Produces: versioned domain schemas with typed properties/validation metadata and explicit human-review changes.
 
-- [ ] Write failing endpoint tests for loading legacy domain schemas and returning normalized additive fields.
-- [ ] Write failing tests proving a candidate type/property change is queued rather than silently applied.
-- [ ] Extend manifest/history records with schema contract version, affected documents, validation summary, and review status.
-- [ ] Ensure applying an approved schema change increments the relevant schema version and leaves old versions readable.
-- [ ] Ensure document extraction records the schema version used for the graph.
-- [ ] Update documentation to distinguish domain schema version from document validity dates.
-- [ ] Run backend API and ontology test suites.
+- [x] Write failing endpoint tests for loading legacy domain schemas and returning normalized additive fields. (`get_schema`/`get_domain_schema` now call `normalize_schema()` at the API boundary only -- the stored `schema_v{N}.json`/`domain_schemas/{domain}/schema.json` files are untouched, so `load_schema`/`load_domain_schema`'s own raw round-trip tests still pass unchanged)
+- [x] Write failing tests proving a candidate type/property change is queued rather than silently applied. (already covered by pre-existing tests -- `test_run_domain_convergence_accumulates_pending_review_across_calls`, `test_apply_domain_schema_changes_applies_and_clears_pending_review`, `test_apply_domain_pending_review_endpoint` -- no new test needed, this was already true and tested before this plan)
+- [x] Extend manifest/history records with schema contract version, affected documents, validation summary, and review status. (`schema_contract_version`/`schema_validation_summary` added to each `run_domain_convergence` history entry; `stems`/`changes_applied_count`/`changes_pending_review_count` -- affected documents and review status -- already existed)
+- [x] Ensure applying an approved schema change increments the relevant schema version and leaves old versions readable. (already true and tested pre-plan: `create_schema_version` increments, `activate_version` can reactivate any surviving version, `load_schema(stem, version)` reads any of them -- this is the document-schema-version mechanism the spec's `document_version` field refers to, not something Task 7 needed to add)
+- [x] Ensure document extraction records the schema version used for the graph. (already true pre-plan: `main.py`'s extract endpoint calls `save_graph(stem, graph, version=get_active_version(stem))` -- the graph's stored `version` *is* the schema version active at extraction time)
+- [x] Update documentation to distinguish domain schema version from document validity dates. (`docs/ontology/domain_schema_convergence.md` section 8: document schema version vs domain schema contract version vs `valid_from`/`valid_to` are three independent axes, none derivable from another)
+- [x] Run backend API and ontology test suites. (full suite 309 passed)
 
 **Commit:** `git commit -m "Version and review domain graph schema changes"`
 

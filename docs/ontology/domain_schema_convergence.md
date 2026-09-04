@@ -187,3 +187,34 @@ backend/data/domain_schemas/{domain_name}/
   최대 3~4회의 LLM 호출(추출, 검증, 진화 제안, 필요 시 재추출)이 곱해진다.
   캘리브레이션 셋은 전체 도메인 문서가 아니라 대표 문서 5~10개로 제한할 것을
   권장한다(위 2절 참고).
+
+## 8. 스키마 버전 vs 문서 유효기간 (2026-09-04, flexible ontology graph schema)
+
+이 절은 서로 다른 두 가지 "버전"을 혼동하지 않기 위한 것이다 — 이 문서(도메인
+스키마 수렴)의 버전 개념과, `docs/superpowers/specs/2026-09-04-flexible-ontology-graph-schema-design.md`
+가 도입하는 `valid_from`/`valid_to`(법적 유효기간)는 서로 다른 축이다.
+
+- **문서 스키마 버전** (`schema_v{N}.json`, `manifest.active_version`,
+  `graphdb`의 `version` 컬럼): "이 그래프가 어떤 스키마로 추출됐는가"를
+  답한다. `create_schema_version`이 매길 때마다 증가하고, 이전 버전은
+  `activate_version`으로 언제든 다시 활성화할 수 있는 채로 남는다(삭제하지
+  않는 한). `POST /api/ontology/{filename}/extract`는 항상 그 시점의
+  `get_active_version(stem)`으로 그래프를 저장하므로, 그래프의 `version`은
+  곧 그 그래프를 만든 스키마 버전이다 — 이 관계는 이미 성립해 있었고, 이번
+  확장으로 새로 만든 것은 아니다.
+- **도메인 스키마 계약 버전** (`app.schema_validation.SCHEMA_CONTRACT_VERSION`,
+  `run_domain_convergence`가 매 수렴 실행마다 `manifest.json`의 history
+  항목에 남기는 `schema_contract_version`/`schema_validation_summary`):
+  "이 수렴 결과가 어떤 스키마 *계약 형태*(이름/설명만 있는 레거시 형태 vs
+  typed properties/validation을 선언할 수 있는 이번 설계의 형태)로
+  검증됐는가"를 답한다. 도메인 스키마 자체에는 문서 스키마 같은 버전
+  정수가 없다(`schema.json` 하나만 계속 갱신됨) — 대신 이 계약 버전이
+  "언제부터 이 도메인 스키마가 typed properties를 지원하는 형태로
+  검증되기 시작했는지"를 이력에서 구분해 준다.
+- **`valid_from`/`valid_to`** (그래프 노드/엣지 레벨, `graphdb.py`의 envelope
+  컬럼): 위 두 버전과 전혀 다른 질문에 답한다 — "이 조항이 실제로 언제부터
+  언제까지 적용되는가"라는, 문서/스키마의 표현 형태와 무관한 법적 유효성
+  질문이다. 스키마나 추출을 다시 하지 않아도(즉 문서 스키마 버전이나
+  계약 버전이 그대로여도) 한 조항의 유효기간은 개정으로 바뀔 수 있고,
+  반대로 스키마 버전이 올라가도(재추출해도) 유효기간 자체는 그대로일 수
+  있다. 세 값 중 어느 것도 다른 것으로부터 유도할 수 없다.
