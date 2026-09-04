@@ -157,13 +157,13 @@
 - Consumes: normalized schema, graph payload, and source document/chunk metadata.
 - Produces: validation report with structural issues, evidence issues, missing elements, and competency-question readiness.
 
-- [ ] Write failing tests for wrong edge endpoints, missing required properties, missing evidence, invalid numeric units, and duplicate canonical nodes.
-- [ ] Implement structural validation before database persistence.
-- [ ] Implement evidence validation that flags missing/weak/incorrect evidence without inventing corrections.
-- [ ] Add a rule that every production legal `Norm`, `Condition`, `Exclusion`, and `Benefit` relevant to an answer has source evidence.
-- [ ] Preserve existing validation categories and add new categories additively.
-- [ ] Return actionable review records suitable for the existing pending-review workflow.
-- [ ] Run focused validation and ontology tests.
+- [x] Write failing tests for wrong edge endpoints, missing required properties, missing evidence, invalid numeric units, and duplicate canonical nodes. (`validate_graph` in `test_schema_validation.py`)
+- [x] Implement structural validation before database persistence. (`validate_graph` + `run_graph_validation`; not yet wired as a hard gate into `main.py`'s extract endpoint before `graphdb.write_graph` runs -- that call site wiring is deferred to Task 7, which already touches `main.py`'s schema/domain endpoints)
+- [x] Implement evidence validation that flags missing/weak/incorrect evidence without inventing corrections. (`missing_evidence` in `validate_graph`; "weak/incorrect" evidence beyond present-or-absent is not scored -- Task 3's `_find_evidence_span` already rejects any evidence that doesn't match the source text verbatim, so anything that reaches storage is exact by construction, not merely "not obviously wrong")
+- [x] Add a rule that every production legal `Norm`, `Condition`, `Exclusion`, and `Benefit` relevant to an answer has source evidence. (`LEGAL_EVIDENCE_REQUIRED_TYPES`)
+- [x] Preserve existing validation categories and add new categories additively. (new `schema_validation.validate_graph` categories are additive to `validate_schema`'s; `run_graph_validation` composes both plus Task 4's legal guards without changing either)
+- [x] Return actionable review records suitable for the existing pending-review workflow. (issue shape -- `severity`/`code`/`message` -- matches `validate_schema`'s existing convention; actually queuing graph-level issues into `pending_review.json` is deferred to Task 7, since that queue is domain-schema-scoped today and graph validation issues are document/extraction-scoped -- a scope mismatch worth deciding deliberately, not folding in silently here)
+- [x] Run focused validation and ontology tests. (20 schema_validation + 2 ontology tests; full suite 307 passed)
 
 **Commit:** `git commit -m "Validate graph shape and legal evidence"`
 

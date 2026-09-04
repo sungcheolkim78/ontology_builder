@@ -23,7 +23,7 @@ from app.prompts import (
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
 )
-from app.schema_validation import normalize_schema
+from app.schema_validation import normalize_schema, validate_graph
 
 DOCUMENTS_DIR = documents_dir()
 
@@ -609,6 +609,23 @@ def validate_legal_edge_shapes(graph: dict) -> list[dict]:
                 }
             )
     return issues
+
+
+def run_graph_validation(schema: dict, graph: dict) -> list[dict]:
+    """Single entry point for graph-shape and evidence validation before
+    persistence (design spec section 7): combines app.schema_validation's
+    generic instance checks (wrong endpoints, missing required properties,
+    invalid numeric values, duplicate canonical nodes, missing legal
+    evidence) with this module's own legal-reification guards
+    (flag_structural_catchall_nodes, validate_legal_edge_shapes). Each
+    category is independent and additive -- a caller that only cares about
+    one can filter the combined list by `code`, and adding a new category
+    to either side never requires touching this function."""
+    return [
+        *validate_graph(schema, graph),
+        *flag_structural_catchall_nodes(graph),
+        *validate_legal_edge_shapes(graph),
+    ]
 
 
 def _merge_group_graphs(group_graphs: list[dict]) -> dict:

@@ -774,6 +774,43 @@ def test_validate_legal_edge_shapes_ignores_edge_types_it_has_no_hint_for():
     assert validate_legal_edge_shapes(graph) == []
 
 
+def test_run_graph_validation_combines_schema_and_legal_guards():
+    from app.ontology import run_graph_validation
+
+    schema = {
+        "node_types": [
+            {"name": "Article", "description": "d"},
+            {"name": "Norm", "description": "d"},
+        ],
+        "edge_types": [{"name": "STATES", "description": "d"}],
+    }
+    # Two independent problems at once: a schema_validation.validate_graph
+    # issue (missing evidence on a Norm) and an app.ontology legal-guard
+    # issue (a structural Article carrying catch-all detail).
+    graph = {
+        "nodes": [
+            {"id": "a1", "type": "Article", "label": "제1조", "detail": "some substantive content"},
+            {"id": "n1", "type": "Norm", "label": "규정"},
+        ],
+        "edges": [],
+    }
+
+    issues = run_graph_validation(schema, graph)
+    codes = {i["code"] for i in issues}
+
+    assert "structural_catchall" in codes
+    assert "missing_evidence" in codes
+
+
+def test_run_graph_validation_returns_empty_for_clean_graph():
+    from app.ontology import run_graph_validation
+
+    schema = {"node_types": [{"name": "Person", "description": "d"}], "edge_types": []}
+    graph = {"nodes": [{"id": "p1", "type": "Person", "label": "Alice"}], "edges": []}
+
+    assert run_graph_validation(schema, graph) == []
+
+
 def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
     from app.ontology import extract_graph_from_chunks
 

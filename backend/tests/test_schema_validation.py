@@ -1,6 +1,6 @@
 import copy
 
-from app.schema_validation import normalize_schema, validate_schema
+from app.schema_validation import normalize_schema, validate_graph, validate_schema
 
 LEGACY_SCHEMA = {
     "node_types": [
@@ -162,3 +162,89 @@ def test_validate_rejects_duplicate_type_name():
     issues = validate_schema(schema)
 
     assert any(issue["code"] == "duplicate_type" for issue in issues)
+
+
+# --- validate_graph (Task 6: graph-shape and evidence validation) ---
+
+GRAPH_SCHEMA = {
+    "node_types": [
+        {
+            "name": "Coverage",
+            "description": "d",
+            "properties": {"amount": {"datatype": "number", "required": True}},
+        },
+        {"name": "Condition", "description": "d"},
+        {"name": "Norm", "description": "d"},
+    ],
+    "edge_types": [
+        {"name": "REQUIRES", "description": "d", "source": "Coverage", "target": "Condition"}
+    ],
+}
+
+
+def _graph(nodes, edges=None):
+    return {"nodes": nodes, "edges": edges or []}
+
+
+def test_validate_graph_accepts_well_formed_graph():
+    graph = _graph(
+        [
+            {"id": "c1", "type": "Coverage", "label": "암보장", "properties": {"amount": "50"}},
+            {"id": "cond1", "type": "Condition", "label": "암 진단", "evidence_text": "암 진단 확정"},
+        ],
+        [{"source": "c1", "target": "cond1", "type": "REQUIRES"}],
+    )
+    assert validate_graph(GRAPH_SCHEMA, graph) == []
+
+
+def test_validate_graph_flags_wrong_edge_endpoint_type():
+    graph = _graph(
+        [
+            {"id": "c1", "type": "Coverage", "label": "암보장", "properties": {"amount": "50"}},
+            {"id": "c2", "type": "Coverage", "label": "다른보장", "properties": {"amount": "10"}},
+        ],
+        [{"source": "c1", "target": "c2", "type": "REQUIRES"}],
+    )
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert any(i["code"] == "wrong_endpoint_type" for i in issues)
+
+
+def test_validate_graph_flags_missing_required_property():
+    graph = _graph([{"id": "c1", "type": "Coverage", "label": "암보장"}])
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert any(i["code"] == "missing_required_property" and i["property"] == "amount" for i in issues)
+
+
+def test_validate_graph_flags_invalid_numeric_value():
+    graph = _graph([{"id": "c1", "type": "Coverage", "label": "암보장", "properties": {"amount": "fifty"}}])
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert any(i["code"] == "invalid_numeric_value" for i in issues)
+
+
+def test_validate_graph_flags_duplicate_canonical_node():
+    graph = _graph(
+        [
+            {"id": "c1", "type": "Coverage", "label": "암보장", "properties": {"amount": "50"}},
+            {"id": "c2", "type": "Coverage", "label": "암보장", "properties": {"amount": "50"}},
+        ]
+    )
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert any(i["code"] == "duplicate_canonical_node" for i in issues)
+
+
+def test_validate_graph_flags_missing_evidence_for_legal_types():
+    graph = _graph([{"id": "n1", "type": "Norm", "label": "규정"}])
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert any(i["code"] == "missing_evidence" and i["type_name"] == "Norm" for i in issues)
+
+
+def test_validate_graph_accepts_norm_with_evidence():
+    graph = _graph([{"id": "n1", "type": "Norm", "label": "규정", "evidence_text": "규정 원문"}])
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert not any(i["code"] == "missing_evidence" for i in issues)
+
+
+def test_validate_graph_does_not_require_evidence_for_non_legal_types():
+    graph = _graph([{"id": "c1", "type": "Coverage", "label": "암보장", "properties": {"amount": "50"}}])
+    issues = validate_graph(GRAPH_SCHEMA, graph)
+    assert not any(i["code"] == "missing_evidence" for i in issues)
