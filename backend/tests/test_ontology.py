@@ -1089,6 +1089,70 @@ def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeyp
     assert edge_pairs == {(alice_id, acme_id), (bob_id, acme_id)}
 
 
+def test_extract_graph_from_chunks_writes_progress_files_per_group(monkeypatch, caplog):
+    from app.ontology import extract_graph_from_chunks
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    graph2 = {"nodes": [{"id": "n2", "label": "Bob", "type": "Person"}], "edges": []}
+    fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    write_document()
+    stem = "doc_raw"
+
+    with caplog.at_level("INFO"):
+        extract_graph_from_chunks(
+            [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+            schema,
+            max_group_chars=30,
+            stem=stem,
+        )
+
+    progress_dir = document_dir_for(stem) / "extraction_progress"
+    assert json.loads((progress_dir / "node_proc_1.json").read_text()) == graph1["nodes"]
+    assert json.loads((progress_dir / "edge_proc_1.json").read_text()) == graph1["edges"]
+    assert json.loads((progress_dir / "node_proc_2.json").read_text()) == graph2["nodes"]
+    assert json.loads((progress_dir / "edge_proc_2.json").read_text()) == graph2["edges"]
+    assert "1/2" in caplog.text
+    assert "2/2" in caplog.text
+
+
+def test_extract_graph_from_chunks_clears_stale_progress_files_from_previous_run(monkeypatch):
+    from app.ontology import extract_graph_from_chunks
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    write_document()
+    stem = "doc_raw"
+    progress_dir = document_dir_for(stem) / "extraction_progress"
+    progress_dir.mkdir(parents=True)
+    (progress_dir / "node_proc_5.json").write_text("[]")
+
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000, stem=stem)
+
+    assert not (progress_dir / "node_proc_5.json").exists()
+    assert json.loads((progress_dir / "node_proc_1.json").read_text()) == graph["nodes"]
+
+
+def test_extract_graph_from_chunks_without_stem_writes_no_progress_files(monkeypatch):
+    from app.ontology import extract_graph_from_chunks
+
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
+
+    assert result == graph
+    assert not DOCUMENTS_DIR.exists() or not any(DOCUMENTS_DIR.iterdir())
+
+
 def test_extract_endpoint_uses_chunks_when_present(monkeypatch):
     write_document()
     stem = "doc_raw"
@@ -1113,6 +1177,8 @@ def test_extract_endpoint_uses_chunks_when_present(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
+    progress_dir = document_dir_for(stem) / "extraction_progress"
+    assert json.loads((progress_dir / "node_proc_1.json").read_text()) == graph["nodes"]
 
 
 def test_get_ontology_returns_saved_graph():

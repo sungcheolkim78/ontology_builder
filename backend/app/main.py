@@ -551,7 +551,7 @@ def create_extraction(filename: str):
             # extract_graph_from_chunks in app.ontology.
             chunked = json.loads(chunk_path.read_text())
             chunk_items = [chunked["preamble"], *chunked["chunks"]]
-            graph = extract_graph_from_chunks(chunk_items, schema)
+            graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
         else:
             graph = extract_graph(doc_path.read_text(), schema)
         save_graph(stem, graph, version=version)

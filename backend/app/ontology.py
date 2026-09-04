@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import statistics
 from collections import Counter
 from datetime import datetime
@@ -671,8 +672,29 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
     return {"nodes": merged_nodes, "edges": merged_edges}
 
 
+def _extraction_progress_dir(stem: str) -> Path:
+    return document_dir_for(stem) / "extraction_progress"
+
+
+def _clear_extraction_progress(stem: str) -> None:
+    progress_dir = _extraction_progress_dir(stem)
+    if progress_dir.is_dir():
+        shutil.rmtree(progress_dir)
+
+
+def _write_extraction_progress(stem: str, group_number: int, graph: dict) -> None:
+    progress_dir = _extraction_progress_dir(stem)
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    (progress_dir / f"node_proc_{group_number}.json").write_text(
+        json.dumps(graph["nodes"], ensure_ascii=False)
+    )
+    (progress_dir / f"edge_proc_{group_number}.json").write_text(
+        json.dumps(graph["edges"], ensure_ascii=False)
+    )
+
+
 def extract_graph_from_chunks(
-    chunk_items: list[dict], schema: dict, max_group_chars: int | None = None
+    chunk_items: list[dict], schema: dict, max_group_chars: int | None = None, stem: str | None = None
 ) -> dict:
     """Runs extract_graph() once per token-budget-sized group of consecutive
     chunks (see group_chunks_by_budget), then merges every group's nodes/
@@ -684,12 +706,38 @@ def extract_graph_from_chunks(
     same budget it does for types; exact (type, label) matching is used
     instead. A document small enough to fit in one group skips
     namespacing/merging entirely and returns that single group's graph
-    untouched, so the common case still costs exactly one LLM call."""
+    untouched, so the common case still costs exactly one LLM call.
+
+    A large legal/insurance document can take 1000s of seconds across many
+    groups, all inside one synchronous HTTP request with no other visibility
+    into how far it's gotten. When `stem` is given (the normal case --
+    main.py's extract endpoint always has it), this logs which group out of
+    the total is being processed, and -- since each group's own LLM call is
+    the slow part, not the merge -- writes that group's own raw nodes/edges
+    to documents/{stem}/extraction_progress/{node,edge}_proc_{N}.json as
+    soon as it completes, so a person can inspect progress mid-run instead
+    of only after the whole extraction (and its own DB write) finishes.
+    Cleared at the start of each run so a shorter rerun doesn't leave stale
+    higher-numbered files implying more progress than actually happened."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to extract graph from")
 
-    group_graphs = [extract_graph(_group_document_text(group), schema) for group in groups]
+    if stem is not None:
+        _clear_extraction_progress(stem)
+
+    total = len(groups)
+    group_graphs = []
+    for group_number, group in enumerate(groups, start=1):
+        logger.info(
+            "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
+            group_number, total, len(group), len(_group_document_text(group)),
+        )
+        graph = extract_graph(_group_document_text(group), schema)
+        group_graphs.append(graph)
+        if stem is not None:
+            _write_extraction_progress(stem, group_number, graph)
+
     if len(group_graphs) == 1:
         return group_graphs[0]
 
