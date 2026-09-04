@@ -62,18 +62,20 @@
 - Create: `backend/app/schema_validation.py`
 - Create: `backend/tests/test_schema_validation.py`
 - Modify: `backend/app/ontology.py` — schema loading/normalization call sites
+- Modify: `backend/app/prompts.py` — `SCHEMA_PROMPT`/`LEGAL_SCHEMA_PROMPT`/`SCHEMA_CONSOLIDATION_PROMPT` so the LLM proposes typed `properties` (name, datatype, required, unit) per node/edge type, not just names/descriptions; `normalize_schema`/`validate_schema` only govern properties the model is actually asked to produce
 
 **Interfaces:**
 - Consumes: existing `node_types`/`edge_types` JSON, optional `properties`, `category`, and `validation` declarations.
 - Produces: `normalize_schema(schema) -> dict`, `validate_schema(schema) -> list[dict]`, and a normalized schema contract that preserves legacy inputs.
 
-- [ ] Write failing tests for a legacy schema with only names/descriptions.
-- [ ] Write failing tests for valid typed properties: datatype, required flag, unit, and description.
-- [ ] Write failing tests for invalid identifiers, unknown endpoint types, unsupported datatypes, and duplicate property declarations.
-- [ ] Implement the smallest normalizer that fills additive defaults without changing legacy semantics.
-- [ ] Implement validation errors as structured, human-readable records rather than raw exceptions where possible.
-- [ ] Add tests proving normalization is deterministic and idempotent.
-- [ ] Run `OPENROUTER_API_KEY=dummy .venv/bin/python -m pytest tests/test_schema_validation.py tests/test_ontology.py -q`.
+- [x] Write failing tests for a legacy schema with only names/descriptions.
+- [x] Write failing tests for valid typed properties: datatype, required flag, unit, and description.
+- [x] Write failing tests for invalid identifiers, unknown endpoint types, unsupported datatypes, and duplicate property declarations.
+- [x] Implement the smallest normalizer that fills additive defaults without changing legacy semantics.
+- [x] Implement validation errors as structured, human-readable records rather than raw exceptions where possible.
+- [x] Add tests proving normalization is deterministic and idempotent.
+- [x] Run `OPENROUTER_API_KEY=dummy .venv/bin/python -m pytest tests/test_schema_validation.py tests/test_ontology.py -q`. (12 new + existing ontology tests all pass; full suite 279 passed)
+- [ ] ~~Modify `backend/app/ontology.py` schema loading/normalization call sites~~ deferred to Task 3: `generate_schema`/`load_schema` currently have exact-equality round-trip tests (`test_generate_schema_from_chunks_single_group_skips_consolidation`, `test_use_domain_schema_creates_new_version_for_document`, etc.) that normalization would break for no benefit yet — the first real consumer of `normalize_schema` is `extract_graph`'s prompt construction in Task 3, so wiring happens there instead of forcing every existing call site to change shape first.
 
 **Commit:** `git commit -m "Add governed typed-property schema validation"`
 
