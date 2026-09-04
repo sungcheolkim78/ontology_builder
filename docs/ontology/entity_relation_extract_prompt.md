@@ -298,3 +298,45 @@ When the ontology does not adequately represent a concept, record it under:
 ```
 
 and explain why it cannot be mapped.
+
+---
+
+# 8. Implementation status (2026-09-04, flexible ontology graph schema)
+
+This document is a design reference, not the literal prompt the app sends --
+`backend/app/prompts.py`'s `EXTRACT_PROMPT` uses a simpler
+`{"nodes": [...], "edges": [...]}` output shape and was already divergent
+from section 6's `{document, entities, relationships, events, rules,
+unmapped_concepts}` shape before this note was added. The
+`docs/superpowers/specs/2026-09-04-flexible-ontology-graph-schema-design.md`
+implementation moved the real prompt closer to (not further from) this
+document's intent, specifically:
+
+- **Section 4 (Provenance)** — `EXTRACT_PROMPT` now asks for an `evidence`
+  quote and, for a chunked document, a `source_section` label per node/edge
+  (`app.ontology._find_evidence_span`/`_normalize_extracted_item`). This is
+  narrower than this section's full `{document_id, page, section, text_span,
+  extraction_method, confidence}` shape -- there is no `extraction_method`
+  or `document_id` per fact, and `page` is never populated. Every returned
+  `evidence`/`source_section` is verified against the real document text (or
+  a real bracketed chunk label) in code before being trusted, matching this
+  section's "never fabricate provenance" rule (section 7) more strictly than
+  this document requires, since a hallucinated quote is dropped outright
+  rather than merely flagged.
+- **Section 5 (Confidence)** — implemented as a 3-level `HIGH`/`MEDIUM`/`LOW`
+  enum, not this section's 0.00–1.00 numeric scale, and nothing is dropped
+  below a hard-coded threshold at extraction time -- confidence-based
+  filtering happens later, at GraphRAG query time
+  (`app.graphrag.MIN_CONFIDENCE`, config-driven and permissive by default),
+  not by discarding low-confidence facts during extraction itself.
+- **Section 4's `properties`-shaped attributes** (this document's "extract
+  relationship attributes" in Step 4) — implemented as a `properties` object
+  per node/edge, restricted to whatever the active domain schema actually
+  declares for that exact type (`app.schema_validation.normalize_schema`) --
+  an undeclared property is dropped, not recorded as an
+  `unmapped_concept` the way this document's section 7 describes.
+- **Not implemented**: the numeric confidence scale, `extraction_method`,
+  page numbers, and the `unmapped_concepts`/`extraction_warnings` output
+  fields. `app.ontology.run_graph_validation`/`app.schema_validation.validate_graph`
+  cover a related but distinct concern (structural/evidence validation of an
+  already-extracted graph, not an extraction-time warning list).

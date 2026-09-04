@@ -722,6 +722,222 @@ def _load_legal_fixture():
         return json.load(f)
 
 
+def _load_legal_sample_text():
+    fixture_path = os.path.join(os.path.dirname(__file__), "fixtures", "legal_policy_sample.md")
+    with open(fixture_path, encoding="utf-8") as f:
+        return f.read()
+
+
+LEGAL_FIXTURE_SCHEMA = {
+    "node_types": [
+        {"name": "Article", "description": "a structural provision"},
+        {
+            "name": "Norm",
+            "description": "a rule stated by the policy",
+            "properties": {"modality": {"datatype": "string"}},
+        },
+        {"name": "Party", "description": "a party to the policy"},
+        {"name": "Benefit", "description": "a payment obligation"},
+        {"name": "Condition", "description": "a condition that must hold"},
+        {
+            "name": "PaymentAmount",
+            "description": "an amount expression",
+            "properties": {"expression": {"datatype": "string"}},
+        },
+        {
+            "name": "Exclusion",
+            "description": "an exception that bars payment",
+            "properties": {"duration": {"datatype": "string"}},
+        },
+    ],
+    "edge_types": [
+        {"name": "STATES", "description": "d", "source": "Article", "target": "Norm"},
+        {"name": "HAS_BEARER", "description": "d", "source": "Norm", "target": "Party"},
+        {"name": "HAS_ACTION", "description": "d", "source": "Norm", "target": "Benefit"},
+        {"name": "HAS_CONDITION", "description": "d", "source": "Norm", "target": "Condition"},
+        {"name": "HAS_AMOUNT", "description": "d", "source": "Norm", "target": "PaymentAmount"},
+        {"name": "HAS_EXCEPTION", "description": "d", "source": "Norm", "target": "Exclusion"},
+    ],
+}
+
+# A hand-authored extraction-shaped LLM response for legal_policy_sample.md
+# -- "evidence" values are verbatim substrings of that file (verified
+# separately), so app.ontology._find_evidence_span actually accepts them
+# rather than the test relying on a value that merely looks plausible.
+LEGAL_FIXTURE_EXTRACTION_RESPONSE = {
+    "nodes": [
+        {"id": "article17", "label": "제17조", "type": "Article"},
+        {
+            "id": "norm1",
+            "label": "암 진단 보험금 지급 규정",
+            "type": "Norm",
+            "properties": {"modality": "OBLIGATION"},
+            "evidence": "회사는 피보험자가 이 계약의 보험기간 중 암 진단 확정을 받은 경우, 제1조에서 정한",
+            "confidence": "HIGH",
+        },
+        {"id": "insurer", "label": "회사", "type": "Party", "confidence": "HIGH"},
+        {
+            "id": "benefit1",
+            "label": "보험금 지급",
+            "type": "Benefit",
+            "evidence": "가입금액의 50%를 보험금으로 지급한다.",
+            "confidence": "HIGH",
+        },
+        {
+            "id": "condition1",
+            "label": "암 진단 확정",
+            "type": "Condition",
+            "evidence": "암 진단 확정을 받은 경우",
+            "confidence": "HIGH",
+        },
+        {
+            "id": "amount1",
+            "label": "가입금액의 50%",
+            "type": "PaymentAmount",
+            "properties": {"expression": "가입금액의 50%"},
+            "confidence": "HIGH",
+        },
+        {
+            "id": "exclusion1",
+            "label": "계약일로부터 90일 이내 면책",
+            "type": "Exclusion",
+            "properties": {"duration": "90일"},
+            "evidence": "계약일로부터 90일 이내에 암 진단 확정을 받은 경우",
+            "confidence": "HIGH",
+        },
+    ],
+    "edges": [
+        {"source": "article17", "target": "norm1", "type": "STATES"},
+        {"source": "norm1", "target": "insurer", "type": "HAS_BEARER"},
+        {"source": "norm1", "target": "benefit1", "type": "HAS_ACTION"},
+        {"source": "norm1", "target": "condition1", "type": "HAS_CONDITION"},
+        {"source": "norm1", "target": "amount1", "type": "HAS_AMOUNT"},
+        {"source": "norm1", "target": "exclusion1", "type": "HAS_EXCEPTION"},
+    ],
+}
+
+
+def test_legal_fixture_extraction_produces_full_rule_chain_with_evidence(monkeypatch):
+    from app.ontology import extract_graph, run_graph_validation
+
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model",
+        lambda operation=None: FakeChatModel(json.dumps(LEGAL_FIXTURE_EXTRACTION_RESPONSE)),
+    )
+
+    graph = extract_graph(_load_legal_sample_text(), LEGAL_FIXTURE_SCHEMA)
+
+    node_types = {n["type"] for n in graph["nodes"]}
+    assert node_types == {
+        "Article", "Norm", "Party", "Benefit", "Condition", "PaymentAmount", "Exclusion",
+    }
+    edge_types = {e["type"] for e in graph["edges"]}
+    assert edge_types == {
+        "STATES", "HAS_BEARER", "HAS_ACTION", "HAS_CONDITION", "HAS_AMOUNT", "HAS_EXCEPTION",
+    }
+
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    # Evidence was verified against the real document text, not just echoed.
+    assert by_id["condition1"]["evidence_text"] == "암 진단 확정을 받은 경우"
+    assert by_id["exclusion1"]["evidence_text"] == "계약일로부터 90일 이내에 암 진단 확정을 받은 경우"
+    assert by_id["exclusion1"]["properties"] == {"duration": "90일"}
+    assert by_id["norm1"]["properties"] == {"modality": "OBLIGATION"}
+    # Not a chunked call (no bracketed section labels in this document text),
+    # so source_section must be absent, never fabricated.
+    assert all("source_section" not in n for n in graph["nodes"])
+
+    # Structural/legal shape guards both pass: Article carries no substantive
+    # detail of its own (the actual content lives on Norm and its
+    # participants), and every reified rule edge points at the right kind of
+    # participant.
+    assert run_graph_validation(LEGAL_FIXTURE_SCHEMA, graph) == []
+
+
+def test_legal_fixture_reextraction_is_idempotent(monkeypatch):
+    from app import graphdb
+    from app.ontology import extract_graph
+
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model",
+        lambda operation=None: FakeChatModel(json.dumps(LEGAL_FIXTURE_EXTRACTION_RESPONSE)),
+    )
+    document_text = _load_legal_sample_text()
+
+    first = extract_graph(document_text, LEGAL_FIXTURE_SCHEMA)
+    graphdb.write_graph("legal_fixture", first["nodes"], first["edges"], version=1)
+    first_loaded = graphdb.load_graph("legal_fixture", version=1)
+
+    second = extract_graph(document_text, LEGAL_FIXTURE_SCHEMA)
+    graphdb.write_graph("legal_fixture", second["nodes"], second["edges"], version=1)
+    second_loaded = graphdb.load_graph("legal_fixture", version=1)
+
+    assert sorted(first_loaded["nodes"], key=lambda n: n["id"]) == sorted(
+        second_loaded["nodes"], key=lambda n: n["id"]
+    )
+    assert sorted(first_loaded["edges"], key=lambda e: (e["source"], e["target"], e["type"])) == sorted(
+        second_loaded["edges"], key=lambda e: (e["source"], e["target"], e["type"])
+    )
+
+
+def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
+    from app import graphdb
+    from app.graphrag import answer_question
+    from app.ontology import extract_graph
+
+    # Extract through the real pipeline first (not the raw fixture response
+    # directly) so evidence is actually verified/renamed to `evidence_text`
+    # by extract_graph's own normalization -- exactly what graphrag reads.
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model",
+        lambda operation=None: FakeChatModel(json.dumps(LEGAL_FIXTURE_EXTRACTION_RESPONSE)),
+    )
+    extracted = extract_graph(_load_legal_sample_text(), LEGAL_FIXTURE_SCHEMA)
+    graphdb.write_graph("legal_fixture", extracted["nodes"], extracted["edges"], version=1)
+    fixture = _load_legal_fixture()
+    cq1 = next(q for q in fixture["competency_questions"] if q["id"] == "cq1")
+    cq3 = next(q for q in fixture["competency_questions"] if q["id"] == "cq3")
+
+    # cq1: "암 진단 확정 시 보험금으로 얼마를 지급하는가?" -- graph-shaped,
+    # answerable from condition1/amount1 and their verified evidence.
+    analysis_cq1 = {
+        "node_types": ["Condition", "PaymentAmount"],
+        "edge_types": [],
+        "keywords": {"Condition": ["암 진단 확정"], "PaymentAmount": ["가입금액의 50%"]},
+    }
+    model_cq1 = SequencedChatModel([json.dumps(analysis_cq1), "가입금액의 50%를 지급합니다."])
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model_cq1)
+
+    result_cq1 = answer_question(
+        [{"role": "user", "content": cq1["question"]}], LEGAL_FIXTURE_SCHEMA, "legal_fixture", hops=0
+    )
+
+    assert "50%" in result_cq1["content"]
+    assert cq1["expected_answer_contains"][0] in result_cq1["content"] or any(
+        cq1["expected_answer_contains"][0] in (n.get("evidence_text") or "")
+        for n in result_cq1["related_nodes"]
+    )
+    assert any(n.get("evidence_text") for n in result_cq1["related_nodes"])
+
+    # cq3: "어떤 기간 동안 지급하지 않는가?" -- graph-shaped, from exclusion1.
+    analysis_cq3 = {
+        "node_types": ["Exclusion"],
+        "edge_types": [],
+        "keywords": {"Exclusion": ["계약일로부터 90일 이내 면책"]},
+    }
+    model_cq3 = SequencedChatModel([json.dumps(analysis_cq3), "계약일로부터 90일 이내에는 지급하지 않습니다."])
+    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model_cq3)
+
+    result_cq3 = answer_question(
+        [{"role": "user", "content": cq3["question"]}], LEGAL_FIXTURE_SCHEMA, "legal_fixture", hops=0
+    )
+
+    assert "90일" in result_cq3["content"]
+    assert any(
+        n.get("evidence_text") == "계약일로부터 90일 이내에 암 진단 확정을 받은 경우"
+        for n in result_cq3["related_nodes"]
+    )
+
+
 def test_flag_structural_catchall_nodes_accepts_reified_legal_graph():
     from app.ontology import flag_structural_catchall_nodes
 

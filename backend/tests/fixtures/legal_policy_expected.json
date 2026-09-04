@@ -27,15 +27,15 @@
     {"from": "제17조①", "to": "제1조①", "via_term": "가입금액"}
   ],
   "reference_graph": {
-    "note": "Hand-authored, spec-shaped extraction output for legal_policy_sample.md's 제17조 (see design spec section 5.3) -- used to test legal graph modeling helpers (app.ontology) without a live LLM call.",
+    "note": "Hand-authored, spec-shaped extraction output for legal_policy_sample.md's 제17조 (see design spec section 5.3) -- used to test legal graph modeling helpers (app.ontology) without a live LLM call. Carries evidence_text directly on Norm/Condition/Benefit/Exclusion (what app.ontology.extract_graph actually produces, verified against real document text in test_ontology.py's Task 9 integration tests) AND a separate EvidenceSpan node reached via SUPPORTED_BY (the spec's other valid shape for evidence needing independent citation, section 4.3) -- both are compatible, not alternatives to choose between.",
     "nodes": [
       {"id": "article17", "type": "Article", "label": "제17조", "detail": ""},
-      {"id": "norm1", "type": "Norm", "label": "암 진단 보험금 지급 규정", "properties": {"modality": "OBLIGATION"}},
+      {"id": "norm1", "type": "Norm", "label": "암 진단 보험금 지급 규정", "properties": {"modality": "OBLIGATION"}, "evidence_text": "회사는 피보험자가 이 계약의 보험기간 중 암 진단 확정을 받은 경우, 제1조에서 정한"},
       {"id": "insurer", "type": "Party", "label": "회사"},
-      {"id": "payment1", "type": "Benefit", "label": "보험금 지급"},
-      {"id": "condition1", "type": "Condition", "label": "암 진단 확정"},
+      {"id": "payment1", "type": "Benefit", "label": "보험금 지급", "evidence_text": "가입금액의 50%를 보험금으로 지급한다."},
+      {"id": "condition1", "type": "Condition", "label": "암 진단 확정", "evidence_text": "암 진단 확정을 받은 경우"},
       {"id": "amount1", "type": "PaymentAmount", "label": "가입금액의 50%", "properties": {"expression": "가입금액의 50%"}},
-      {"id": "exclusion1", "type": "Exclusion", "label": "계약일로부터 90일 이내 면책", "properties": {"duration": "90일"}},
+      {"id": "exclusion1", "type": "Exclusion", "label": "계약일로부터 90일 이내 면책", "properties": {"duration": "90일"}, "evidence_text": "계약일로부터 90일 이내에 암 진단 확정을 받은 경우"},
       {"id": "evidence1", "type": "EvidenceSpan", "label": "제17조① 근거", "evidence_text": "회사는 피보험자가 이 계약의 보험기간 중 암 진단 확정을 받은 경우"}
     ],
     "edges": [

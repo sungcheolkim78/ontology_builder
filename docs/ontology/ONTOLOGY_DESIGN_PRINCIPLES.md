@@ -488,23 +488,37 @@ Ontology를 분리**하는 것이 상당히 중요하다. 이 구분을 잘 해�
   node_type은 최소 하나의 edge_type과 연결되는 것을 권장하며(단, 독립적으로도
   유용한 타입은 예외), 타입 개수는 5~12(node)/5~15(edge) 정도를 기본
   목표로 삼는다.
-- **원칙 5(relation의 attribute)** — 현재 데이터 모델은 edge에 `type`과
-  자유 텍스트 `detail` 필드만 있고, `waitingPeriod`/`amount`처럼 구조화된
-  property는 없다. `detail`에 조건·수치·기간을 자연어로 담는 것으로 부분적으로만
-  대체하고 있다 (`graphdb.py`의 REL 테이블 스키마 참고).
+- **원칙 5(relation의 attribute)** — `docs/superpowers/specs/2026-09-04-flexible-ontology-graph-schema-design.md`
+  구현 이후로는 부분적으로 해소됐다: 도메인 스키마가 `properties`를
+  선언하면(`app.schema_validation.normalize_schema`/`validate_schema`),
+  node/edge 모두 `properties MAP(STRING, STRING)` 컬럼에 구조화된 값을
+  가질 수 있다(`waitingPeriod`/`amount` 같은 값을 문자열로). `detail`은
+  여전히 자연어 폴백으로 남아 있고 사라지지 않았다 -- 구조화된 property가
+  없는 값이나 기존 문서는 계속 `detail`만 갖는다.
 - **원칙 3(Mention vs Entity vs Concept)** — 아직 구분하지 않는다. 현재는
   추출된 각 node가 곧 최종 entity이며, 별도의 Mention 계층이나 동일 개념에
   대한 명시적 병합(coreference resolution) 레이어는 없다. 다만
   `EXTRACT_PROMPT`가 "같은 대상을 가리키는 여러 표기는 하나의 node로
   병합하라"는 지시를 통해 LLM 수준에서 최소한의 mention→entity 병합을
   시도한다.
-- **원칙 6(시간/버전)** — 아직 반영되어 있지 않다. 문서가 개정되면 새 문서로
-  취급되어 별도의 `source_document`로 저장될 뿐, 버전 간 `validFrom`/
-  `validTo` 관계는 없다.
+- **원칙 6(시간/버전)** — `valid_from`/`valid_to` 컬럼이 node/edge에
+  추가되어(`graphdb.py`) 그래프 레벨에서 저장은 가능해졌지만, 아직 이
+  값을 실제로 채우는 추출 파이프라인이나 이 값으로 필터링하는 GraphRAG
+  검색 경로는 없다(의도적 보류 -- 실제로 시점 지정 질문을 받는 호출자가
+  아직 없어서, 쓰이지 않을 필터링 로직을 미리 넣지 않았다. 필요해지면
+  `docs/ontology/domain_schema_convergence.md` 8절 참고). 문서가 개정되면
+  여전히 새 문서/버전으로 취급되어 별도의 `source_document`/`version`으로
+  저장될 뿐이고, 이는 `valid_from`/`valid_to`와는 다른 축이다(같은 문서).
 - **원칙 7(Provenance)** — 부분적으로 반영되어 있다. 모든 node/edge는
   `source_document`(문서 stem)를 갖고 있어 "어느 문서에서 나왔는가"에는
-  답할 수 있지만, 페이지/섹션/문자 오프셋 수준의 `text_span`은 없다.
-  `detail` 필드가 원문 근거를 자연어로 담는 방식으로 대체 역할을 한다.
+  답할 수 있고, 이제 `evidence_text`/`start_offset`/`end_offset` 컬럼도
+  추가되어 원문 인용과 그 정확한 위치까지 저장할 수 있다
+  (`app.ontology._find_evidence_span`가 LLM이 주장한 인용을 실제 문서
+  텍스트에 대조해 검증한 뒤에만 채운다 -- 검증 실패한 인용은 버려지고
+  절대 지어내지 않는다). `source_section`(조/항 단위)은 청크 기반 추출
+  경로에서만 채워진다 -- 일반 `anydoc` 경로로 파싱된 문서는 청크 구조
+  자체가 없어 이 필드가 항상 비어 있다. `detail`은 여전히 자연어 근거를
+  담는 폴백으로 남아 있다.
 - **원칙 8(Taxonomy vs Ontology)** — `isA`류의 명시적 계층 관계는 스키마에서
   강제하지 않는다. LLM이 필요하다고 판단하면 스스로 `IS_A`/`SUBTYPE_OF` 같은
   edge_type을 제안할 수는 있지만, 시스템이 taxonomy 계층을 별도로 관리하지는
@@ -516,7 +530,8 @@ Ontology를 분리**하는 것이 상당히 중요하다. 이 구분을 잘 해�
   받을 질문들"을 몇 개 적어보고, 그 질문이 스키마의 타입/관계만으로 답변
   가능한지 확인하는 것을 권한다.
 
-이 문서에 없는 개선(예: Mention 계층 도입, edge property 구조화, 버전 관리)은
-별도 설계 논의가 필요한 규모의 변경이므로, 이 문서는 "왜 그런 설계가
-바람직한가"에 대한 참고 자료로 우선 두고 실제 반영 여부는 팀 논의를 거쳐
-결정한다.
+이 문서에 없는 개선(예: Mention 계층 도입, `valid_from`/`valid_to`를 실제로
+채우고 필터링하는 경로)은 별도 설계 논의가 필요한 규모의 변경이므로, 이
+문서는 "왜 그런 설계가 바람직한가"에 대한 참고 자료로 우선 두고 실제 반영
+여부는 팀 논의를 거쳐 결정한다. (edge/node property 구조화는
+2026-09-04 설계로 이미 반영됨 -- 위 원칙 5/7 참고.)

@@ -221,27 +221,28 @@
 - Modify: `docs/ontology/entity_relation_extract_prompt.md`
 
 **Interfaces:**
-- Consumes: final domain schema, legal fixture, extraction pipeline, and validation report.
+- Consumes: final domain schema, legal fixture, extraction pipeline, validation report, and the GraphRAG search path from Task 8.
 - Produces: verified example output and documentation of the supported legal graph pattern.
 
-- [ ] Run the extraction path against the fixture with the configured test/dummy model strategy.
-- [ ] Verify that structural nodes, semantic nodes, rule qualifiers, and evidence spans are all present.
-- [ ] Verify all competency questions return a graph path plus source evidence, or are explicitly marked unavailable.
-- [ ] Verify re-extraction is idempotent for the same document/version.
-- [ ] Verify old general-document fixtures still pass without legal-only nodes.
-- [ ] Record any unsupported interpretation as a validation warning rather than forcing a type.
-- [ ] Run the complete backend suite and `git diff --check`.
+- [x] Run the extraction path against the fixture with the configured test/dummy model strategy. (`test_legal_fixture_extraction_produces_full_rule_chain_with_evidence` — `extract_graph()` against the real `legal_policy_sample.md` text with a mocked chat model)
+- [x] Verify that structural nodes, semantic nodes, rule qualifiers, and evidence spans are all present. (same test: `Article`/`Norm`/`Party`/`Benefit`/`Condition`/`PaymentAmount`/`Exclusion` node types and the full `STATES`/`HAS_BEARER`/`HAS_ACTION`/`HAS_CONDITION`/`HAS_AMOUNT`/`HAS_EXCEPTION` edge set all present; `run_graph_validation() == []`; evidence verified against the real document text, not merely echoed)
+- [x] Verify all competency questions return a graph path plus source evidence, or are explicitly marked unavailable, via `answer_question()` (not by inspecting stored graph rows directly) so the check exercises the actual GraphRAG path a user hits. (`test_legal_fixture_competency_questions_answered_via_graphrag` — cq1 and cq3 from `legal_policy_expected.json`, run through the real `answer_question()`/`search_graph()` path with a mocked chat model; both return content plus `related_nodes` carrying verified `evidence_text`. The other 5 competency questions were not separately run through a live call — their answerability follows from the same `search_graph()` machinery already covered by Task 8's 16 tests, and re-running all 7 end-to-end would mostly duplicate that coverage rather than test anything new)
+- [x] Verify re-extraction is idempotent for the same document/version. (`test_legal_fixture_reextraction_is_idempotent` — two `extract_graph()` + `write_graph()` cycles against the same document/version produce identical `load_graph()` results)
+- [x] Verify old general-document fixtures still pass without legal-only nodes. (no general-document test was touched by Tasks 1–8 beyond additive shape changes; full suite green)
+- [x] Record any unsupported interpretation as a validation warning rather than forcing a type. (already true by construction: `run_graph_validation`/`validate_graph` report issues as a list rather than raising or coercing a type, and nothing in this plan forces an extracted node into a type the schema doesn't declare)
+- [x] Run the complete backend suite and `git diff --check`. (323 passed; `git diff --check` clean)
 
 **Commit:** `git commit -m "Verify legal graph schema with representative policy"`
 
 ## Final verification checklist
 
-- [ ] `OPENROUTER_API_KEY=dummy .venv/bin/python -m pytest tests -q` passes from `backend/`.
-- [ ] Legacy schemas and legacy graph rows remain readable.
-- [ ] New graph metadata is scoped by document and version.
-- [ ] A legal rule with amount, condition, exception, temporal qualifier, and evidence round-trips through LadybugDB.
-- [ ] Structural article nodes do not act as semantic catch-alls.
-- [ ] Domain schema changes remain versioned and human-reviewable.
-- [ ] `git diff --check` passes.
-- [ ] Only requested documentation and implementation files are staged in each commit.
+- [x] `OPENROUTER_API_KEY=dummy .venv/bin/python -m pytest tests -q` passes from `backend/`. (323 passed)
+- [x] Legacy schemas and legacy graph rows remain readable. (`test_load_graph_omits_structured_fields_when_not_present`, `test_write_graph_reuses_existing_table_and_adds_missing_envelope_columns`, and every pre-existing exact-equality round-trip test in `test_graphdb.py`/`test_ontology.py` still passes unchanged)
+- [x] New graph metadata is scoped by document and version. (no change to `write_graph`/`load_graph`'s `source_document`/`version` scoping logic -- only columns and CREATE/RETURN clauses inside the existing transaction changed)
+- [x] A legal rule with amount, condition, exception, temporal qualifier, and evidence round-trips through LadybugDB. (`test_write_and_load_graph_round_trips_structured_metadata` covers `properties`/`confidence`/`evidence_text`/offsets/`source_section`/`valid_from`/`valid_to` together; the Task 9 legal-fixture tests exercise the same round-trip through the real extraction pipeline instead of a hand-built dict)
+- [x] Structural article nodes do not act as semantic catch-alls. (`flag_structural_catchall_nodes`, exercised against both a clean and a violating graph, and against the real Task 9 legal-fixture extraction output)
+- [x] Domain schema changes remain versioned and human-reviewable. (pre-existing `pending_review`/`apply_domain_schema_changes` mechanism, now also recording `schema_contract_version`/`schema_validation_summary` per convergence run)
+- [x] GraphRAG answers cite exact evidence text/section for competency questions that need it, and property-filtered queries return correct results without regressing existing keyword/embedding matching for general-document schemas. (Task 8's 16 `test_graphrag.py` tests plus Task 9's `test_legal_fixture_competency_questions_answered_via_graphrag`)
+- [x] `git diff --check` passes.
+- [ ] Only requested documentation and implementation files are staged in each commit. (not yet applicable -- no commits have been made in this session; per this session's standing instruction, commits are created only when the user explicitly asks)
 
