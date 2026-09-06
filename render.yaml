@@ -11,6 +11,14 @@ services:
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     plan: starter # disks (below) require a paid plan; Free cannot attach one
+    # No LANGFUSE_* vars here, intentionally -- app/telemetry.py's
+    # configure_telemetry() only activates a real Langfuse client when
+    # LANGFUSE_PUBLIC_KEY is set, so omitting it here (and not adding it in
+    # the Render dashboard either) is what keeps this service from ever
+    # trying to reach the local, self-hosted Langfuse server described in
+    # docs/LANGFUSE.md -- which only exists on this machine and wouldn't be
+    # reachable from Render regardless. Do not add them here without first
+    # standing up a Langfuse instance actually reachable from Render.
     envVars:
       - key: OPENROUTER_API_KEY
         sync: false # set the real value in the Render dashboard, not here

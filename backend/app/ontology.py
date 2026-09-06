@@ -85,7 +85,7 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
     model = get_chat_model()
     response = invoke_with_telemetry(
-        "ontology.summarize_document", model, SUMMARY_PROMPT.format(document=document_text)
+        "summarize-document", model, SUMMARY_PROMPT.format(document=document_text)
     )
     summary = response.content.strip()
     if not summary:
@@ -97,7 +97,7 @@ def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     model = get_chat_model("discover_ontology")
     response = invoke_with_telemetry(
-        "ontology.discover_ontology", model, DISCOVERY_PROMPT.format(document=document_text)
+        "discover-ontology", model, DISCOVERY_PROMPT.format(document=document_text)
     )
     report = parse_json_response(response.content)
     if not isinstance(report.get("classes"), list):
@@ -173,7 +173,7 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
     ]
     model = get_chat_model("discover_ontology")
     prompt = CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
-    response = invoke_with_telemetry("ontology.consolidate_discovery_types", model, prompt)
+    response = invoke_with_telemetry("consolidate-discovery-types", model, prompt)
     consolidated = parse_json_response(response.content)
     if not isinstance(consolidated.get("classes"), list) or not isinstance(
         consolidated.get("relationships"), list
@@ -277,7 +277,7 @@ def generate_schema(
             "reference where the document doesn't actually support it.\n"
             f"{json.dumps(discovery)}\n\n"
         ) + prompt
-    response = invoke_with_telemetry("ontology.generate_schema", model, prompt)
+    response = invoke_with_telemetry("generate-schema", model, prompt)
     schema = parse_json_response(response.content)
     if not isinstance(schema.get("node_types"), list) or not isinstance(
         schema.get("edge_types"), list
@@ -297,7 +297,7 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
     ]
     model = get_chat_model("generate_schema")
     prompt = SCHEMA_CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
-    response = invoke_with_telemetry("ontology.consolidate_schema_types", model, prompt)
+    response = invoke_with_telemetry("consolidate-schema-types", model, prompt)
     consolidated = parse_json_response(response.content)
     if not isinstance(consolidated.get("node_types"), list) or not isinstance(
         consolidated.get("edge_types"), list
@@ -442,7 +442,7 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     prompt = EXTRACT_PROMPT.format(
         schema=json.dumps(normalized_schema), document=document_text
     )
-    response = invoke_with_telemetry("ontology.extract_graph", model, prompt)
+    response = invoke_with_telemetry("extract-graph", model, prompt)
     graph = parse_json_response(response.content)
     if not isinstance(graph.get("nodes"), list) or not isinstance(
         graph.get("edges"), list
@@ -750,7 +750,7 @@ def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: 
     prompt = VALIDATION_PROMPT.format(
         schema=json.dumps(schema), graph=json.dumps(graph), document=document_text
     )
-    response = invoke_with_telemetry("ontology.validate_ontology", model, prompt)
+    response = invoke_with_telemetry("validate-ontology", model, prompt)
     report = parse_json_response(response.content)
     if not isinstance(report.get("validation_summary"), dict) or not isinstance(
         report.get("issues"), list
@@ -774,7 +774,7 @@ def propose_evolution(
         validation_report=json.dumps(validation_report),
         document=document_text,
     )
-    response = invoke_with_telemetry("ontology.propose_evolution", model, prompt)
+    response = invoke_with_telemetry("propose-evolution", model, prompt)
     proposal = parse_json_response(response.content)
     if not isinstance(proposal.get("changes"), list):
         raise ValueError("evolution JSON missing changes list")
@@ -1031,7 +1031,7 @@ def find_redundant_type_pairs(schema: dict, threshold: float = 0.9) -> list[dict
         if len(types) < 2:
             continue
         texts = [f"{t['name']}: {t['description']}" for t in types]
-        vectors = embed_with_telemetry(f"ontology.find_redundant_type_pairs.{kind}", model, texts)
+        vectors = embed_with_telemetry(f"find-redundant-type-pairs-{kind}", model, texts)
         for i in range(len(types)):
             for j in range(i + 1, len(types)):
                 similarity = _cosine_similarity(vectors[i], vectors[j])
@@ -1395,7 +1395,7 @@ def embed_nodes(nodes: list) -> list:
         return []
     model = get_embedding_model()
     texts = [node_embedding_text(n) for n in nodes]
-    vectors = embed_with_telemetry("ontology.embed_nodes", model, texts)
+    vectors = embed_with_telemetry("embed-nodes", model, texts)
     return [{**node, "embedding": vector} for node, vector in zip(nodes, vectors)]
 
 

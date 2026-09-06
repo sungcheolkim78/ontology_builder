@@ -37,6 +37,13 @@ function sortRelatedNodes(relatedNodes, nodeTypes) {
 
 const emit = defineEmits(['highlight-nodes', 'toggle-type'])
 
+// One id for this component instance's whole lifetime -- `messages` itself
+// is never reset on file switch (see the watcher above), so this is a
+// stable proxy for "one continuous chat session," sent to Langfuse via
+// /api/chat's session_id so a multi-turn conversation groups as one
+// session there instead of each turn appearing as an unrelated trace.
+const sessionId = crypto.randomUUID()
+
 const messages = ref([])
 const input = ref('')
 const isLoading = ref(false)
@@ -87,6 +94,7 @@ async function sendMessage() {
         messages: messages.value.map(({ role, content }) => ({ role, content })),
         filename: props.file?.filename ?? null,
         hops: props.hops,
+        session_id: sessionId,
       }),
       signal: abortController.signal,
     })

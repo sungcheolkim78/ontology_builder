@@ -68,8 +68,8 @@ def test_invoke_with_telemetry_reraises_on_error():
 
 
 def test_invoke_with_telemetry_works_without_configured_exporter():
-    # No OTEL_EXPORTER_OTLP_ENDPOINT set in the test environment -- the
-    # default no-op tracer must still let calls through with no error.
+    # No LANGFUSE_PUBLIC_KEY set in the test environment -- the client stays
+    # unconfigured and calls must still go through with no error.
     model = FakeModel(response=FakeResponse("plain"))
 
     result = invoke_with_telemetry("test.operation", model, "prompt")

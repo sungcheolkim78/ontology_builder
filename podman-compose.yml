@@ -1,24 +1,21 @@
 version: "3.8"
 
 services:
-  jaeger:
-    image: jaegertracing/all-in-one:1.60
-    ports:
-      - "16686:16686"
-
+  # LLM tracing goes to a self-hosted Langfuse server that is NOT part of
+  # this compose file -- it's a separate, shared instance for this
+  # machine's projects. See docs/LANGFUSE.md. backend/.env's
+  # LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY/LANGFUSE_HOST wire this
+  # container up to it (LANGFUSE_HOST is typically
+  # http://host.containers.internal:3000).
   backend:
     build: ./backend
     env_file:
       - ./backend/.env
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
     ports:
       - "8000:8000"
     volumes:
       - ./backend/app:/app/app
       - ./backend/data:/app/data
-    depends_on:
-      - jaeger
 
   # Image tag must match backend/requirements.txt's `ladybug` version -- the
   # explorer and the embedded library have to agree on storage format.

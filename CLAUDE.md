@@ -22,7 +22,11 @@ podman-compose up --build -d
 Requires a running `podman machine` and `backend/.env` with a real
 `OPENROUTER_API_KEY` (copy `backend/.env.example`). Frontend at
 `localhost:5173`, backend at `localhost:8000`; the frontend dev server
-proxies `/api` and `/health` to the backend container. Ladybug Explorer (a
+proxies `/api` and `/health` to the backend container. LLM tracing
+(`backend/.env`'s optional `LANGFUSE_*` vars) points at a separate,
+self-hosted Langfuse server shared across projects on this machine, not
+something `podman-compose.yml` itself runs -- see `docs/LANGFUSE.md`
+before expecting traces to show up anywhere. Ladybug Explorer (a
 GUI for browsing `backend/data/graph/graph.ladybugdb` directly via Cypher)
 is at `localhost:8001`, running in `MODE=READ_ONLY` so it can stay up
 alongside the backend without either side able to corrupt the other via a
@@ -367,21 +371,51 @@ business logic of its own beyond request/response shaping.
   every chat-completion call site (chat answer, schema generation, graph
   extraction, type analysis, keyword extraction) and
   `embed_with_telemetry(operation, model, texts)` wraps both embedding
-  call sites
-  (`ontology.embed_nodes`, `graphrag.embed_query`) in an OpenTelemetry span.
-  Both record model name plus the full prompt/response (or embedding input
-  count/output count) as span attributes -- deliberately including the
-  actual text, for debugging in Jaeger; this is fine only because this is
-  local dev with no external collector. Both share a `_call_with_retry()`
-  helper that retries the call up to `max_retries` (default 2) times, with
-  a fixed delay, on `langchain_core.exceptions.ModelConnectionError` — the
-  provider-agnostic base class langchain raises for connection-level
-  failures — since transient OpenRouter connection errors are a real
-  failure mode observed in this environment; any other exception is
-  raised immediately, not retried. Telemetry only exports anywhere if
-  `OTEL_EXPORTER_OTLP_ENDPOINT` is set (podman-compose points it at the
-  bundled Jaeger service); otherwise the OpenTelemetry API's no-op tracer
-  is active, so both wrappers are always safe to call in tests.
+  call sites (`ontology.embed_nodes`, `graphrag.embed_query`) in a
+  **Langfuse** `generation`/`embedding` observation (the `langfuse`
+  Python SDK — see `docs/LANGFUSE.md`). This replaced a raw-OpenTelemetry
+  span sent to a bundled Jaeger container: Langfuse's SDK is itself
+  OpenTelemetry-based (confirmed by pointing it at an unreachable host and
+  observing its OTLP exporter's own retry/timeout log lines), but gives
+  generation-level structure -- model name, full prompt/response text,
+  and token usage as first-class fields rather than free-form span
+  attributes -- plus cost accounting and per-question scoring in the UI,
+  none of which a generic span gets you. Both record the actual
+  prompt/response text (or embedding input count/output count) --
+  deliberately including the actual text, for debugging; this is fine
+  only because the Langfuse server this points at by default is
+  self-hosted and not shared with anyone else (see `docs/LANGFUSE.md`).
+  Both share a `_call_with_retry()` helper that retries the call up to
+  `max_retries` (default 2) times, with a fixed delay, on
+  `langchain_core.exceptions.ModelConnectionError` — the provider-agnostic
+  base class langchain raises for connection-level failures — since
+  transient OpenRouter connection errors are a real failure mode observed
+  in this environment; any other exception is raised immediately, not
+  retried, and marks the observation `level="ERROR"` with a
+  `status_message` before re-raising. `configure_telemetry()` only
+  constructs a real Langfuse client if `LANGFUSE_PUBLIC_KEY` is set (read
+  from `backend/.env`, which podman-compose's `env_file:` line already
+  wires up); otherwise both wrappers fall back to a local
+  `_NoopObservation` stand-in exposing the same `update()`/context-manager
+  shape, so both are always safe to call in tests. A third export,
+  `trace(name, session_id=, tags=, metadata=, input=)`, opens one root
+  Langfuse span per HTTP request in `main.py`'s route handlers (chat,
+  discover, schema, extract, goldenset generate/answer) so the several
+  `invoke_with_telemetry`/`embed_with_telemetry` calls one request can make
+  (e.g. `/api/chat`'s `analyze-question` → `embed-query` → `answer-chat`)
+  nest under one trace instead of each showing up as its own unrelated
+  root -- see `docs/LANGFUSE.md`'s "Trace hierarchy" section, which
+  includes a real captured example fetched via `langfuse-cli` and audited
+  against Langfuse's own trace-instrumentation best practices. That
+  guidance -- and the naming below -- comes from the `langfuse` Agent
+  Skill vendored into this repo at `.claude/skills/langfuse/` (from
+  github.com/langfuse/skills); reach for it again for any future Langfuse
+  work (further instrumentation, prompt migration, dataset/eval setup) so
+  the approach stays current with Langfuse's own guidance rather than
+  whatever was true when this was written. Per-observation names
+  (`answer-chat`, `generate-schema`, `analyze-question`, ...) are short,
+  verb-first, dash-case strings per that guidance too, not the
+  `ontology.generate_schema`-style dotted names this module used before.
 
 **Testing LLM calls:** `get_chat_model`/`get_embedding_model` are imported
 into each module's own namespace, so tests patch them per-module

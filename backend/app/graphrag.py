@@ -70,7 +70,7 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 
 def embed_query(question: str) -> list:
     model = get_embedding_model()
-    vectors = embed_with_telemetry("graphrag.embed_query", model, [question])
+    vectors = embed_with_telemetry("embed-query", model, [question])
     return vectors[0]
 
 
@@ -83,7 +83,7 @@ def analyze_question(question: str, schema: dict) -> dict:
     find_relevant_nodes can match each term only against its own type."""
     model = get_chat_model()
     response = invoke_with_telemetry(
-        "graphrag.analyze_question",
+        "analyze-question",
         model,
         ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question),
     )
@@ -327,7 +327,7 @@ def answer_question(
             }
         ] + messages
         model = get_chat_model()
-        response = invoke_with_telemetry("chat.answer", model, to_langchain_messages(augmented))
+        response = invoke_with_telemetry("answer-chat", model, to_langchain_messages(augmented))
         content = response.content
     else:
         content = "관련된 내용을 찾을 수 없습니다."

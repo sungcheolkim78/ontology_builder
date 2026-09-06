@@ -73,7 +73,7 @@ from app.goldenset import (
 )
 from app.parser import parse_to_markdown_file
 from app.paths import document_dir_for, documents_dir
-from app.telemetry import configure_telemetry, invoke_with_telemetry
+from app.telemetry import configure_telemetry, invoke_with_telemetry, trace
 
 configure_telemetry()
 
@@ -173,30 +173,40 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     filename: str | None = None
     hops: int = 1
+    session_id: str | None = None
 
 
 @app.post("/api/chat")
 def chat(request: ChatRequest):
     messages = [m.model_dump() for m in request.messages]
 
-    if request.filename and messages:
-        stem = _stem(request.filename)
-        version = get_active_version(stem)
-        schema = load_schema(stem, version) if version is not None else None
-        if schema and graphdb.has_graph(stem, version=version):
-            hops = max(1, min(5, request.hops))
-            try:
-                result = answer_question(messages, schema, stem, version=version, hops=hops)
-            except ValueError:
-                result = None
+    with trace(
+        "chat-turn",
+        session_id=request.session_id,
+        tags=["chat"],
+        metadata={"filename": request.filename} if request.filename else None,
+        input=messages[-1]["content"] if messages else None,
+    ) as span:
+        if request.filename and messages:
+            stem = _stem(request.filename)
+            version = get_active_version(stem)
+            schema = load_schema(stem, version) if version is not None else None
+            if schema and graphdb.has_graph(stem, version=version):
+                hops = max(1, min(5, request.hops))
+                try:
+                    result = answer_question(messages, schema, stem, version=version, hops=hops)
+                except ValueError:
+                    result = None
 
-            if result is not None:
-                return {"role": "assistant", **result}
+                if result is not None:
+                    span.update(output=result["content"])
+                    return {"role": "assistant", **result}
 
-    model = get_chat_model()
-    lc_messages = to_langchain_messages(messages)
-    response = invoke_with_telemetry("chat.answer", model, lc_messages)
-    return {"role": "assistant", "content": response.content}
+        model = get_chat_model()
+        lc_messages = to_langchain_messages(messages)
+        response = invoke_with_telemetry("answer-chat", model, lc_messages)
+        span.update(output=response.content)
+        return {"role": "assistant", "content": response.content}
 
 
 @app.post("/api/parse")
@@ -343,9 +353,16 @@ def create_goldenset(filename: str, request: CreateGoldensetRequest | None = Non
         # Always the whole raw.md, never chunks.json -- see the module-level
         # rationale in app.goldenset for why a golden set must not be built
         # the same chunked way as the pipelines it's meant to validate.
-        report = generate_goldenset(
-            doc_path.read_text(), source_name=f"{stem}.md", question_count=question_count
-        )
+        with trace(
+            "generate-goldenset",
+            tags=["goldenset"],
+            metadata={"filename": filename},
+            input=f"generate {question_count} golden questions for {filename}",
+        ) as span:
+            report = generate_goldenset(
+                doc_path.read_text(), source_name=f"{stem}.md", question_count=question_count
+            )
+            span.update(output=f"{len(report.get('questions', []))} questions generated")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     save_goldenset(stem, report)
@@ -388,9 +405,16 @@ def create_goldenset_answer(
 
     hops = max(1, min(5, request.hops if request else 1))
     try:
-        result = answer_question(
-            [{"role": "user", "content": question["question"]}], schema, stem, version=version, hops=hops
-        )
+        with trace(
+            "answer-goldenset-question",
+            tags=["goldenset"],
+            metadata={"filename": filename, "question_id": question_id},
+            input=question["question"],
+        ) as span:
+            result = answer_question(
+                [{"role": "user", "content": question["question"]}], schema, stem, version=version, hops=hops
+            )
+            span.update(output=result["content"])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -439,16 +463,28 @@ def discover(filename: str, request: DiscoverRequest | None = None):
     stem = _stem(filename)
     chunk_path = _chunk_path(stem)
     try:
-        if chunk_path.is_file():
-            # Chunked documents skip the single-call, whole-raw.md path
-            # entirely (and its MAX_DOCUMENT_CHARS ceiling) in favor of the
-            # group-then-consolidate approach -- see
-            # discover_ontology_from_chunks in app.ontology.
-            chunked = json.loads(chunk_path.read_text())
-            chunk_items = [chunked["preamble"], *chunked["chunks"]]
-            report = discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
-        else:
-            report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
+        with trace(
+            "discover-ontology",
+            tags=["discovery"],
+            metadata={"filename": filename},
+            input=f"discover ontology for {filename}",
+        ) as span:
+            if chunk_path.is_file():
+                # Chunked documents skip the single-call, whole-raw.md path
+                # entirely (and its MAX_DOCUMENT_CHARS ceiling) in favor of the
+                # group-then-consolidate approach -- see
+                # discover_ontology_from_chunks in app.ontology.
+                chunked = json.loads(chunk_path.read_text())
+                chunk_items = [chunked["preamble"], *chunked["chunks"]]
+                report = discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
+            else:
+                report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
+            span.update(
+                output=(
+                    f"{len(report.get('classes', []))} classes, "
+                    f"{len(report.get('relationships', []))} relationships discovered"
+                )
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     save_discovery(stem, report)
@@ -480,17 +516,29 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
     discovery = load_discovery(stem) if (request and request.use_discovery) else None
     chunk_path = _chunk_path(stem)
     try:
-        if chunk_path.is_file():
-            # Same rationale as /discover above -- see
-            # generate_schema_from_chunks in app.ontology.
-            chunked = json.loads(chunk_path.read_text())
-            chunk_items = [chunked["preamble"], *chunked["chunks"]]
-            schema = generate_schema_from_chunks(
-                chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
-            )
-        else:
-            schema = generate_schema(
-                doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
+        with trace(
+            "generate-schema",
+            tags=["schema"],
+            metadata={"filename": filename},
+            input=f"generate a {document_type} schema for {filename}",
+        ) as span:
+            if chunk_path.is_file():
+                # Same rationale as /discover above -- see
+                # generate_schema_from_chunks in app.ontology.
+                chunked = json.loads(chunk_path.read_text())
+                chunk_items = [chunked["preamble"], *chunked["chunks"]]
+                schema = generate_schema_from_chunks(
+                    chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
+                )
+            else:
+                schema = generate_schema(
+                    doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
+                )
+            span.update(
+                output=(
+                    f"{len(schema.get('node_types', []))} node types, "
+                    f"{len(schema.get('edge_types', []))} edge types generated"
+                )
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -546,15 +594,27 @@ def create_extraction(filename: str):
     schema = load_schema(stem, version)
     chunk_path = _chunk_path(stem)
     try:
-        if chunk_path.is_file():
-            # Same rationale as /discover and /schema above -- see
-            # extract_graph_from_chunks in app.ontology.
-            chunked = json.loads(chunk_path.read_text())
-            chunk_items = [chunked["preamble"], *chunked["chunks"]]
-            graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
-        else:
-            graph = extract_graph(doc_path.read_text(), schema)
-        save_graph(stem, graph, version=version)
+        with trace(
+            "extract-graph",
+            tags=["extraction"],
+            metadata={"filename": filename},
+            input=f"extract graph for {filename}",
+        ) as span:
+            if chunk_path.is_file():
+                # Same rationale as /discover and /schema above -- see
+                # extract_graph_from_chunks in app.ontology.
+                chunked = json.loads(chunk_path.read_text())
+                chunk_items = [chunked["preamble"], *chunked["chunks"]]
+                graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
+            else:
+                graph = extract_graph(doc_path.read_text(), schema)
+            # Inside the same trace as the extraction calls above -- save_graph()
+            # calls embed_nodes(), an embedding call that's still part of
+            # serving this one /extract request.
+            save_graph(stem, graph, version=version)
+            span.update(
+                output=f"{len(graph.get('nodes', []))} nodes, {len(graph.get('edges', []))} edges extracted"
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return graph

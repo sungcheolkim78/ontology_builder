@@ -15,13 +15,15 @@ Browser
                     FastAPI :8000
        ┌─────────────┼──────────────┬──────────────┐
        ▼             ▼              ▼              ▼
-   anydoc       OpenRouter       LadybugDB       OpenTelemetry
- document       chat/embed      graph file       → Jaeger
- conversion
+   anydoc       OpenRouter       LadybugDB        Langfuse SDK
+ document       chat/embed      graph file      → Langfuse server
+ conversion                                     (self-hosted, docs/LANGFUSE.md)
 ```
 
-로컬 Compose는 `frontend`, `backend`, `jaeger`, 선택적인 read-only Ladybug
-Explorer를 실행한다. 운영 Render는 정적 프론트엔드와 Docker 백엔드를 분리하고,
+로컬 Compose는 `frontend`, `backend`, 선택적인 read-only Ladybug
+Explorer를 실행한다. LLM 트레이싱은 이 프로젝트의 `podman-compose.yml`이 아니라
+이 컴퓨터에서 여러 프로젝트가 공유하는 별도의 self-hosted Langfuse 서버로 나간다
+(`docs/LANGFUSE.md` 참고). 운영 Render는 정적 프론트엔드와 Docker 백엔드를 분리하고,
 백엔드 `/app/data`에 1GB persistent disk를 마운트한다.
 
 ## 2. 컴포넌트와 책임
@@ -215,8 +217,10 @@ XSS 방어가 별도 필요하며, 현재 CSP·rate limit·CSRF token·logout은
   `http://localhost:5173`이다.
 - 인증 middleware는 브라우저 CORS preflight인 `OPTIONS`를 통과시킨다.
 - 파일 접근은 `os.path.basename`으로 data 디렉터리 밖 경로를 차단한다.
-- LLM 프롬프트와 응답은 로컬 Jaeger 추적 span 속성에 기록될 수 있다. 외부
-  collector를 운영할 때 문서 민감정보가 유출되지 않도록 exporter 정책을 검토해야 한다.
+- LLM 프롬프트와 응답은 self-hosted Langfuse 서버의 generation/embedding
+  관측치에 그대로 기록될 수 있다 (`docs/LANGFUSE.md`). 이 서버 밖으로 나가는
+  exporter를 추가로 운영할 때는 문서 민감정보가 유출되지 않도록 정책을
+  검토해야 한다.
 - `reset-database`는 모든 문서 그래프를 파괴하는 운영 기능이므로 공개 환경에서
   공유 토큰만으로 노출하는 것은 위험하다.
 
@@ -228,9 +232,11 @@ XSS 방어가 별도 필요하며, 현재 CSP·rate limit·CSRF token·logout은
 - **anydoc:** PDF/Word/PPT/CSV 등 업로드 형식을 Markdown으로 변환한다.
 - **LadybugDB 0.19.1:** embedded Cypher graph store. Explorer 이미지 버전도
   동일해야 하며 Explorer는 read-only로 실행한다.
-- **OpenTelemetry/Jaeger:** chat, schema, extraction, discovery/analysis,
-  embedding 호출을 span으로 기록한다. 연결 오류(`ModelConnectionError`)는
-  기본 2회 재시도하며 no-op exporter에서도 호출이 실패하지 않는다.
+- **Langfuse (self-hosted, `docs/LANGFUSE.md`):** chat, schema, extraction,
+  discovery/analysis, embedding 호출을 generation/embedding 관측치로
+  기록한다. 연결 오류(`ModelConnectionError`)는 기본 2회 재시도하며,
+  `LANGFUSE_PUBLIC_KEY`가 없으면 클라이언트를 아예 생성하지 않아 호출이
+  실패하지 않는다.
 
 ### 배포
 

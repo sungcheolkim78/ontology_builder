@@ -75,38 +75,71 @@ REL-table-free path rather than relying on the query to fail safely.
 
 ### Telemetry
 
-`app/telemetry.py` exports `invoke_with_telemetry(operation, model, prompt)`,
-a drop-in replacement for `model.invoke(prompt)` used at all five LLM
-call sites (`chat.answer` in `main.py`; `ontology.generate_schema` and
-`ontology.extract_graph`; `graphrag.determine_types` and
-`graphrag.extract_keywords`). Each call wraps a span named `llm.{operation}`
-recording `gen_ai.request.model`, `gen_ai.prompt.length`,
-`gen_ai.response.length`, `gen_ai.call.success`, and
-`gen_ai.usage.{input,output}_tokens` when the provider returns them —
-metadata only, never the prompt/response text itself. Span duration is
-automatic (OpenTelemetry records start/end time on every span; Jaeger's
-UI displays it without any manual tracking). On an exception, the span
-records it and sets an error status before the exception is re-raised
-unchanged — tracing never swallows or alters application errors.
+`app/telemetry.py` exports `invoke_with_telemetry(operation, model, prompt)`
+and `embed_with_telemetry(operation, model, texts)`, drop-in replacements
+for `model.invoke(prompt)`/`model.embed_documents(texts)` used at every
+LLM/embedding call site (`answer-chat` in `main.py`/`graphrag.py`;
+`generate-schema`, `extract-graph`, `embed-nodes`, `discover-ontology`, and
+others in `ontology.py`; `analyze-question`, `embed-query` in `graphrag.py`;
+`generate-goldenset-questions`, `generate-goldenset-answers` in
+`goldenset.py` — short, verb-first, dash-case names per Langfuse's own
+naming guidance, not the module-path style these used before). Both are
+built on the **Langfuse Python SDK**
+(`langfuse` package, itself OpenTelemetry-based — see
+[docs/LANGFUSE.md](LANGFUSE.md)), not raw OpenTelemetry: each call opens a
+Langfuse `generation` (`invoke_with_telemetry`) or `embedding`
+(`embed_with_telemetry`) observation named `{operation}`, recording the
+model name, the full prompt/response text as `input`/`output`, and
+`usage_details` (`input_tokens`/`output_tokens`) when the provider returns
+them — this is local dev only; review exporter/retention policy before
+pointing this at anything but a self-hosted instance you control. Duration
+is automatic (Langfuse records start/end time on every observation). On an
+exception, `_call_with_retry` marks the observation `level="ERROR"` with
+`status_message` before the exception is re-raised unchanged — tracing
+never swallows or alters application errors.
 
-`invoke_with_telemetry` also retries on
-`langchain_core.exceptions.ModelConnectionError` (the provider-agnostic
-base class langchain raises for connection-level failures, e.g. the
-`OpenAIConnectionError` langchain-openai raises for a dropped OpenRouter
-connection) up to `max_retries` times (default 2) with a fixed
-`retry_delay` (default 1.0s) between attempts, recording
-`gen_ai.retry.count` on the span either way. Any other exception type is
-raised immediately with no retry. This exists because a transient
-OpenRouter connection error was observed in practice during a real
-`extract_graph` call — not a hypothetical failure mode.
+Both functions also retry on `langchain_core.exceptions.ModelConnectionError`
+(the provider-agnostic base class langchain raises for connection-level
+failures, e.g. the `OpenAIConnectionError` langchain-openai raises for a
+dropped OpenRouter connection) up to `max_retries` times (default 2) with a
+fixed `retry_delay` (default 1.0s) between attempts, recording a
+`retry_count` metadata field on the observation either way. Any other
+exception type is raised immediately with no retry. This exists because a
+transient OpenRouter connection error was observed in practice during a
+real `extract_graph` call — not a hypothetical failure mode.
 
-`configure_telemetry()` (called once at import time in `main.py`) only
-registers a real `TracerProvider` + OTLP HTTP exporter if
-`OTEL_EXPORTER_OTLP_ENDPOINT` is set in the environment; otherwise the
-OpenTelemetry API's built-in no-op tracer stays active, so
-`invoke_with_telemetry` is always safe to call — in particular, it adds
-no network calls and negligible overhead when running tests locally
-(outside podman-compose, where that env var is never set).
+`configure_telemetry()` (called once at import time in `main.py`, and
+idempotently again at the top of both `invoke_with_telemetry`/
+`embed_with_telemetry` so tests that call them directly still work) only
+constructs a real Langfuse client if `LANGFUSE_PUBLIC_KEY` is set in the
+environment; otherwise `_client` stays `None` and both functions fall back
+to `_NoopObservation`, a local stand-in exposing the same `update()`/context
+-manager shape, so instrumented code is always safe to call — in particular
+it adds no network calls and negligible overhead when running tests locally
+(outside podman-compose, where `backend/.env`'s Langfuse keys are never
+read). `LANGFUSE_HOST` selects which server the SDK talks to — see
+[docs/LANGFUSE.md](LANGFUSE.md) for the self-hosted server this project
+points at by default and why it's a single server shared across projects
+rather than one per `podman-compose.yml`.
+
+`telemetry.trace(name, session_id=, tags=, metadata=, input=)` is a third
+export, used by route handlers in `main.py` that make more than one of the
+calls above per request (`/api/chat`, `/api/ontology/{filename}/discover`,
+`.../schema`, `.../extract`, `/api/documents/{filename}/goldenset` and its
+`.../answer`). It opens one root Langfuse **span** via
+`start_as_current_observation`; every `invoke_with_telemetry`/
+`embed_with_telemetry` call made inside its `with` block nests under that
+span as a child observation instead of becoming its own unrelated
+top-level trace, and `propagate_attributes` (a top-level `langfuse` import)
+pushes `session_id`/`tags`/`metadata` onto every one of those children too
+— see [docs/LANGFUSE.md](LANGFUSE.md)'s "Trace hierarchy" section for a
+real captured example (`/api/chat`'s graphrag path nests
+`analyze-question` → `embed-query` → `answer-chat` under one `chat-turn`
+span). Like the other two exports, `trace()` no-ops to a local
+`_NoopObservation` when telemetry isn't configured. `ChatRequest.session_id`
+(optional) is `/api/chat`'s only telemetry-specific request field; the
+frontend generates one `crypto.randomUUID()` per `ChatPanel.vue` component
+lifetime and sends it with every chat request.
 
 ### Endpoints
 
@@ -441,17 +474,17 @@ invalidates every previously-issued token at once.
   (git-ignored; `backend/.env.example` documents the format).
 - `APP_PASSWORD` (optional) — enables the login gate described above
   when set to a non-empty value; unset by default in local dev.
-- `OTEL_EXPORTER_OTLP_ENDPOINT` (optional) — set by `podman-compose.yml`
-  to Jaeger's OTLP HTTP receiver; unset in any other environment
-  (including local pytest runs) disables tracing entirely rather than
-  erroring.
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` (optional,
+  read from `backend/.env`) — point `app/telemetry.py` at the self-hosted
+  Langfuse server (see [docs/LANGFUSE.md](LANGFUSE.md)); unset in any other
+  environment (including local pytest runs) disables tracing entirely
+  rather than erroring.
 
 ### Dependencies
 
 `requirements.txt`: `fastapi`, `uvicorn`, `langchain-openai`,
 `firecrawl-anydoc`, `python-multipart`, `networkx`, `ladybug`,
-`opentelemetry-api`, `opentelemetry-sdk`,
-`opentelemetry-exporter-otlp-proto-http`. `ladybug` is the embedded
+`langfuse`. `ladybug` is the embedded
 Cypher-native graph database (`graphdb.py`) that stores extracted
 nodes/edges; `networkx` remains a declared dependency but is no longer
 imported anywhere in `app/` — graph search and hop expansion are now
@@ -792,21 +825,25 @@ Outside the app itself:
 
 ## Deployment (dev)
 
-`podman-compose.yml` defines three services:
+`podman-compose.yml` defines:
 
-- **jaeger** — `jaegertracing/all-in-one`, UI at `localhost:16686`. No
-  volumes (traces are in-memory; they don't survive `down`).
 - **backend** — builds `backend/Dockerfile` (`python:3.12-slim`,
-  `uvicorn --reload`), port 8000, `env_file: backend/.env`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at jaeger, volumes for `app/`
-  and `data/` (hot-reload + host-visible parse output), `depends_on: jaeger`.
+  `uvicorn --reload`), port 8000, `env_file: backend/.env` (which is where
+  `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST` live, if
+  set — see [docs/LANGFUSE.md](LANGFUSE.md)), volumes for `app/` and
+  `data/` (hot-reload + host-visible parse output).
 - **frontend** — builds `frontend/Dockerfile` (`node:20-slim`, `vite`
   dev server), port 5173, volumes for `src/`, `index.html`,
   `vite.config.js`, `depends_on: backend`.
 
-Every LLM call shows up as a trace at `http://localhost:16686` (search
-by service `ontology-builder-backend`) — useful for seeing which
-GraphRAG stage a slow chat response actually spent time in.
+(There's also a `ladybug-explorer` service — see "Running the full stack"
+in `CLAUDE.md`.)
+
+LLM tracing is no longer part of this project's own `podman-compose.yml` —
+it's a separately-run, self-hosted Langfuse server shared across projects
+on this machine. Every LLM call shows up there as a `generation`/`embedding`
+observation once `backend/.env` has Langfuse keys pointed at it — see
+[docs/LANGFUSE.md](LANGFUSE.md) for setup and the UI URL.
 
 Run with `podman-compose up --build`. Requires a running
 `podman machine` and a `backend/.env` with a real `OPENROUTER_API_KEY`.

@@ -202,7 +202,7 @@ def generate_goldenset(
     answer_context = compact_document_for_questions(document_text, answer_budget)
 
     question_response = invoke_with_telemetry(
-        "goldenset.generate_questions",
+        "generate-goldenset-questions",
         model,
         QUESTION_PROMPT.format(
             question_count=question_count, source_file=source_name, document=question_context
@@ -211,7 +211,7 @@ def generate_goldenset(
     questions = _validate_questions(parse_json_response(question_response.content), question_count)
 
     answer_response = invoke_with_telemetry(
-        "goldenset.generate_answers",
+        "generate-goldenset-answers",
         model,
         ANSWER_PROMPT.format(
             questions=json.dumps(questions, ensure_ascii=False, indent=2),
