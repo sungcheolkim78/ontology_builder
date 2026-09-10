@@ -6,14 +6,11 @@ import re
 import shutil
 import statistics
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
 
-from app.chat import get_chat_model
-from app.embeddings import get_embedding_model, node_embedding_text
-from app.telemetry import invoke_with_telemetry, embed_with_telemetry
 from app import graphdb
-from app.paths import data_dir, document_dir_for, documents_dir
+from app import ontology
+from app.paths import document_dir_for
 from app.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
@@ -24,15 +21,18 @@ from app.prompts import (
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
 )
-from app.schema_validation import (
-    SCHEMA_CONTRACT_VERSION,
-    normalize_schema,
-    summarize_validation_issues,
-    validate_graph,
-    validate_schema,
-)
+from app.schema_validation import normalize_schema
+from app.telemetry import embed_with_telemetry, invoke_with_telemetry
 
-DOCUMENTS_DIR = documents_dir()
+from .persistence import (
+    DEFAULT_SCHEMA,
+    _apply_schema_type_changes,
+    _apply_type_change,
+    create_schema_version,
+    get_active_version,
+    list_versions,
+    load_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +56,6 @@ def _check_document_length(document_text: str, max_chars: int | None = None) -> 
             f"max {limit}) to send to the LLM in one call"
         )
 
-DEFAULT_SCHEMA = {
-    "node_types": [
-        {"name": "Entity", "description": "A generic named entity mentioned in the document."}
-    ],
-    "edge_types": [
-        {
-            "name": "RELATED_TO",
-            "description": "A generic relationship between two entities.",
-            "source": "Entity",
-            "target": "Entity",
-        }
-    ],
-}
 
 def parse_json_response(text: str) -> dict:
     stripped = text.strip()
@@ -83,7 +70,7 @@ def parse_json_response(text: str) -> dict:
 
 def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model()
+    model = ontology.get_chat_model()
     response = invoke_with_telemetry(
         "summarize-document", model, SUMMARY_PROMPT.format(document=document_text)
     )
@@ -95,7 +82,7 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
 
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model("discover_ontology")
+    model = ontology.get_chat_model("discover_ontology")
     response = invoke_with_telemetry(
         "discover-ontology", model, DISCOVERY_PROMPT.format(document=document_text)
     )
@@ -171,7 +158,7 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
         }
         for i, report in enumerate(group_reports)
     ]
-    model = get_chat_model("discover_ontology")
+    model = ontology.get_chat_model("discover_ontology")
     prompt = CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
     response = invoke_with_telemetry("consolidate-discovery-types", model, prompt)
     consolidated = parse_json_response(response.content)
@@ -261,7 +248,7 @@ def generate_schema(
     prompt_template = SCHEMA_PROMPTS.get(document_type)
     if prompt_template is None:
         raise ValueError(f"unknown document_type: {document_type!r}")
-    model = get_chat_model("generate_schema")
+    model = ontology.get_chat_model("generate_schema")
     prompt = prompt_template.format(document=document_text)
     if discovery:
         # Prepended, not merged into the template's own "Document:" section --
@@ -295,7 +282,7 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         }
         for i, schema in enumerate(group_schemas)
     ]
-    model = get_chat_model("generate_schema")
+    model = ontology.get_chat_model("generate_schema")
     prompt = SCHEMA_CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
     response = invoke_with_telemetry("consolidate-schema-types", model, prompt)
     consolidated = parse_json_response(response.content)
@@ -437,7 +424,7 @@ def _normalize_extracted_item(
 
 
 def extract_graph(document_text: str, schema: dict) -> dict:
-    model = get_chat_model("extract_graph")
+    model = ontology.get_chat_model("extract_graph")
     normalized_schema = normalize_schema(schema)
     prompt = EXTRACT_PROMPT.format(
         schema=json.dumps(normalized_schema), document=document_text
@@ -480,159 +467,6 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     graph["edges"] = valid_edges
 
     return graph
-
-
-# Structural node_type names named explicitly in the design spec (section
-# 3.3/5.1): these identify *where* text occurs, never *what* it says. Domain
-# schemas are free to name their own structural types differently, but a
-# schema using one of these exact names (case-insensitively, matching
-# graphdb.py's own case-insensitive type-name resolution) gets this guard's
-# protection against becoming a semantic catch-all.
-STRUCTURAL_TYPE_NAMES = {
-    "document", "policyversion", "chapter", "article", "paragraph", "item",
-    "section", "clause", "schedule", "appendix",
-}
-
-
-def _is_structural_type(type_name: str) -> bool:
-    return (type_name or "").lower() in STRUCTURAL_TYPE_NAMES
-
-
-def flag_structural_catchall_nodes(graph: dict) -> list[dict]:
-    """Flags a structural node (Article/Paragraph/...) that carries
-    substantive `detail` but has no outgoing edge to any non-structural
-    (semantic) node -- i.e. it's being used as a catch-all for what a
-    provision says rather than only where it's written (spec section
-    3.3/5.1). Does not flag a structural node with no `detail` at all (pure
-    navigation, e.g. an empty Article shell), only one where the substance
-    is packed onto the structural node itself instead of pulled out into its
-    own concept node."""
-    nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
-    has_semantic_outgoing = set()
-    for edge in graph.get("edges", []):
-        source_node = nodes_by_id.get(edge.get("source"))
-        target_node = nodes_by_id.get(edge.get("target"))
-        if source_node is None or target_node is None:
-            continue
-        if _is_structural_type(source_node.get("type")) and not _is_structural_type(
-            target_node.get("type")
-        ):
-            has_semantic_outgoing.add(source_node["id"])
-
-    issues = []
-    for node in graph.get("nodes", []):
-        if not _is_structural_type(node.get("type")):
-            continue
-        if node.get("detail") and node["id"] not in has_semantic_outgoing:
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "structural_catchall",
-                    "message": (
-                        f"structural node {node.get('label')!r} (type "
-                        f"{node.get('type')!r}) carries substantive detail but "
-                        "has no edge to any semantic node -- pull the actual "
-                        "content out into its own node instead"
-                    ),
-                    "node_id": node["id"],
-                }
-            )
-    return issues
-
-
-# Canonical legal edge shapes this app's own LEGAL_SCHEMA_PROMPT and the
-# design spec (section 5) name explicitly. Checked only when a domain schema
-# actually uses one of these exact edge_type names (case-insensitively) --
-# node/edge type names are otherwise entirely schema-declared, not
-# engine-fixed, so this is a targeted sanity check for the app's own
-# recommended pattern, not a general schema constraint.
-_LEGAL_EDGE_ENDPOINT_HINTS = {
-    "states": {"source_structural": True, "target_structural": False},
-    "has_condition": {"target_type_hint": "condition"},
-    "has_exception": {"target_type_hint": "exclusion"},
-    "supported_by": {"target_type_hint": "evidencespan"},
-}
-
-
-def validate_legal_edge_shapes(graph: dict) -> list[dict]:
-    """Validates direction/endpoint expectations for STATES/HAS_CONDITION/
-    HAS_EXCEPTION/SUPPORTED_BY edges when a graph uses those exact names.
-    Silently ignores every other edge_type -- this is not a general schema
-    validator (see app.schema_validation for that), just a guard against the
-    one reification pattern this app's own legal prompt asks for."""
-    nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
-    issues = []
-    for edge in graph.get("edges", []):
-        hint = _LEGAL_EDGE_ENDPOINT_HINTS.get((edge.get("type") or "").lower())
-        if hint is None:
-            continue
-        source_node = nodes_by_id.get(edge.get("source"))
-        target_node = nodes_by_id.get(edge.get("target"))
-        if source_node is None or target_node is None:
-            continue
-
-        if "source_structural" in hint and _is_structural_type(
-            source_node.get("type")
-        ) != hint["source_structural"]:
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "unexpected_endpoint_type",
-                    "message": (
-                        f"{edge['type']} edge's source {source_node.get('label')!r} "
-                        f"(type {source_node.get('type')!r}) does not match the "
-                        "expected structural/semantic role for this edge_type"
-                    ),
-                    "edge": (edge["source"], edge["target"], edge["type"]),
-                }
-            )
-        if "target_structural" in hint and _is_structural_type(
-            target_node.get("type")
-        ) != hint["target_structural"]:
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "unexpected_endpoint_type",
-                    "message": (
-                        f"{edge['type']} edge's target {target_node.get('label')!r} "
-                        f"(type {target_node.get('type')!r}) does not match the "
-                        "expected structural/semantic role for this edge_type"
-                    ),
-                    "edge": (edge["source"], edge["target"], edge["type"]),
-                }
-            )
-        target_hint = hint.get("target_type_hint")
-        if target_hint and target_hint not in (target_node.get("type") or "").lower():
-            issues.append(
-                {
-                    "severity": "warning",
-                    "code": "unexpected_endpoint_type",
-                    "message": (
-                        f"{edge['type']} edge's target {target_node.get('label')!r} "
-                        f"has type {target_node.get('type')!r}, expected something "
-                        f"matching {target_hint!r}"
-                    ),
-                    "edge": (edge["source"], edge["target"], edge["type"]),
-                }
-            )
-    return issues
-
-
-def run_graph_validation(schema: dict, graph: dict) -> list[dict]:
-    """Single entry point for graph-shape and evidence validation before
-    persistence (design spec section 7): combines app.schema_validation's
-    generic instance checks (wrong endpoints, missing required properties,
-    invalid numeric values, duplicate canonical nodes, missing legal
-    evidence) with this module's own legal-reification guards
-    (flag_structural_catchall_nodes, validate_legal_edge_shapes). Each
-    category is independent and additive -- a caller that only cares about
-    one can filter the combined list by `code`, and adding a new category
-    to either side never requires touching this function."""
-    return [
-        *validate_graph(schema, graph),
-        *flag_structural_catchall_nodes(graph),
-        *validate_legal_edge_shapes(graph),
-    ]
 
 
 def _merge_group_graphs(group_graphs: list[dict]) -> dict:
@@ -744,9 +578,75 @@ def extract_graph_from_chunks(
     return _merge_group_graphs(group_graphs)
 
 
+def _load_chunk_items(stem: str) -> list[dict] | None:
+    chunk_path = document_dir_for(stem) / "chunks.json"
+    if not chunk_path.is_file():
+        return None
+    chunked = json.loads(chunk_path.read_text())
+    return [chunked["preamble"], *chunked["chunks"]]
+
+
+def _require_document_text(stem: str) -> str:
+    doc_path = document_dir_for(stem) / "raw.md"
+    if not doc_path.is_file():
+        raise FileNotFoundError(f"document not found: {stem}")
+    return doc_path.read_text()
+
+
+def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
+    """One seam for main.py's /discover route: owns the document-existence
+    check and the chunks.json-vs-whole-document routing that route used to
+    duplicate inline (see discover_ontology_from_chunks/discover_ontology).
+    Raises FileNotFoundError if the document hasn't been parsed yet."""
+    document_text = _require_document_text(stem)
+    chunk_items = _load_chunk_items(stem)
+    if chunk_items is not None:
+        return discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
+    return discover_ontology(document_text, max_chars=max_chars)
+
+
+def schema_for_document(
+    stem: str,
+    document_type: str = "general",
+    max_chars: int | None = None,
+    discovery: dict | None = None,
+) -> dict:
+    """One seam for main.py's /schema route: same shape as
+    discover_for_document, for generate_schema/generate_schema_from_chunks.
+    Raises FileNotFoundError if the document hasn't been parsed yet."""
+    document_text = _require_document_text(stem)
+    chunk_items = _load_chunk_items(stem)
+    if chunk_items is not None:
+        return generate_schema_from_chunks(
+            chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
+        )
+    return generate_schema(document_text, document_type=document_type, max_chars=max_chars, discovery=discovery)
+
+
+def extract_for_document(stem: str) -> tuple[dict, dict, int]:
+    """One seam for main.py's /extract route: owns the document-existence
+    check, the chunks.json-vs-whole-document routing, and the
+    no-active-version fallback (create a DEFAULT_SCHEMA version) that route
+    used to do inline. Returns (schema, graph, version); the caller is still
+    responsible for persisting the graph (save_graph), since that's a
+    separate concern (embeddings) from producing it. Raises
+    FileNotFoundError if the document hasn't been parsed yet."""
+    document_text = _require_document_text(stem)
+    version = get_active_version(stem)
+    if version is None:
+        version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
+    schema = load_schema(stem, version)
+    chunk_items = _load_chunk_items(stem)
+    if chunk_items is not None:
+        graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
+    else:
+        graph = extract_graph(document_text, schema)
+    return schema, graph, version
+
+
 def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model("validate_ontology")
+    model = ontology.get_chat_model("validate_ontology")
     prompt = VALIDATION_PROMPT.format(
         schema=json.dumps(schema), graph=json.dumps(graph), document=document_text
     )
@@ -767,7 +667,7 @@ def propose_evolution(
     max_chars: int | None = None,
 ) -> dict:
     _check_document_length(document_text, max_chars)
-    model = get_chat_model()
+    model = ontology.get_chat_model()
     prompt = EVOLUTION_PROMPT.format(
         schema=json.dumps(schema),
         graph=json.dumps(graph),
@@ -782,17 +682,6 @@ def propose_evolution(
         if not {"decision", "element_type", "element"} <= change.keys():
             raise ValueError("evolution change missing decision/element_type/element")
     return proposal
-
-
-def _apply_type_change(type_list: list, element: dict, decision: str) -> None:
-    idx = next((i for i, t in enumerate(type_list) if t["name"] == element["name"]), None)
-    if decision == "DEPRECATE":
-        if idx is not None:
-            type_list[idx] = {**type_list[idx], "description": f"[DEPRECATED] {type_list[idx]['description']}"}
-    elif idx is not None:
-        type_list[idx] = element
-    else:
-        type_list.append(element)
 
 
 def apply_evolution(stem: str, changes: list) -> dict:
@@ -882,15 +771,6 @@ def apply_evolution(stem: str, changes: list) -> dict:
 # evolving across the rest of the calibration set without silently accepting
 # a decision that needed a person.
 _AUTO_APPLICABLE_DECISIONS = {"ADD", "MODIFY", "MERGE", "DEPRECATE"}
-
-
-def _apply_schema_type_changes(schema: dict, changes: list) -> dict:
-    node_types = list(schema["node_types"])
-    edge_types = list(schema["edge_types"])
-    for change in changes:
-        target = node_types if change["element_type"] == "node_type" else edge_types
-        _apply_type_change(target, change["element"], change["decision"])
-    return {"node_types": node_types, "edge_types": edge_types}
 
 
 def converge_domain_schema(
@@ -1025,7 +905,7 @@ def find_redundant_type_pairs(schema: dict, threshold: float = 0.9) -> list[dict
     node_types against node_types and edge_types against edge_types only,
     never across the two, since a node type and an edge type can't be
     merged regardless of how similar their descriptions read."""
-    model = get_embedding_model()
+    model = ontology.get_embedding_model()
     pairs = []
     for kind, types in (("node_type", schema["node_types"]), ("edge_type", schema["edge_types"])):
         if len(types) < 2:
@@ -1079,355 +959,3 @@ def measure_schema_stability(
         "type_name_sets": [sorted(s) for s in type_name_sets],
         "avg_jaccard_similarity": sum(similarities) / len(similarities) if similarities else 1.0,
     }
-
-
-# Domain schema storage/reuse -----------------------------------------------
-#
-# converge_domain_schema() above is a pure function -- it takes a schema in
-# and returns one out, with no notion of "the schema for domain X" persisting
-# between calls. This section adds that persistence, separate from the
-# per-document schema_v{N}.json layout above: a domain schema belongs to a
-# domain (e.g. "insurance_policy"), not to any one document, and is meant to
-# be reused across every document in that domain via use_domain_schema()
-# rather than regenerated per document. See
-# docs/ontology/domain_schema_convergence.md section 4.
-DOMAIN_SCHEMA_DIR = data_dir() / "domain_schemas"
-
-
-def domain_dir_for(domain: str) -> Path:
-    return DOMAIN_SCHEMA_DIR / domain
-
-
-def domain_schema_path(domain: str) -> Path:
-    return domain_dir_for(domain) / "schema.json"
-
-
-def save_domain_schema(domain: str, schema: dict) -> None:
-    d = domain_dir_for(domain)
-    d.mkdir(parents=True, exist_ok=True)
-    domain_schema_path(domain).write_text(json.dumps(schema, ensure_ascii=False))
-
-
-def load_domain_schema(domain: str) -> dict | None:
-    path = domain_schema_path(domain)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
-
-
-def list_domains() -> list[str]:
-    if not DOMAIN_SCHEMA_DIR.is_dir():
-        return []
-    return sorted(
-        p.name for p in DOMAIN_SCHEMA_DIR.iterdir() if p.is_dir() and (p / "schema.json").is_file()
-    )
-
-
-def _domain_manifest_path(domain: str) -> Path:
-    return domain_dir_for(domain) / "manifest.json"
-
-
-def _load_domain_manifest(domain: str) -> dict:
-    path = _domain_manifest_path(domain)
-    if not path.is_file():
-        return {"calibration_stems": [], "history": []}
-    return json.loads(path.read_text())
-
-
-def _save_domain_manifest(domain: str, manifest: dict) -> None:
-    d = domain_dir_for(domain)
-    d.mkdir(parents=True, exist_ok=True)
-    _domain_manifest_path(domain).write_text(json.dumps(manifest, ensure_ascii=False))
-
-
-def domain_calibration_stems(domain: str) -> list[str]:
-    return _load_domain_manifest(domain)["calibration_stems"]
-
-
-def domain_convergence_history(domain: str) -> list[dict]:
-    return _load_domain_manifest(domain)["history"]
-
-
-def _domain_pending_review_path(domain: str) -> Path:
-    return domain_dir_for(domain) / "pending_review.json"
-
-
-def load_domain_pending_review(domain: str) -> list[dict]:
-    path = _domain_pending_review_path(domain)
-    if not path.is_file():
-        return []
-    return json.loads(path.read_text())
-
-
-def _save_domain_pending_review(domain: str, items: list[dict]) -> None:
-    d = domain_dir_for(domain)
-    d.mkdir(parents=True, exist_ok=True)
-    _domain_pending_review_path(domain).write_text(json.dumps(items, ensure_ascii=False))
-
-
-def run_domain_convergence(domain: str, documents: list[dict], max_chars: int | None = None) -> dict:
-    """Runs converge_domain_schema() over `documents` and persists the
-    result under backend/data/domain_schemas/{domain}/. If `domain` already
-    has a stored schema, that schema is the seed and every document in
-    `documents` is folded in -- calling this again later with newly
-    calibrated documents keeps refining the same domain schema rather than
-    starting over. If `domain` has no stored schema yet, `documents[0]`
-    seeds it (via generate_schema) and the rest are folded in, exactly like
-    a fresh converge_domain_schema() call.
-
-    NEEDS_HUMAN_REVIEW changes accumulate in the domain's pending_review
-    store across calls (not just this one) until apply_domain_schema_changes
-    resolves them, since they were never applied to the schema."""
-    existing_schema = load_domain_schema(domain)
-    if existing_schema is not None:
-        seed_schema = existing_schema
-        remaining = documents
-    else:
-        if not documents:
-            raise ValueError(f"no domain schema stored for {domain!r} and no documents to seed one from")
-        seed_schema = generate_schema(documents[0]["text"], max_chars=max_chars)
-        remaining = documents[1:]
-
-    result = converge_domain_schema(remaining, seed_schema, max_chars=max_chars)
-    save_domain_schema(domain, result["schema"])
-
-    manifest = _load_domain_manifest(domain)
-    stems = [doc["stem"] for doc in documents]
-    manifest["calibration_stems"] = sorted(set(manifest["calibration_stems"]) | set(stems))
-    manifest["history"].append(
-        {
-            "stems": stems,
-            "changes_applied_count": sum(len(it["changes_applied"]) for it in result["iterations"]),
-            "changes_pending_review_count": len(result["pending_review"]),
-            "converged_at": datetime.now().isoformat(),
-            "schema_contract_version": SCHEMA_CONTRACT_VERSION,
-            "schema_validation_summary": summarize_validation_issues(
-                validate_schema(result["schema"])
-            ),
-        }
-    )
-    _save_domain_manifest(domain, manifest)
-
-    if result["pending_review"]:
-        pending = load_domain_pending_review(domain)
-        pending.extend(result["pending_review"])
-        _save_domain_pending_review(domain, pending)
-
-    return {**result, "domain": domain, "seed_schema": seed_schema}
-
-
-def apply_domain_schema_changes(domain: str, changes: list) -> dict:
-    """Applies a human-reviewed subset of a domain's accumulated
-    pending_review changes (same contract as apply_evolution: the caller is
-    expected to have already filtered `changes` down to what a person
-    accepted) and removes exactly those change_ids from the pending queue."""
-    schema = load_domain_schema(domain)
-    if schema is None:
-        raise ValueError(f"no domain schema stored for {domain!r}")
-    new_schema = _apply_schema_type_changes(schema, changes)
-    save_domain_schema(domain, new_schema)
-
-    applied_ids = {c.get("change_id") for c in changes}
-    remaining = [c for c in load_domain_pending_review(domain) if c.get("change_id") not in applied_ids]
-    _save_domain_pending_review(domain, remaining)
-    return {"schema": new_schema, "pending_review": remaining}
-
-
-def use_domain_schema(stem: str, domain: str, document_type: str = "general") -> int:
-    """Copies domain `domain`'s current schema onto document `stem` as a new
-    schema version -- the reuse half of this feature, mirroring how
-    main.py's existing /schema/use endpoint copies one document's schema
-    onto another, except the source is a domain schema rather than another
-    document's."""
-    schema = load_domain_schema(domain)
-    if schema is None:
-        raise ValueError(f"no domain schema stored for {domain!r}")
-    return create_schema_version(stem, schema, document_type=document_type)
-
-
-def versions_path(stem: str) -> Path:
-    return document_dir_for(stem) / "versions.json"
-
-
-def _load_versions_manifest(stem: str) -> dict:
-    path = versions_path(stem)
-    if not path.is_file():
-        return {"active_version": None, "versions": []}
-    return json.loads(path.read_text())
-
-
-def _save_versions_manifest(stem: str, manifest: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    versions_path(stem).write_text(json.dumps(manifest, ensure_ascii=False))
-
-
-def list_versions(stem: str) -> list[dict]:
-    return _load_versions_manifest(stem)["versions"]
-
-
-def get_active_version(stem: str) -> int | None:
-    return _load_versions_manifest(stem)["active_version"]
-
-
-def schema_path_for_version(stem: str, version: int) -> Path:
-    return document_dir_for(stem) / f"schema_v{version}.json"
-
-
-def save_schema(stem: str, version: int, schema: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    schema_path_for_version(stem, version).write_text(json.dumps(schema, ensure_ascii=False))
-
-
-def load_schema(stem: str, version: int) -> dict | None:
-    path = schema_path_for_version(stem, version)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
-
-
-def create_schema_version(stem: str, schema: dict, document_type: str = "general") -> int:
-    manifest = _load_versions_manifest(stem)
-    next_version = max((v["version"] for v in manifest["versions"]), default=0) + 1
-    save_schema(stem, next_version, schema)
-    manifest["versions"].append(
-        {
-            "version": next_version,
-            "document_type": document_type,
-            "created_at": datetime.now().isoformat(),
-        }
-    )
-    manifest["active_version"] = next_version
-    _save_versions_manifest(stem, manifest)
-    return next_version
-
-
-def activate_version(stem: str, version: int) -> None:
-    manifest = _load_versions_manifest(stem)
-    if not any(v["version"] == version for v in manifest["versions"]):
-        raise ValueError(f"version {version} not found for {stem!r}")
-    manifest["active_version"] = version
-    _save_versions_manifest(stem, manifest)
-
-
-def delete_version(stem: str, version: int) -> None:
-    manifest = _load_versions_manifest(stem)
-    remaining = [v for v in manifest["versions"] if v["version"] != version]
-    if len(remaining) == len(manifest["versions"]):
-        raise ValueError(f"version {version} not found for {stem!r}")
-    schema_path_for_version(stem, version).unlink(missing_ok=True)
-    graphdb.delete_version_data(stem, version)
-    manifest["versions"] = remaining
-    if manifest["active_version"] == version:
-        manifest["active_version"] = max((v["version"] for v in remaining), default=None)
-    _save_versions_manifest(stem, manifest)
-
-
-def save_document_manifest(stem: str, original_filename: str, converter: str = "anydoc") -> None:
-    """Records the per-document info the rest of this module's stem-based
-    file layout loses: the filename as originally uploaded (e.g.
-    "report.docx"), before parser.py renames it to "{stem}_raw.md", and
-    which PDF-to-Markdown converter produced that Markdown ("anydoc" or
-    "table_aware" -- see app.chunking). Schema and graph presence are
-    deliberately NOT duplicated here -- load_schema and graphdb.has_graph
-    already answer those live, so there's nothing to keep in sync."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "manifest.json").write_text(
-        json.dumps({"original_filename": original_filename, "converter": converter}, ensure_ascii=False)
-    )
-
-
-def load_document_manifest(stem: str) -> dict | None:
-    path = document_dir_for(stem) / "manifest.json"
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
-
-
-def discovery_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "discovery.json"
-
-
-def save_discovery(stem: str, report: dict) -> None:
-    """One discovery report per document, not per schema version -- discovery
-    is an exploratory, re-runnable read of the document itself, not tied to
-    any particular schema/extraction attempt, so overwriting on every run
-    (rather than versioning it like schema_v{N}.json) is intentional."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    discovery_path_for(stem).write_text(json.dumps(report, ensure_ascii=False))
-
-
-def load_discovery(stem: str) -> dict | None:
-    path = discovery_path_for(stem)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
-
-
-def summary_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "summary.json"
-
-
-def save_document_summary(stem: str, summary: str) -> None:
-    """One summary per document, overwritten on regeneration -- same
-    exploratory-artifact model as discover_ontology/save_discovery above."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    summary_path_for(stem).write_text(json.dumps({"summary": summary}, ensure_ascii=False))
-
-
-def load_document_summary(stem: str) -> str | None:
-    path = summary_path_for(stem)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())["summary"]
-
-
-def embed_nodes(nodes: list) -> list:
-    """Attaches an "embedding" vector to each node (label + detail text),
-    so graphdb.find_similar_nodes has something to rank against later when
-    a question's keywords don't literally match any node's label. Returns
-    new dicts rather than mutating the input."""
-    if not nodes:
-        return []
-    model = get_embedding_model()
-    texts = [node_embedding_text(n) for n in nodes]
-    vectors = embed_with_telemetry("embed-nodes", model, texts)
-    return [{**node, "embedding": vector} for node, vector in zip(nodes, vectors)]
-
-
-def save_graph(stem: str, graph: dict, version: int = 1) -> None:
-    graphdb.write_graph(stem, graph["nodes"], graph["edges"], version=version)
-
-
-def embed_graph(stem: str, version: int = 1) -> int:
-    """Embeds this document version's already-extracted nodes in a separate
-    pass from extraction, so a large document's LLM extraction call doesn't
-    also pay for the embedding call before anything is visible. Reads the
-    nodes graphdb already has (written by save_graph with no embedding),
-    computes vectors, and updates them in place via graphdb.update_node_embeddings
-    -- rerunning this is safe and simply recomputes/overwrites every node's
-    embedding."""
-    graph = graphdb.load_graph(stem, version=version)
-    if graph is None or not graph["nodes"]:
-        return 0
-    nodes = embed_nodes(graph["nodes"])
-    graphdb.update_node_embeddings(stem, nodes, version=version)
-    return len(nodes)
-
-
-def list_schema_stems() -> list[str]:
-    if not DOCUMENTS_DIR.is_dir():
-        return []
-    return [
-        d.name
-        for d in DOCUMENTS_DIR.iterdir()
-        if d.is_dir() and (d / "versions.json").is_file()
-    ]
-
-
-def load_graph(stem: str, version: int = 1) -> dict | None:
-    return graphdb.load_graph(stem, version=version)

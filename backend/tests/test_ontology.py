@@ -78,6 +78,69 @@ def seed_schema_version(stem, schema, version=1, document_type="general"):
     )
 
 
+def test_discover_for_document_raises_file_not_found_when_document_missing():
+    from app.ontology import discover_for_document
+
+    with pytest.raises(FileNotFoundError):
+        discover_for_document("missing_raw")
+
+
+def test_schema_for_document_raises_file_not_found_when_document_missing():
+    from app.ontology import schema_for_document
+
+    with pytest.raises(FileNotFoundError):
+        schema_for_document("missing_raw")
+
+
+def test_extract_for_document_raises_file_not_found_when_document_missing():
+    from app.ontology import extract_for_document
+
+    with pytest.raises(FileNotFoundError):
+        extract_for_document("missing_raw")
+
+
+def test_extract_for_document_creates_default_schema_when_none_saved(monkeypatch):
+    from app.ontology import extract_for_document
+
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    schema, result_graph, version = extract_for_document("doc_raw")
+
+    assert schema == DEFAULT_SCHEMA
+    assert result_graph == graph
+    assert version == 1
+    saved_schema = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
+    assert saved_schema == DEFAULT_SCHEMA
+
+
+def test_schema_for_document_uses_chunks_when_present(monkeypatch):
+    from app.ontology import schema_for_document
+
+    write_document()
+    stem = "doc_raw"
+    (document_dir_for(stem) / "chunks.json").write_text(
+        json.dumps(
+            {
+                "source": stem,
+                "preamble": {"line_start": 1, "line_end": 1, "text": ""},
+                "chunks": [
+                    {"id": "0::제1조", "section_index": 0, "section_label": "주계약", "article_no": "1", "sub_no": None, "title": "목적", "path": "주계약 > 제1조(목적)", "line_start": 1, "line_end": 2, "text": "Alice works at Acme."},
+                ],
+            }
+        )
+    )
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result = schema_for_document(stem)
+
+    assert result["node_types"] == schema["node_types"]
+
+
 def test_generate_schema_returns_400_on_invalid_json(monkeypatch):
     write_document()
     monkeypatch.setattr(

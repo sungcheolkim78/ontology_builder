@@ -22,24 +22,20 @@ from app.chat import (
 from app.graphrag import answer_question, search_graph
 from app.schema_validation import normalize_schema
 from app.ontology import (
-    DEFAULT_SCHEMA,
     activate_version,
     apply_domain_schema_changes,
     apply_evolution,
     converge_domain_schema,
     create_schema_version,
     delete_version,
-    discover_ontology,
-    discover_ontology_from_chunks,
+    discover_for_document,
     domain_calibration_stems,
     domain_convergence_history,
     embed_graph,
     evaluate_domain_schema,
-    extract_graph,
-    extract_graph_from_chunks,
+    extract_for_document,
     find_redundant_type_pairs,
     generate_schema,
-    generate_schema_from_chunks,
     get_active_version,
     list_domains,
     list_schema_stems,
@@ -58,6 +54,7 @@ from app.ontology import (
     save_document_manifest,
     save_document_summary,
     save_graph,
+    schema_for_document,
     summarize_document,
     use_domain_schema,
     validate_ontology,
@@ -456,12 +453,8 @@ class DiscoverRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/discover")
 def discover(filename: str, request: DiscoverRequest | None = None):
-    doc_path = _document_path(filename)
-    if not doc_path.is_file():
-        raise HTTPException(status_code=404, detail="document not found")
     max_chars = request.max_chars if request else None
     stem = _stem(filename)
-    chunk_path = _chunk_path(stem)
     try:
         with trace(
             "discover-ontology",
@@ -469,22 +462,15 @@ def discover(filename: str, request: DiscoverRequest | None = None):
             metadata={"filename": filename},
             input=f"discover ontology for {filename}",
         ) as span:
-            if chunk_path.is_file():
-                # Chunked documents skip the single-call, whole-raw.md path
-                # entirely (and its MAX_DOCUMENT_CHARS ceiling) in favor of the
-                # group-then-consolidate approach -- see
-                # discover_ontology_from_chunks in app.ontology.
-                chunked = json.loads(chunk_path.read_text())
-                chunk_items = [chunked["preamble"], *chunked["chunks"]]
-                report = discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
-            else:
-                report = discover_ontology(doc_path.read_text(), max_chars=max_chars)
+            report = discover_for_document(stem, max_chars=max_chars)
             span.update(
                 output=(
                     f"{len(report.get('classes', []))} classes, "
                     f"{len(report.get('relationships', []))} relationships discovered"
                 )
             )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="document not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     save_discovery(stem, report)
@@ -507,14 +493,10 @@ class CreateSchemaRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/schema")
 def create_schema(filename: str, request: CreateSchemaRequest | None = None):
-    doc_path = _document_path(filename)
-    if not doc_path.is_file():
-        raise HTTPException(status_code=404, detail="document not found")
     document_type = request.document_type if request else "general"
     max_chars = request.max_chars if request else None
     stem = _stem(filename)
     discovery = load_discovery(stem) if (request and request.use_discovery) else None
-    chunk_path = _chunk_path(stem)
     try:
         with trace(
             "generate-schema",
@@ -522,24 +504,17 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
             metadata={"filename": filename},
             input=f"generate a {document_type} schema for {filename}",
         ) as span:
-            if chunk_path.is_file():
-                # Same rationale as /discover above -- see
-                # generate_schema_from_chunks in app.ontology.
-                chunked = json.loads(chunk_path.read_text())
-                chunk_items = [chunked["preamble"], *chunked["chunks"]]
-                schema = generate_schema_from_chunks(
-                    chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
-                )
-            else:
-                schema = generate_schema(
-                    doc_path.read_text(), document_type=document_type, max_chars=max_chars, discovery=discovery
-                )
+            schema = schema_for_document(
+                stem, document_type=document_type, max_chars=max_chars, discovery=discovery
+            )
             span.update(
                 output=(
                     f"{len(schema.get('node_types', []))} node types, "
                     f"{len(schema.get('edge_types', []))} edge types generated"
                 )
             )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="document not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     version = create_schema_version(stem, schema, document_type=document_type)
@@ -584,15 +559,7 @@ def get_schema(filename: str):
 
 @app.post("/api/ontology/{filename}/extract")
 def create_extraction(filename: str):
-    doc_path = _document_path(filename)
-    if not doc_path.is_file():
-        raise HTTPException(status_code=404, detail="document not found")
     stem = _stem(filename)
-    version = get_active_version(stem)
-    if version is None:
-        version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
-    schema = load_schema(stem, version)
-    chunk_path = _chunk_path(stem)
     try:
         with trace(
             "extract-graph",
@@ -600,14 +567,7 @@ def create_extraction(filename: str):
             metadata={"filename": filename},
             input=f"extract graph for {filename}",
         ) as span:
-            if chunk_path.is_file():
-                # Same rationale as /discover and /schema above -- see
-                # extract_graph_from_chunks in app.ontology.
-                chunked = json.loads(chunk_path.read_text())
-                chunk_items = [chunked["preamble"], *chunked["chunks"]]
-                graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
-            else:
-                graph = extract_graph(doc_path.read_text(), schema)
+            schema, graph, version = extract_for_document(stem)
             # Inside the same trace as the extraction calls above -- save_graph()
             # calls embed_nodes(), an embedding call that's still part of
             # serving this one /extract request.
@@ -615,6 +575,8 @@ def create_extraction(filename: str):
             span.update(
                 output=f"{len(graph.get('nodes', []))} nodes, {len(graph.get('edges', []))} edges extracted"
             )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="document not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return graph

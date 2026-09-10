@@ -42,6 +42,19 @@ def test_validate_identifier_rejects_unsafe_names():
             graphdb._validate_identifier(bad)
 
 
+def test_safe_query_returns_default_when_table_kind_missing():
+    conn = graphdb._get_connection()
+    result = graphdb._safe_query(conn, "NODE", lambda: "should not run", default="default")
+    assert result == "default"
+
+
+def test_safe_query_runs_query_fn_when_table_kind_present():
+    graphdb.write_graph("doc_a", NODES, EDGES)
+    conn = graphdb._get_connection()
+    result = graphdb._safe_query(conn, "NODE", lambda: "ran", default="default")
+    assert result == "ran"
+
+
 NODES = [
     {"id": "n1", "label": "Ada Lovelace", "type": "Person", "detail": "Mathematician"},
     {"id": "n2", "label": "Analytical Engine", "type": "Concept"},

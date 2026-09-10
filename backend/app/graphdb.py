@@ -151,6 +151,17 @@ def _has_table_of_kind(conn, kind: str) -> bool:
     return any(k == kind for k in _existing_tables(conn).values())
 
 
+def _safe_query(conn, kind: str, query_fn, default):
+    """Runs query_fn() only if a table of `kind` ("NODE"/"REL") exists;
+    otherwise returns `default` without touching the engine at all. Every
+    read below this point guards its query through here rather than calling
+    _has_table_of_kind itself, so the guard can't be forgotten at a new call
+    site -- see _has_table_of_kind for why the guard exists."""
+    if not _has_table_of_kind(conn, kind):
+        return default
+    return query_fn()
+
+
 def _existing_pairs(conn, rel_type: str) -> set:
     rows = conn.execute(f'CALL show_connection("{rel_type}") RETURN *').rows_as_dict()
     return {(row["source table name"], row["destination table name"]) for row in rows}
@@ -554,31 +565,35 @@ def load_graph(stem: str, version: int = 1) -> dict | None:
     # No NODE table exists at all when this is the very first write_graph
     # call against a fresh database and that call had zero nodes (or every
     # document written so far had zero nodes) -- see _has_table_of_kind.
-    if _has_table_of_kind(conn, "NODE"):
-        node_rows = conn.execute(
+    node_rows = _safe_query(
+        conn,
+        "NODE",
+        lambda: conn.execute(
             "MATCH (n) WHERE n.source_document = $stem AND n.version = $version "
             "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
             f"n.detail AS detail, {_envelope_return_fields('n')} ORDER BY n.id",
             {"stem": stem, "version": version},
-        ).rows_as_dict()
-        nodes = [_node_from_row(row) for row in node_rows]
-    else:
-        nodes = []
+        ).rows_as_dict(),
+        default=[],
+    )
+    nodes = [_node_from_row(row) for row in node_rows]
 
     # No REL table exists at all when this is the very first write_graph
     # call against a fresh database (or every document written so far had
     # zero edges) -- see _has_table_of_kind.
-    if _has_table_of_kind(conn, "REL"):
-        edge_rows = conn.execute(
+    edge_rows = _safe_query(
+        conn,
+        "REL",
+        lambda: conn.execute(
             "MATCH (a)-[r]->(b) WHERE r.source_document = $stem AND r.version = $version "
             "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
             f"b.original_id AS target, {_envelope_return_fields('r')} "
             "ORDER BY r.type, a.id, b.id",
             {"stem": stem, "version": version},
-        ).rows_as_dict()
-        edges = [_edge_from_row(row) for row in edge_rows]
-    else:
-        edges = []
+        ).rows_as_dict(),
+        default=[],
+    )
+    edges = [_edge_from_row(row) for row in edge_rows]
 
     return {"nodes": nodes, "edges": edges}
 
@@ -599,18 +614,23 @@ def find_relevant_nodes(stem: str, type_keywords: dict, allowed_types: list, ver
         return []
     conn = _get_connection()
     # No NODE table exists at all -- see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "NODE"):
-        return []
-    result = conn.execute(
-        "UNWIND $pairs AS tk "
-        "MATCH (n) WHERE label(n) = tk.type AND n.source_document = $stem "
-        "AND n.version = $version "
-        "AND ANY(kw IN tk.keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
-        "OR toLower(kw) CONTAINS toLower(n.label)) "
-        "RETURN DISTINCT n.original_id AS id",
-        {"pairs": pairs, "stem": stem, "version": version},
+    return _safe_query(
+        conn,
+        "NODE",
+        lambda: [
+            row["id"]
+            for row in conn.execute(
+                "UNWIND $pairs AS tk "
+                "MATCH (n) WHERE label(n) = tk.type AND n.source_document = $stem "
+                "AND n.version = $version "
+                "AND ANY(kw IN tk.keywords WHERE toLower(n.label) CONTAINS toLower(kw) "
+                "OR toLower(kw) CONTAINS toLower(n.label)) "
+                "RETURN DISTINCT n.original_id AS id",
+                {"pairs": pairs, "stem": stem, "version": version},
+            ).rows_as_dict()
+        ],
+        default=[],
     )
-    return [row["id"] for row in result.rows_as_dict()]
 
 
 @_synchronized
@@ -626,23 +646,28 @@ def find_similar_nodes(
     excluded rather than sorted arbitrarily."""
     _validate_identifier(node_type)
     conn = _get_connection()
-    # No NODE table exists at all -- see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "NODE"):
-        return []
+    # No table under this exact type name -- a different, type-specific
+    # question from _has_table_of_kind's kind-wide check just below, so kept
+    # as its own guard rather than folded into _safe_query.
     if node_type not in _existing_tables(conn):
         return []
-    result = conn.execute(
-        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
-        f"AND n.embedding IS NOT NULL "
-        f"RETURN n.original_id AS id, array_cosine_similarity(n.embedding, $query_embedding) AS score "
-        f"ORDER BY score DESC LIMIT $top_k",
-        {"stem": stem, "version": version, "query_embedding": query_embedding, "top_k": top_k},
+    # No NODE table exists at all -- see _has_table_of_kind.
+    return _safe_query(
+        conn,
+        "NODE",
+        lambda: [
+            row["id"]
+            for row in conn.execute(
+                f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
+                f"AND n.embedding IS NOT NULL "
+                f"RETURN n.original_id AS id, array_cosine_similarity(n.embedding, $query_embedding) AS score "
+                f"ORDER BY score DESC LIMIT $top_k",
+                {"stem": stem, "version": version, "query_embedding": query_embedding, "top_k": top_k},
+            ).rows_as_dict()
+            if row["score"] is not None and row["score"] >= min_score
+        ],
+        default=[],
     )
-    return [
-        row["id"]
-        for row in result.rows_as_dict()
-        if row["score"] is not None and row["score"] >= min_score
-    ]
 
 
 # Cypher operator per supported comparison -- deliberately not
@@ -674,9 +699,10 @@ def find_nodes_by_property(
     if operator not in _PROPERTY_OPERATORS:
         raise ValueError(f"unsupported property operator: {operator!r}")
     conn = _get_connection()
-    # No NODE table exists at all, or none under this exact type name --
-    # see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "NODE") or node_type not in _existing_tables(conn):
+    # No table under this exact type name -- a different, type-specific
+    # question from _has_table_of_kind's kind-wide check just below, so kept
+    # as its own guard rather than folded into _safe_query.
+    if node_type not in _existing_tables(conn):
         return []
 
     cypher_op = _PROPERTY_OPERATORS[operator]
@@ -687,14 +713,22 @@ def find_nodes_by_property(
         value_expr = "map_extract(n.properties, $prop)[1]"
         bind_value = str(value)
 
-    result = conn.execute(
-        f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
-        f"AND size(map_extract(n.properties, $prop)) > 0 "
-        f"AND {value_expr} {cypher_op} $value "
-        f"RETURN n.original_id AS id",
-        {"stem": stem, "version": version, "prop": property_name, "value": bind_value},
+    # No NODE table exists at all -- see _has_table_of_kind.
+    return _safe_query(
+        conn,
+        "NODE",
+        lambda: [
+            row["id"]
+            for row in conn.execute(
+                f"MATCH (n:{node_type}) WHERE n.source_document = $stem AND n.version = $version "
+                f"AND size(map_extract(n.properties, $prop)) > 0 "
+                f"AND {value_expr} {cypher_op} $value "
+                f"RETURN n.original_id AS id",
+                {"stem": stem, "version": version, "prop": property_name, "value": bind_value},
+            ).rows_as_dict()
+        ],
+        default=[],
     )
-    return [row["id"] for row in result.rows_as_dict()]
 
 
 @_synchronized
@@ -703,14 +737,19 @@ def all_nodes_of_types(stem: str, allowed_types: list, version: int = 1) -> list
         return []
     conn = _get_connection()
     # No NODE table exists at all -- see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "NODE"):
-        return []
-    result = conn.execute(
-        "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
-        "AND n.version = $version RETURN n.original_id AS id",
-        {"types": allowed_types, "stem": stem, "version": version},
+    return _safe_query(
+        conn,
+        "NODE",
+        lambda: [
+            row["id"]
+            for row in conn.execute(
+                "MATCH (n) WHERE label(n) IN $types AND n.source_document = $stem "
+                "AND n.version = $version RETURN n.original_id AS id",
+                {"types": allowed_types, "stem": stem, "version": version},
+            ).rows_as_dict()
+        ],
+        default=[],
     )
-    return [row["id"] for row in result.rows_as_dict()]
 
 
 @_synchronized
@@ -719,16 +758,21 @@ def find_matching_edges(stem: str, allowed_types: list, matched_node_ids: set, v
         return []
     conn = _get_connection()
     # No REL table exists at all -- see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "REL"):
-        return []
-    result = conn.execute(
-        "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
-        "AND r.version = $version AND (a.original_id IN $ids OR b.original_id IN $ids) "
-        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        f"b.original_id AS target, {_envelope_return_fields('r')}",
-        {"types": allowed_types, "stem": stem, "version": version, "ids": list(matched_node_ids)},
+    return _safe_query(
+        conn,
+        "REL",
+        lambda: [
+            _edge_from_row(row)
+            for row in conn.execute(
+                "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
+                "AND r.version = $version AND (a.original_id IN $ids OR b.original_id IN $ids) "
+                "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+                f"b.original_id AS target, {_envelope_return_fields('r')}",
+                {"types": allowed_types, "stem": stem, "version": version, "ids": list(matched_node_ids)},
+            ).rows_as_dict()
+        ],
+        default=[],
     )
-    return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
 @_synchronized
@@ -737,16 +781,21 @@ def all_edges_of_types(stem: str, allowed_types: list, version: int = 1) -> list
         return []
     conn = _get_connection()
     # No REL table exists at all -- see _has_table_of_kind.
-    if not _has_table_of_kind(conn, "REL"):
-        return []
-    result = conn.execute(
-        "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
-        "AND r.version = $version "
-        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        f"b.original_id AS target, {_envelope_return_fields('r')}",
-        {"types": allowed_types, "stem": stem, "version": version},
+    return _safe_query(
+        conn,
+        "REL",
+        lambda: [
+            _edge_from_row(row)
+            for row in conn.execute(
+                "MATCH (a)-[r]->(b) WHERE r.type IN $types AND r.source_document = $stem "
+                "AND r.version = $version "
+                "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+                f"b.original_id AS target, {_envelope_return_fields('r')}",
+                {"types": allowed_types, "stem": stem, "version": version},
+            ).rows_as_dict()
+        ],
+        default=[],
     )
-    return [_edge_from_row(row) for row in result.rows_as_dict()]
 
 
 @_synchronized
@@ -756,72 +805,76 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
     conn = _get_connection()
     hops = max(min(hops, MAX_EXPAND_HOPS), 0)
 
+    def _expand():
+        # No REL table exists anywhere in the database yet (e.g. this
+        # document's own write_graph call had zero edges, and no other
+        # document has ever created a REL table either). This breaks both
+        # queries below, in two different ways -- confirmed experimentally
+        # against a real database, not assumed from the load_graph
+        # precedent:
+        #   1. The edges-among-expanded-set query (`MATCH (a)-[r]->(b) ...`)
+        #      is the same untyped relationship pattern as load_graph/
+        #      find_matching_edges/all_edges_of_types, and raises the same
+        #      `RuntimeError: Binder exception: Cannot find property
+        #      source_document for r.`
+        #   2. The variable-length node-expansion query
+        #      (`MATCH (n)-[*0..{hops}]-(m) ...`) does NOT raise -- it runs
+        #      and silently returns zero rows, even at hops=0 where m should
+        #      always include n itself (verified: the identical query
+        #      against a database that *does* have a REL table correctly
+        #      returns the seed node at hops=0; against a database with no
+        #      REL table at all, it returns nothing, seed included). Left
+        #      unguarded, expand_hops would silently drop the seed nodes for
+        #      any document with no edges anywhere in the whole database --
+        #      worse than an exception, since nothing would signal the miss.
+        # Guard both the same way: fetch seed nodes directly (no
+        # relationship pattern at all) and skip the edge query below.
+        has_rel_table = _has_table_of_kind(conn, "REL")
+
+        # seed_ids/expanded_ids are bare original_id values, not globally
+        # unique on their own (unlike the old prefixed-id scheme) -- every
+        # match below also filters by source_document/version so a seed
+        # can't accidentally resolve to a different document's or version's
+        # node sharing the same bare id in the same shared type table.
+        if has_rel_table:
+            node_rows = conn.execute(
+                f"MATCH (n)-[*0..{hops}]-(m) WHERE n.original_id IN $seeds "
+                f"AND n.source_document = $stem AND n.version = $version "
+                f"AND m.source_document = $stem AND m.version = $version "
+                f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
+                f"m.label AS label, m.detail AS detail, {_envelope_return_fields('m')}",
+                {"seeds": list(seed_ids), "stem": stem, "version": version},
+            )
+        else:
+            node_rows = conn.execute(
+                "MATCH (n) WHERE n.original_id IN $seeds AND n.source_document = $stem "
+                "AND n.version = $version "
+                "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
+                f"n.detail AS detail, {_envelope_return_fields('n')}",
+                {"seeds": list(seed_ids), "stem": stem, "version": version},
+            )
+        nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
+        expanded_ids = [n["id"] for n in nodes]
+
+        edges = _safe_query(
+            conn,
+            "REL",
+            lambda: [
+                _edge_from_row(row)
+                for row in conn.execute(
+                    "MATCH (a)-[r]->(b) WHERE a.original_id IN $ids AND b.original_id IN $ids "
+                    "AND r.source_document = $stem AND r.version = $version "
+                    "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
+                    f"b.original_id AS target, {_envelope_return_fields('r')}",
+                    {"ids": expanded_ids, "stem": stem, "version": version},
+                ).rows_as_dict()
+            ],
+            default=[],
+        )
+        return nodes, edges
+
     # No NODE table exists at all -- see _has_table_of_kind. Nothing can
     # possibly match (there are no nodes in the whole database), and both
-    # queries below assume at least one NODE table exists, so short-circuit
+    # queries above assume at least one NODE table exists, so short-circuit
     # before running either.
-    if not _has_table_of_kind(conn, "NODE"):
-        return [], []
-
-    # No REL table exists anywhere in the database yet (e.g. this document's
-    # own write_graph call had zero edges, and no other document has ever
-    # created a REL table either). This breaks both queries below, in two
-    # different ways -- confirmed experimentally against a real database,
-    # not assumed from the load_graph precedent:
-    #   1. The edges-among-expanded-set query (`MATCH (a)-[r]->(b) ...`) is
-    #      the same untyped relationship pattern as load_graph/
-    #      find_matching_edges/all_edges_of_types, and raises the same
-    #      `RuntimeError: Binder exception: Cannot find property
-    #      source_document for r.`
-    #   2. The variable-length node-expansion query
-    #      (`MATCH (n)-[*0..{hops}]-(m) ...`) does NOT raise -- it runs and
-    #      silently returns zero rows, even at hops=0 where m should always
-    #      include n itself (verified: the identical query against a
-    #      database that *does* have a REL table correctly returns the seed
-    #      node at hops=0; against a database with no REL table at all, it
-    #      returns nothing, seed included). Left unguarded, expand_hops
-    #      would silently drop the seed nodes for any document with no
-    #      edges anywhere in the whole database -- worse than an exception,
-    #      since nothing would signal the miss.
-    # Guard both the same way: fetch seed nodes directly (no relationship
-    # pattern at all) and skip the edge query, returning no edges.
-    has_rel_table = _has_table_of_kind(conn, "REL")
-
-    # seed_ids/expanded_ids are bare original_id values, not globally unique
-    # on their own (unlike the old prefixed-id scheme) -- every match below
-    # also filters by source_document/version so a seed can't accidentally
-    # resolve to a different document's or version's node sharing the same
-    # bare id in the same shared type table.
-    if has_rel_table:
-        node_rows = conn.execute(
-            f"MATCH (n)-[*0..{hops}]-(m) WHERE n.original_id IN $seeds "
-            f"AND n.source_document = $stem AND n.version = $version "
-            f"AND m.source_document = $stem AND m.version = $version "
-            f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
-            f"m.label AS label, m.detail AS detail, {_envelope_return_fields('m')}",
-            {"seeds": list(seed_ids), "stem": stem, "version": version},
-        )
-    else:
-        node_rows = conn.execute(
-            "MATCH (n) WHERE n.original_id IN $seeds AND n.source_document = $stem "
-            "AND n.version = $version "
-            "RETURN label(n) AS type, n.original_id AS original_id, n.label AS label, "
-            f"n.detail AS detail, {_envelope_return_fields('n')}",
-            {"seeds": list(seed_ids), "stem": stem, "version": version},
-        )
-    nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
-
-    if not has_rel_table:
-        return nodes, []
-
-    expanded_ids = [n["id"] for n in nodes]
-    edge_rows = conn.execute(
-        "MATCH (a)-[r]->(b) WHERE a.original_id IN $ids AND b.original_id IN $ids "
-        "AND r.source_document = $stem AND r.version = $version "
-        "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
-        f"b.original_id AS target, {_envelope_return_fields('r')}",
-        {"ids": expanded_ids, "stem": stem, "version": version},
-    )
-    edges = [_edge_from_row(row) for row in edge_rows.rows_as_dict()]
-
-    return nodes, edges
+    return _safe_query(conn, "NODE", _expand, default=([], []))
