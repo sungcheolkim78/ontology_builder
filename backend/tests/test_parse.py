@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.preprocess.parser import (
     DATA_DIR,
+    convert_general_pdf_to_markdown,
     convert_pdf_to_markdown_file,
+    general_page_to_markdown,
     markdown_text,
     normalize_table,
     table_to_markdown,
@@ -208,7 +210,12 @@ def test_markdown_text_removes_standalone_page_number():
 
 def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatch):
     monkeypatch.setattr(
-        "app.preprocess.parser.convert_pdf_to_markdown", lambda data, title: f"# {title}\n\nbody"
+        "app.preprocess.parser.convert_insurance_policy_to_markdown",
+        lambda data, title: f"# {title}\n\nbody",
+    )
+    monkeypatch.setattr(
+        "app.preprocess.parser.convert_general_pdf_to_markdown",
+        lambda data, title: f"# {title}\n\ngeneral body",
     )
 
     result = convert_pdf_to_markdown_file("report.pdf", b"fake pdf bytes")
@@ -218,3 +225,62 @@ def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatc
         "path": "data/documents/report_raw/raw.md",
     }
     assert (document_dir_for("report_raw") / "raw.md").read_text() == "# report\n\nbody"
+
+
+def test_convert_pdf_to_markdown_file_also_saves_general_conversion_as_raw0(monkeypatch):
+    monkeypatch.setattr(
+        "app.preprocess.parser.convert_insurance_policy_to_markdown",
+        lambda data, title: f"# {title}\n\nbody",
+    )
+    monkeypatch.setattr(
+        "app.preprocess.parser.convert_general_pdf_to_markdown",
+        lambda data, title: f"# {title}\n\ngeneral body",
+    )
+
+    convert_pdf_to_markdown_file("report.pdf", b"fake pdf bytes")
+
+    assert (
+        document_dir_for("report_raw") / "raw0.md"
+    ).read_text() == "# report\n\ngeneral body"
+
+
+class FakePage:
+    def __init__(self, text):
+        self._text = text
+
+    def extract_text(self, **kwargs):
+        return self._text
+
+
+class FakePdf:
+    def __init__(self, pages):
+        self.pages = pages
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_general_page_to_markdown_does_not_apply_heading_or_bullet_structure():
+    page = FakePage("제1조(목적)\n● 보험금을 지급합니다.  ")
+    result = general_page_to_markdown(page)
+    assert result == "제1조(목적)\n● 보험금을 지급합니다."
+    assert "###" not in result
+
+
+def test_general_page_to_markdown_keeps_standalone_page_numbers():
+    page = FakePage("본문\n- 12 -\n다음")
+    assert general_page_to_markdown(page) == "본문\n- 12 -\n다음"
+
+
+def test_convert_general_pdf_to_markdown_joins_pages_with_divider(monkeypatch):
+    monkeypatch.setattr(
+        "app.preprocess.parser.pdfplumber.open",
+        lambda _: FakePdf([FakePage("첫 페이지"), FakePage("둘째 페이지")]),
+    )
+
+    result = convert_general_pdf_to_markdown(b"fake pdf bytes", "제목")
+
+    assert result == "# 제목\n\n첫 페이지\n\n---\n\n둘째 페이지\n"

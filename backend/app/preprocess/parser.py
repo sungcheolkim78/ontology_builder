@@ -3,14 +3,20 @@ chunked-json pipeline (see app.preprocess.chunking for the second stage).
 
 Two independent conversion paths write the same `documents/{stem}_raw/raw.md`
 output shape: `parse_to_markdown_file` (generic, via the `anydoc` library) and
-`convert_pdf_to_markdown_file` (PDF-only, table-aware). The latter's
-page/table heuristics are ported from
+`convert_pdf_to_markdown_file` (PDF-only). The latter calls both PDF
+converters on the same bytes: `convert_insurance_policy_to_markdown` --
+table/heading heuristics ported from
 scripts/data_prep/convert_pdfs_to_markdown.py, built and tuned against
 Korean insurance-policy PDFs (see that directory's README for the
 heading/section heuristics and their known limitations); the per-page logic
 there is preserved as-is, only the file-path-based I/O is replaced with
 bytes/DATA_DIR-based I/O so it fits this app's upload flow and `data_dir()`
-override (see app.paths).
+override (see app.paths) -- saved as the document's actual `raw.md`; and
+`convert_general_pdf_to_markdown` -- plain per-page text, no table detection
+or heading/bullet restructuring, for a PDF with no such structure to
+exploit -- saved alongside as `raw0.md`, a reference copy for comparing the
+two conversions rather than a document of its own (no `document_dir_for`
+entry, not picked up by `/api/documents`, which only looks for `raw.md`).
 """
 
 from __future__ import annotations
@@ -23,7 +29,6 @@ from typing import Any
 
 import anydoc
 import pdfplumber
-
 from app.paths import data_dir, document_dir_for
 
 DATA_DIR = data_dir()
@@ -58,7 +63,7 @@ def parse_to_markdown_file(filename: str, data: bytes) -> dict:
     return {"filename": f"{out_stem}.md", "path": f"data/documents/{out_stem}/raw.md"}
 
 
-# --- PDF -> Markdown (table-aware) -----------------------------------------
+# --- PDF -> Markdown --------------------------------------------------------
 
 HEADING_PATTERNS = (
     (re.compile(r"^제\s*\d+\s*[장편]\b"), "##"),
@@ -67,14 +72,6 @@ HEADING_PATTERNS = (
 )
 BULLET_PATTERN = re.compile(r"^[●■◆▶▣□◦ㆍ∙]\s*")
 PAGE_NUMBER_PATTERN = re.compile(r"^[-–—]?\s*\d+\s*[-–—]?$|^\d+\s*/\s*\d+$")
-
-
-def clean_text(text: str | None) -> str:
-    if not text:
-        return ""
-    text = text.replace(" ", " ").replace("\x00", "")
-    text = re.sub(r"[ \t]+", " ", text)
-    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 
 
 def markdown_text(text: str | None) -> str:
@@ -90,7 +87,8 @@ def markdown_text(text: str | None) -> str:
                 output.append("")
             continue
         heading = next(
-            (prefix for pattern, prefix in HEADING_PATTERNS if pattern.match(line)), None
+            (prefix for pattern, prefix in HEADING_PATTERNS if pattern.match(line)),
+            None,
         )
         if heading:
             output.extend([f"{heading} {line}", ""])
@@ -101,6 +99,14 @@ def markdown_text(text: str | None) -> str:
     while output and output[-1] == "":
         output.pop()
     return "\n".join(output)
+
+
+def clean_text(text: str | None) -> str:
+    if not text:
+        return ""
+    text = text.replace("\u00a0", " ").replace("\x00", "")
+    text = re.sub(r"[ \t]+", " ", text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 
 
 def clean_cell(value: str | None) -> str:
@@ -114,7 +120,9 @@ def normalize_table(rows: list[list[str | None]]) -> list[list[str]]:
     if not rows:
         return []
     width = max(len(row) for row in rows)
-    normalized = [[clean_cell(cell) for cell in row] + [""] * (width - len(row)) for row in rows]
+    normalized = [
+        [clean_cell(cell) for cell in row] + [""] * (width - len(row)) for row in rows
+    ]
 
     # pdfplumber sometimes emits completely empty spacer columns around borders.
     keep_columns = [
@@ -188,8 +196,13 @@ def page_to_markdown(page, page_number: int) -> tuple[str, int]:
     return "\n\n".join(blocks), table_count
 
 
-def convert_pdf_to_markdown(data: bytes, title: str) -> str:
-    """Render PDF bytes to table-aware Markdown, headed by `title`."""
+def convert_insurance_policy_to_markdown(data: bytes, title: str) -> str:
+    """Render PDF bytes to table-aware Markdown, headed by `title`.
+
+    Specialized for Korean insurance-policy PDFs -- see this module's
+    docstring and page_to_markdown/markdown_text for the table-detection
+    and 제N조-heading heuristics this relies on. For a PDF with no such
+    structure, use convert_general_pdf_to_markdown instead."""
     pages: list[str] = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         for index, page in enumerate(pdf.pages, 1):
@@ -199,17 +212,44 @@ def convert_pdf_to_markdown(data: bytes, title: str) -> str:
     return f"# {title}\n\n" + "\n\n---\n\n".join(pages) + "\n"
 
 
+def general_page_to_markdown(page) -> str:
+    """Plain per-page text extraction for a PDF with no exploitable
+    structure -- unlike page_to_markdown, this does no table detection and
+    applies no heading/bullet conventions, since those are specific to
+    Korean insurance policies (see markdown_text)."""
+    return clean_text(page.extract_text(x_tolerance=2, y_tolerance=3))
+
+
+def convert_general_pdf_to_markdown(data: bytes, title: str) -> str:
+    """Render PDF bytes to plain Markdown, headed by `title`, for a PDF with
+    no tables or reliable heading structure to exploit -- just cleaned
+    per-page text. Use convert_insurance_policy_to_markdown instead for a
+    Korean insurance-policy PDF."""
+    pages: list[str] = []
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            pages.append(general_page_to_markdown(page))
+
+    return f"# {title}\n\n" + "\n\n---\n\n".join(pages) + "\n"
+
+
 def convert_pdf_to_markdown_file(filename: str, data: bytes) -> dict:
-    """Convert an uploaded PDF to Markdown and save it as
+    """Convert an uploaded PDF to Markdown via
+    convert_insurance_policy_to_markdown and save it as
     documents/{stem}_raw/raw.md, matching the output layout of
-    `parse_to_markdown_file`."""
+    `parse_to_markdown_file`. Also runs convert_general_pdf_to_markdown on
+    the same bytes and saves that alongside as raw0.md -- a reference copy
+    for comparing the two conversions, not a document of its own (the
+    returned/registered document is still just raw.md)."""
     safe_name = os.path.basename(filename)
     stem = Path(safe_name).stem
-    markdown = convert_pdf_to_markdown(data, stem)
+    markdown = convert_insurance_policy_to_markdown(data, stem)
+    general_markdown = convert_general_pdf_to_markdown(data, stem)
 
     out_stem = f"{stem}_raw"
     doc_dir = document_dir_for(out_stem)
     doc_dir.mkdir(parents=True, exist_ok=True)
     (doc_dir / "raw.md").write_text(markdown)
+    (doc_dir / "raw0.md").write_text(general_markdown)
 
     return {"filename": f"{out_stem}.md", "path": f"data/documents/{out_stem}/raw.md"}

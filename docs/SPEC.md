@@ -284,7 +284,13 @@ both map to HTTP 400. A `.md` upload skips `anydoc` entirely (it only
 accepts formats it converts *into* markdown *from* — `md` isn't one of
 them, so the call would just fail) and is registered as-is: the
 uploaded bytes are UTF-8-decoded and written straight to `raw.md`,
-with an invalid-UTF-8 upload also mapping to 400.
+with an invalid-UTF-8 upload also mapping to 400. A `table_aware` `.pdf`
+upload additionally writes `raw0.md` alongside `raw.md` in the same
+document folder — the same bytes run through
+`convert_general_pdf_to_markdown` (plain per-page text, no table/heading
+handling) as a reference copy for comparing against the table-aware
+`raw.md`; it's not a document of its own and doesn't appear in
+`GET /api/documents`/`GET /api/files`, both of which key off `raw.md`.
 
 **`GET /api/files`** — lists every `backend/data/documents/{stem}/`
 folder that has a `raw.md` in it, sorted by that file's modification

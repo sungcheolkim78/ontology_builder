@@ -161,11 +161,19 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   stable identifier, decoupled from where the file actually sits on disk.
   Two independent conversion paths land here: `parse_to_markdown_file`
   (generic, via `anydoc`) and `convert_pdf_to_markdown_file` — a second,
-  PDF-only path, ported from `scripts/data_prep/`'s Korean-insurance-policy
-  tooling (see that directory's README for the heading/section heuristics
-  and known limitations) — `/api/parse`'s `converter=table_aware` field
-  routes a `.pdf` upload through it (pdfplumber-based, preserves tables as
-  Markdown) instead of `anydoc`.
+  PDF-only path — `/api/parse`'s `converter=table_aware` field routes a
+  `.pdf` upload through it instead of `anydoc`. It calls two PDF-only
+  converters on the same bytes: `convert_insurance_policy_to_markdown`
+  (pdfplumber-based, table/`제N조`-heading aware, ported from
+  `scripts/data_prep/`'s Korean-insurance-policy tooling — see that
+  directory's README for the heading/section heuristics and known
+  limitations), saved as the document's actual `raw.md`; and
+  `convert_general_pdf_to_markdown` (plain per-page text, no table
+  detection or heading/bullet restructuring, for a PDF with no such
+  structure to exploit), saved alongside as `raw0.md` — a reference copy
+  for comparing the two conversions, not a document in its own right (it
+  has no `document_dir_for` entry of its own and isn't picked up by
+  `/api/documents`, which only looks for `raw.md`).
 - `chunking.py` — the markdown -> chunked-json stage, picking up where
   `parser.py` leaves off: `chunk_markdown_file` splits a document's `raw.md`
   into per-article JSON chunks at `documents/{stem}/chunks.json` (`제N조`
