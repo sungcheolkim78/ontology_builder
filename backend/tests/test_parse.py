@@ -208,6 +208,85 @@ def test_markdown_text_removes_standalone_page_number():
     assert markdown_text("내용\n- 12 -\n다음") == "내용\n\n다음"
 
 
+def test_markdown_text_links_midsentence_article_reference_instead_of_heading():
+    result = markdown_text(
+        "제3조(보험금의 지급사유)에 해당하는 피보험자의 위험을 보장하기 위하여 체결됩니다."
+    )
+    assert result == (
+        "[제3조(보험금의 지급사유)]에 해당하는 피보험자의 위험을 보장하기 위하여 체결됩니다."
+    )
+    assert "###" not in result
+
+
+def test_markdown_text_links_midsentence_article_reference_without_title():
+    assert markdown_text("제1조에 따라 지급합니다.") == "[제1조]에 따라 지급합니다."
+
+
+def test_markdown_text_links_midsentence_chapter_reference_instead_of_heading():
+    result = markdown_text("제2장(보장내용)에 따라 다음과 같이 정합니다.")
+    assert result == "[제2장(보장내용)]에 따라 다음과 같이 정합니다."
+    assert "##" not in result
+
+
+def test_markdown_text_links_reference_alone_on_a_line_without_blank_line_before():
+    """A citation can land alone on its own line purely from PDF line-wrap
+    (e.g. "...제3조(보험금의 지급사유)를 준용한다" wraps so the reference is
+    the whole line and the continuation is the next), even though it isn't
+    starting a new article -- unlike a real heading, there's no blank line
+    separating it from the preceding sentence."""
+    result = markdown_text("이 계약은 별도의 규정이 없는 한\n제3조(보험금의 지급사유)")
+    assert result == "이 계약은 별도의 규정이 없는 한\n[제3조(보험금의 지급사유)]"
+    assert "###" not in result
+
+
+def test_markdown_text_still_structures_heading_preceded_by_blank_line():
+    result = markdown_text("본문 내용\n\n제3조(목적)")
+    assert "### 제3조(목적)" in result
+
+
+def test_markdown_text_still_structures_standalone_chapter_heading():
+    assert markdown_text("제2장(보장내용)") == "## 제2장(보장내용)"
+
+
+def test_markdown_text_numbers_list_one_level_below_chapter():
+    result = markdown_text("제2장(보장내용)\n1. 첫번째 항목")
+    assert "## 제2장(보장내용)" in result
+    assert "### 1. 첫번째 항목" in result
+
+
+def test_markdown_text_numbers_list_one_level_below_article():
+    result = markdown_text("제1조(목적)\n1. 첫번째 항목")
+    assert "### 제1조(목적)" in result
+    assert "#### 1. 첫번째 항목" in result
+
+
+def test_markdown_text_structures_standalone_section_heading_without_title():
+    """제N관 (subsection) titles are conventionally bare, unparenthesized
+    text after the marker (unlike articles, which always parenthesize their
+    title) -- still a genuine heading when it's the whole line and preceded
+    by a blank line (or nothing, i.e. first line)."""
+    assert (
+        markdown_text("제1관 목적 및 용어의 정의")
+        == "## 제1관 목적 및 용어의 정의"
+    )
+
+
+def test_markdown_text_numbers_list_one_level_below_section():
+    result = markdown_text("제1관 목적 및 용어의 정의\n1. 첫번째 항목")
+    assert "## 제1관 목적 및 용어의 정의" in result
+    assert "### 1. 첫번째 항목" in result
+
+
+def test_markdown_text_links_midsentence_section_reference_without_blank_line_before():
+    result = markdown_text("본문이 이어지는 문장\n제1관에서 정한 사항에 따릅니다.")
+    assert result == "본문이 이어지는 문장\n[제1관]에서 정한 사항에 따릅니다."
+    assert "##" not in result
+
+
+def test_markdown_text_numbers_list_defaults_to_h3_without_prior_heading():
+    assert markdown_text("1. 첫번째 항목") == "### 1. 첫번째 항목"
+
+
 def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatch):
     monkeypatch.setattr(
         "app.preprocess.parser.convert_insurance_policy_to_markdown",
