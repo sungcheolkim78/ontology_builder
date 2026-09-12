@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app import graphdb
 from app import ontology
-from app.embeddings import node_embedding_text
+from app.preprocess.embeddings import node_embedding_text
 from app.paths import document_dir_for, documents_dir
 from app.telemetry import embed_with_telemetry
 
@@ -129,7 +129,7 @@ def save_document_manifest(stem: str, original_filename: str, converter: str = "
     file layout loses: the filename as originally uploaded (e.g.
     "report.docx"), before parser.py renames it to "{stem}_raw.md", and
     which PDF-to-Markdown converter produced that Markdown ("anydoc" or
-    "table_aware" -- see app.chunking). Schema and graph presence are
+    "table_aware" -- see app.preprocess.parser). Schema and graph presence are
     deliberately NOT duplicated here -- load_schema and graphdb.has_graph
     already answer those live, so there's nothing to keep in sync."""
     d = document_dir_for(stem)

@@ -1,6 +1,6 @@
 """Markdown -> per-article JSON chunking, the second stage of the
-pdf -> markdown -> chunked-json pipeline (see app.parser for the first
-stage, which produces the raw.md this module reads).
+pdf -> markdown -> chunked-json pipeline (see app.preprocess.parser for the
+first stage, which produces the raw.md this module reads).
 
 Ported from scripts/data_prep/chunk_terms_markdown.py, built and tuned
 against Korean insurance-policy PDFs (see that directory's README for the
@@ -118,8 +118,8 @@ def chunk_markdown(text: str, source_name: str) -> dict:
 
 def chunk_markdown_file(stem: str) -> dict:
     """Chunk the document's own raw.md (written by parse_to_markdown_file/
-    convert_pdf_to_markdown_file, both in app.parser) and save the result as
-    chunks.json in that same document folder."""
+    convert_pdf_to_markdown_file, both in app.preprocess.parser) and save the
+    result as chunks.json in that same document folder."""
     doc_dir = document_dir_for(stem)
     source_path = doc_dir / "raw.md"
     if not source_path.is_file():

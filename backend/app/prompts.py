@@ -1,4 +1,4 @@
-"""All LLM prompt templates used by app.ontology and app.goldenset, kept in
+"""All LLM prompt templates used by app.ontology and app.preprocess.goldenset, kept in
 one module so the prompt text (and the design-rationale comments attached to
 each one) can be read/edited independently of the extraction/storage logic
 that fills them in and parses their output."""
@@ -540,7 +540,7 @@ Candidate node_types and edge_types by group:
 
 
 # Ported from scripts/prepare_goldenset/prompts.py (the standalone golden-QA
-# generator's prompts) so app.goldenset can run the same document-grounded
+# generator's prompts) so app.preprocess.goldenset can run the same document-grounded
 # question/answer generation from a UI button, on one already-uploaded
 # document, instead of only as an offline CLI pass over a folder of Markdown
 # files. Question generation and answer generation stay two separate calls

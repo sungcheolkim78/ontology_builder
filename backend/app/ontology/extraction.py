@@ -96,7 +96,7 @@ def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
 #
 # discover_ontology() and generate_schema() below each send the whole document
 # in one LLM call and are bounded by MAX_DOCUMENT_CHARS -- documents chunked
-# into article-level JSON chunks (app.chunking.chunk_markdown_file) routinely
+# into article-level JSON chunks (app.preprocess.chunking.chunk_markdown_file) routinely
 # exceed that in total even though no single chunk does. Rather than keeping
 # every group's view of the ontology consistent with every other group's as it
 # goes (which would make each group depend on every earlier one and prevent

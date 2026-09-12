@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.parser import (
+from app.preprocess.parser import (
     DATA_DIR,
     convert_pdf_to_markdown_file,
     markdown_text,
@@ -25,7 +25,7 @@ def clean_data_dir():
 
 def test_parse_saves_markdown_and_returns_path(monkeypatch):
     monkeypatch.setattr(
-        "app.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+        "app.preprocess.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
     )
     client = TestClient(app)
 
@@ -47,7 +47,7 @@ def test_parse_registers_markdown_upload_without_anydoc_conversion(monkeypatch):
     def fail_if_called(data, fmt=None):
         raise AssertionError("anydoc.to_markdown_bytes should not be called for .md uploads")
 
-    monkeypatch.setattr("app.parser.anydoc.to_markdown_bytes", fail_if_called)
+    monkeypatch.setattr("app.preprocess.parser.anydoc.to_markdown_bytes", fail_if_called)
     client = TestClient(app)
 
     response = client.post(
@@ -79,7 +79,7 @@ def test_parse_saves_original_filename_to_document_manifest(monkeypatch):
     from app.ontology import load_document_manifest
 
     monkeypatch.setattr(
-        "app.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+        "app.preprocess.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
     )
     client = TestClient(app)
 
@@ -95,12 +95,12 @@ def test_parse_saves_original_filename_to_document_manifest(monkeypatch):
 
 
 def test_parse_returns_400_on_unsupported_format(monkeypatch):
-    from app.parser import anydoc as anydoc_module
+    from app.preprocess.parser import anydoc as anydoc_module
 
     def raise_unsupported(data, fmt=None):
         raise anydoc_module.UnsupportedError("nope")
 
-    monkeypatch.setattr("app.parser.anydoc.to_markdown_bytes", raise_unsupported)
+    monkeypatch.setattr("app.preprocess.parser.anydoc.to_markdown_bytes", raise_unsupported)
     client = TestClient(app)
 
     response = client.post(
@@ -128,7 +128,7 @@ def test_parse_uses_table_aware_converter_for_pdf_when_requested(monkeypatch):
     def fail_if_called(data, fmt=None):
         raise AssertionError("anydoc should not be called when table_aware is requested for a pdf")
 
-    monkeypatch.setattr("app.parser.anydoc.to_markdown_bytes", fail_if_called)
+    monkeypatch.setattr("app.preprocess.parser.anydoc.to_markdown_bytes", fail_if_called)
     monkeypatch.setattr(
         "app.main.convert_pdf_to_markdown_file",
         lambda filename, data: {"filename": "report_raw.md", "path": "data/report_raw.md"},
@@ -152,7 +152,7 @@ def test_parse_uses_table_aware_converter_for_pdf_when_requested(monkeypatch):
 
 def test_parse_ignores_table_aware_for_non_pdf_upload(monkeypatch):
     monkeypatch.setattr(
-        "app.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+        "app.preprocess.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
     )
     client = TestClient(app)
 
@@ -208,7 +208,7 @@ def test_markdown_text_removes_standalone_page_number():
 
 def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatch):
     monkeypatch.setattr(
-        "app.parser.convert_pdf_to_markdown", lambda data, title: f"# {title}\n\nbody"
+        "app.preprocess.parser.convert_pdf_to_markdown", lambda data, title: f"# {title}\n\nbody"
     )
 
     result = convert_pdf_to_markdown_file("report.pdf", b"fake pdf bytes")

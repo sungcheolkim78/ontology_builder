@@ -38,18 +38,18 @@ generation and extraction.
 `data_raw_md.tar.gz`, `data_chunks.tar.gz`, and `goldenset.tar.gz` hold the
 fuller 15-document set (all three 보장성/저축성/어린이 categories), each
 archive one per artifact kind — raw markdown, article-level chunks
-(`app.chunking.chunk_markdown_file` output), and per-document golden QA
-sets (`app.goldenset`) — mirroring `data/raw/md/`, `data/chunks/`, and
+(`app.preprocess.chunking.chunk_markdown_file` output), and per-document golden QA
+sets (`app.preprocess.goldenset`) — mirroring `data/raw/md/`, `data/chunks/`, and
 `data/goldenset/` at the repo root (git-ignored; these tarballs are the
 committed copies). Not every document has a golden set yet — golden QA
-generation is a separate, per-document step (see `app.goldenset`'s
+generation is a separate, per-document step (see `app.preprocess.goldenset`'s
 module docstring).
 
 `scripts/unpack_samples.sh` extracts all three into
 `backend/data/documents/{stem}_raw/` (creating it if missing), renaming
 each file to what `app.paths.document_dir_for` expects (`raw.md`,
 `chunks.json`, `goldenset.json`) and re-deriving each document's folder
-name the same way `app.parser.parse_to_markdown_file` does (append
+name the same way `app.preprocess.parser.parse_to_markdown_file` does (append
 `_raw` to the file's own stem) so the result is indistinguishable from
 having uploaded each document through the UI:
 

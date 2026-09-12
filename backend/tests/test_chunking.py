@@ -3,7 +3,7 @@ import shutil
 
 import pytest
 
-from app.chunking import (
+from app.preprocess.chunking import (
     DATA_DIR,
     chunk_markdown,
     chunk_markdown_file,

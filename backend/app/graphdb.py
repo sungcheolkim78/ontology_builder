@@ -5,7 +5,7 @@ import threading
 
 from ladybug import Connection, Database
 
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.paths import data_dir
 
 DB_PATH = data_dir() / "graph" / "graph.ladybugdb"

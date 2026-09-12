@@ -1,5 +1,5 @@
 """Document -> Markdown conversion: the first stage of the pdf -> markdown ->
-chunked-json pipeline (see app.chunking for the second stage).
+chunked-json pipeline (see app.preprocess.chunking for the second stage).
 
 Two independent conversion paths write the same `documents/{stem}_raw/raw.md`
 output shape: `parse_to_markdown_file` (generic, via the `anydoc` library) and

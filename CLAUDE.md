@@ -147,6 +147,11 @@ mounting that component in a test doesn't throw.
 `main.py` holds all routes and wires the other modules together; it has no
 business logic of its own beyond request/response shaping.
 
+`parser.py`, `chunking.py`, `embeddings.py`, and `goldenset.py` all live
+under `app/preprocess/` — the document-preprocessing stages upstream of
+`ontology.py`/`graphrag.py`, grouped into their own package (imported as
+`app.preprocess.parser`, etc.) rather than by any shared code between them.
+
 - `parser.py` — the pdf -> markdown stage of document ingestion, all of it
   writing `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
   owns this per-document folder layout; every other per-document artifact
@@ -280,7 +285,7 @@ business logic of its own beyond request/response shaping.
   richer, exploratory "candidate ontology" pass — see its own module-level
   comment) and `generate_schema()` each send the whole document in one call
   and are bounded by `MAX_DOCUMENT_CHARS`; for a document with `chunks.json`
-  (article-level JSON chunks from `app.chunking.chunk_markdown_file`),
+  (article-level JSON chunks from `app.preprocess.chunking.chunk_markdown_file`),
   `main.py`'s `/api/ontology/{filename}/discover` and `.../schema` routes
   instead call `discover_ontology_from_chunks()`/`generate_schema_from_chunks()`,
   which both pack consecutive chunks into `MAX_CHUNK_GROUP_CHARS`-budgeted
@@ -424,7 +429,7 @@ into each module's own namespace, so tests patch them per-module
 (`app.ontology.get_chat_model`, `app.graphrag.get_chat_model`,
 `app.main.get_chat_model`; `app.ontology.get_embedding_model`,
 `app.graphrag.get_embedding_model`) rather than at their definitions in
-`app.chat`/`app.embeddings`. Every test file whose code path can reach
+`app.chat`/`app.preprocess.embeddings`. Every test file whose code path can reach
 `embed_nodes()`/`embed_query()` has an autouse fixture stubbing
 `get_embedding_model` with a fake `embed_documents()`, so no test run ever
 makes a real OpenRouter embeddings call even for tests that don't

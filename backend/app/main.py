@@ -59,8 +59,9 @@ from app.ontology import (
     use_domain_schema,
     validate_ontology,
 )
-from app.chunking import chunk_markdown_file
-from app.goldenset import (
+from app.paths import document_dir_for, documents_dir
+from app.preprocess.chunking import chunk_markdown_file
+from app.preprocess.goldenset import (
     generate_goldenset,
     goldenset_path_for,
     latest_goldenset_answers,
@@ -68,8 +69,7 @@ from app.goldenset import (
     record_goldenset_answer,
     save_goldenset,
 )
-from app.parser import convert_pdf_to_markdown_file, parse_to_markdown_file
-from app.paths import document_dir_for, documents_dir
+from app.preprocess.parser import convert_pdf_to_markdown_file, parse_to_markdown_file
 from app.telemetry import configure_telemetry, invoke_with_telemetry, trace
 
 configure_telemetry()
@@ -348,7 +348,7 @@ def create_goldenset(filename: str, request: CreateGoldensetRequest | None = Non
     question_count = request.question_count if request else 10
     try:
         # Always the whole raw.md, never chunks.json -- see the module-level
-        # rationale in app.goldenset for why a golden set must not be built
+        # rationale in app.preprocess.goldenset for why a golden set must not be built
         # the same chunked way as the pipelines it's meant to validate.
         with trace(
             "generate-goldenset",

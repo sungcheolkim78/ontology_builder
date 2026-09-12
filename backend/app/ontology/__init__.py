@@ -22,7 +22,7 @@ submodule's own docstring/comments for what it owns:
   (create_schema_version).
 
 get_chat_model/get_embedding_model are imported here, not directly from
-app.chat/app.embeddings in each submodule, and every submodule reaches them
+app.chat/app.preprocess.embeddings in each submodule, and every submodule reaches them
 via `from app import ontology` + `ontology.get_chat_model(...)` at call
 time (never `from . import get_chat_model`, which would bind a private copy
 of the name at import time). This is what keeps every existing
@@ -32,7 +32,7 @@ module object, and a live attribute lookup at call time sees the patch --
 a name bound once at import time would not."""
 
 from app.chat import get_chat_model  # noqa: F401 -- re-exported; see module docstring
-from app.embeddings import get_embedding_model, node_embedding_text  # noqa: F401
+from app.preprocess.embeddings import get_embedding_model, node_embedding_text  # noqa: F401
 
 from .persistence import (
     DEFAULT_SCHEMA,

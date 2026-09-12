@@ -41,7 +41,7 @@ watch it fail, then implement.
 ## Backend (`backend/`)
 
 FastAPI app in `app/main.py`, split into `app/chat.py` (LLM chat),
-`app/parser.py` (document → markdown conversion), `app/graphdb.py`
+`app/preprocess/parser.py` (document → markdown conversion), `app/graphdb.py`
 (LadybugDB connection + Cypher-backed node/edge storage and search),
 `app/ontology.py` (schema generation + node/edge extraction),
 `app/graphrag.py` (keyword extraction + graph-based retrieval for chat),
@@ -270,7 +270,7 @@ ontology graph panel — see the Frontend section.
 
 **`POST /api/parse`** — multipart upload, field `file`, optional field
 `converter` (`"anydoc"` default or `"table_aware"`, the latter only
-applying to actual `.pdf` uploads — see `app.parser`). Extracts the
+applying to actual `.pdf` uploads — see `app.preprocess.parser`). Extracts the
 extension from the filename (sanitized via `os.path.basename` to
 prevent path traversal), calls `anydoc.to_markdown_bytes(data, ext)`,
 saves the result to `backend/data/documents/{stem}/raw.md`, returns
@@ -306,8 +306,8 @@ derived filename/`"anydoc"` when no manifest was ever written),
 `graphdb_name`.
 
 **`POST /api/documents/{filename}/chunk`** — reads
-`documents/{stem}/raw.md`, runs `app.chunking.chunk_markdown` (Korean
-`제N조` article headings; see `app.chunking`'s module docstring and
+`documents/{stem}/raw.md`, runs `app.preprocess.chunking.chunk_markdown` (Korean
+`제N조` article headings; see `app.preprocess.chunking`'s module docstring and
 `scripts/data_prep/README.md` for the heading/section heuristics), and
 saves `{"source", "preamble": {...}, "chunks": [...]}` to
 `documents/{stem}/chunks.json`. 404 if the document doesn't exist.
@@ -327,11 +327,11 @@ Re-running overwrites the previous summary.
 summary; 404 if none has been generated yet.
 
 **`POST /api/documents/{filename}/goldenset`** — always reads the whole
-`documents/{stem}/raw.md` (never `chunks.json` — see `app.goldenset`'s
+`documents/{stem}/raw.md` (never `chunks.json` — see `app.preprocess.goldenset`'s
 module docstring for why a golden set must not be built the same chunked
 way as the discover/schema/extract pipelines it exists to validate),
 generates `question_count` (default 10) questions via
-`app.goldenset.generate_goldenset`, then a separate LLM call answers them
+`app.preprocess.goldenset.generate_goldenset`, then a separate LLM call answers them
 with evidence quotes that are re-verified in code against the full
 original document text (an unverifiable or missing-evidence answer is
 downgraded to `answerable: false`, same rule as
@@ -351,19 +351,19 @@ question is answered via GraphRAG specifically, so there's deliberately no
 plain-chat fallback here the way `/api/chat` has one). Runs
 `graphrag.answer_question()` — the same function `/api/chat`'s schema+graph
 path uses, given a single-message history of just this question — then
-`app.goldenset.record_goldenset_answer()` appends the result (content,
+`app.preprocess.goldenset.record_goldenset_answer()` appends the result (content,
 node_types, edge_types, related_nodes, related_edges, plus the schema
 version and hop count used and a generated-at timestamp) to
 `documents/{stem}/goldenset_answers.json`, keyed by question id. Returns the
 saved record. Never overwrites or removes a prior record for that
-question — see `app.goldenset`'s module docstring for why history is kept
+question — see `app.preprocess.goldenset`'s module docstring for why history is kept
 even once the schema moves past that version.
 
 **`GET /api/documents/{filename}/goldenset/answers`** — returns
 `{"active_schema_version": N|null, "answers": {question_id: record}}`,
 where each `record` is only the *most recently recorded* answer for that
 question whose `schema_version` equals the document's current active
-schema version (`app.goldenset.latest_goldenset_answers()`) — an answer
+schema version (`app.preprocess.goldenset.latest_goldenset_answers()`) — an answer
 generated against a since-changed schema is never surfaced here, even
 though it's still in the file. A question with no answer recorded against
 the current schema version is simply absent from `answers`; `answers` is
@@ -575,7 +575,7 @@ directly.
   sidebar buttons:
   - **File Explorer** (`showFileExplorer`) — two columns. Left: a file
     input (radio choice between `anydoc` and `table_aware` converters,
-    the latter only doing anything for a `.pdf` — see `app.parser`)
+    the latter only doing anything for a `.pdf` — see `app.preprocess.parser`)
     that posts to `/api/parse`, and the document list from
     `GET /api/documents`, each row showing a 5-stage badge strip
     (MD/Chunk/Golden/Schema/Graph, `has_chunks`/`has_goldenset`/
@@ -587,7 +587,7 @@ directly.
     both refetching `/api/documents` on success so the badge strip and
     summary text stay current), a "골든셋 작성"/"재작성" button around
     `POST /api/documents/{filename}/goldenset` (always whole-document, never
-    chunked — see `app.goldenset`) that opens a modal listing every
+    chunked — see `app.preprocess.goldenset`) that opens a modal listing every
     generated question with its type/importance/answerable badge, answer,
     and verified evidence quotes with line numbers, the document's schema
     versions (`GET .../schema/versions`,
