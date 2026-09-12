@@ -270,7 +270,7 @@ ontology graph panel — see the Frontend section.
 
 **`POST /api/parse`** — multipart upload, field `file`, optional field
 `converter` (`"anydoc"` default or `"table_aware"`, the latter only
-applying to actual `.pdf` uploads — see `app.chunking`). Extracts the
+applying to actual `.pdf` uploads — see `app.parser`). Extracts the
 extension from the filename (sanitized via `os.path.basename` to
 prevent path traversal), calls `anydoc.to_markdown_bytes(data, ext)`,
 saves the result to `backend/data/documents/{stem}/raw.md`, returns
@@ -575,7 +575,7 @@ directly.
   sidebar buttons:
   - **File Explorer** (`showFileExplorer`) — two columns. Left: a file
     input (radio choice between `anydoc` and `table_aware` converters,
-    the latter only doing anything for a `.pdf` — see `app.chunking`)
+    the latter only doing anything for a `.pdf` — see `app.parser`)
     that posts to `/api/parse`, and the document list from
     `GET /api/documents`, each row showing a 5-stage badge strip
     (MD/Chunk/Golden/Schema/Graph, `has_chunks`/`has_goldenset`/

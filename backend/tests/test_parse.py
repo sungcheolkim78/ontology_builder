@@ -4,7 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.parser import DATA_DIR
+from app.parser import (
+    DATA_DIR,
+    convert_pdf_to_markdown_file,
+    markdown_text,
+    normalize_table,
+    table_to_markdown,
+)
 from app.paths import document_dir_for
 
 
@@ -176,3 +182,39 @@ def test_parse_returns_400_when_table_aware_conversion_fails(monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_normalize_table_removes_empty_border_columns():
+    rows = [["", "항목", "내용", ""], [None, "보험료", "10만원", None]]
+    assert normalize_table(rows) == [["항목", "내용"], ["보험료", "10만원"]]
+
+
+def test_table_to_markdown_preserves_cell_line_breaks():
+    rows = normalize_table([["항목", "내용"], ["조건", "첫째\n둘째"]])
+    result = table_to_markdown(rows)
+    assert "| 항목 | 내용 |" in result
+    assert "| 조건 | 첫째<br>둘째 |" in result
+
+
+def test_markdown_text_structures_korean_articles_and_bullets():
+    result = markdown_text("제1조(목적)\n● 보험금을 지급합니다.")
+    assert "### 제1조(목적)" in result
+    assert "- 보험금을 지급합니다." in result
+
+
+def test_markdown_text_removes_standalone_page_number():
+    assert markdown_text("내용\n- 12 -\n다음") == "내용\n\n다음"
+
+
+def test_convert_pdf_to_markdown_file_saves_markdown_and_returns_path(monkeypatch):
+    monkeypatch.setattr(
+        "app.parser.convert_pdf_to_markdown", lambda data, title: f"# {title}\n\nbody"
+    )
+
+    result = convert_pdf_to_markdown_file("report.pdf", b"fake pdf bytes")
+
+    assert result == {
+        "filename": "report_raw.md",
+        "path": "data/documents/report_raw/raw.md",
+    }
+    assert (document_dir_for("report_raw") / "raw.md").read_text() == "# report\n\nbody"

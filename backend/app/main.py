@@ -59,7 +59,7 @@ from app.ontology import (
     use_domain_schema,
     validate_ontology,
 )
-from app.chunking import chunk_markdown_file, convert_pdf_to_markdown_file
+from app.chunking import chunk_markdown_file
 from app.goldenset import (
     generate_goldenset,
     goldenset_path_for,
@@ -68,7 +68,7 @@ from app.goldenset import (
     record_goldenset_answer,
     save_goldenset,
 )
-from app.parser import parse_to_markdown_file
+from app.parser import convert_pdf_to_markdown_file, parse_to_markdown_file
 from app.paths import document_dir_for, documents_dir
 from app.telemetry import configure_telemetry, invoke_with_telemetry, trace
 

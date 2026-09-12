@@ -147,23 +147,25 @@ mounting that component in a test doesn't throw.
 `main.py` holds all routes and wires the other modules together; it has no
 business logic of its own beyond request/response shaping.
 
-- `parser.py` — `anydoc` converts an uploaded document to markdown, saved
-  as `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
+- `parser.py` — the pdf -> markdown stage of document ingestion, all of it
+  writing `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
   owns this per-document folder layout; every other per-document artifact
   -- schema versions, chunks, discovery, summary, manifest -- lives
   alongside it in that same folder). The `{stem}_raw.md`-shaped filename
   the rest of the app and the frontend pass around is a synthetic,
   stable identifier, decoupled from where the file actually sits on disk.
-- `chunking.py` — a second, PDF-only ingestion path alongside `parser.py`'s
-  generic `anydoc` conversion, ported from `scripts/data_prep/`'s
-  Korean-insurance-policy tooling (see that directory's README for the
-  heading/section heuristics and known limitations): `/api/parse`'s
-  `converter=table_aware` field routes a `.pdf` upload through
-  `convert_pdf_to_markdown_file` (pdfplumber-based, preserves tables as
-  Markdown) instead of `anydoc`. `chunk_markdown_file` splits a document's
-  `raw.md` into per-article JSON chunks at `documents/{stem}/chunks.json`
-  (`제N조` headings, rider/section detection) — a separate, on-demand step
-  from parsing, triggered via `POST /api/documents/{filename}/chunk`.
+  Two independent conversion paths land here: `parse_to_markdown_file`
+  (generic, via `anydoc`) and `convert_pdf_to_markdown_file` — a second,
+  PDF-only path, ported from `scripts/data_prep/`'s Korean-insurance-policy
+  tooling (see that directory's README for the heading/section heuristics
+  and known limitations) — `/api/parse`'s `converter=table_aware` field
+  routes a `.pdf` upload through it (pdfplumber-based, preserves tables as
+  Markdown) instead of `anydoc`.
+- `chunking.py` — the markdown -> chunked-json stage, picking up where
+  `parser.py` leaves off: `chunk_markdown_file` splits a document's `raw.md`
+  into per-article JSON chunks at `documents/{stem}/chunks.json` (`제N조`
+  headings, rider/section detection) — a separate, on-demand step from
+  parsing, triggered via `POST /api/documents/{filename}/chunk`.
 - `goldenset.py` — per-document golden QA generation, adapted from
   `scripts/prepare_goldenset/prepare_goldenset.py` (the standalone CLI tool)
   so a single already-uploaded document can get one from a UI button
