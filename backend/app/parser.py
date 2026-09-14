@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import anydoc
@@ -6,6 +7,35 @@ import anydoc
 from app.paths import data_dir, document_dir_for
 
 DATA_DIR = data_dir()
+
+
+POLICY_SECTION_LINE = re.compile(r"^제\s*\d+\s*(?:편|장|절|관)\b.*$")
+POLICY_ARTICLE_LINE = re.compile(
+    r"^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*(?:\[.*\]|\(.*\))\s*$"
+)
+
+
+def normalize_policy_headings(markdown: str) -> str:
+    """Add stable Markdown levels to standalone policy hierarchy lines.
+
+    anydoc and already-Markdown uploads can contain policy headings as plain
+    text. Restricting this to complete, line-anchored forms avoids turning
+    legal references inside ordinary paragraphs into headings.
+    """
+    normalized: list[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if line.startswith("#"):
+            content = line.lstrip("#").strip()
+        else:
+            content = line
+        if POLICY_SECTION_LINE.fullmatch(content):
+            normalized.append(f"## {content}")
+        elif POLICY_ARTICLE_LINE.fullmatch(content):
+            normalized.append(f"### {content}")
+        else:
+            normalized.append(raw_line)
+    return "\n".join(normalized)
 
 
 def parse_to_markdown_file(filename: str, data: bytes) -> dict:
@@ -23,6 +53,8 @@ def parse_to_markdown_file(filename: str, data: bytes) -> dict:
             raise ValueError(f"invalid utf-8 in markdown file: {e}") from e
     else:
         markdown = anydoc.to_markdown_bytes(data, ext or None)
+
+    markdown = normalize_policy_headings(markdown)
 
     # "filename" stays {stem}_raw.md -- a synthetic, stable identifier the
     # rest of the app (and the frontend) treats as opaque, decoupled from

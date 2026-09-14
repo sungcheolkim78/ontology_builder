@@ -207,12 +207,11 @@ def chat(request: ChatRequest):
 
 
 @app.post("/api/parse")
-async def parse(file: UploadFile = File(...), converter: str = Form("anydoc")):
+async def parse(file: UploadFile = File(...), converter: str = Form("table_aware")):
     data = await file.read()
     ext = Path(os.path.basename(file.filename)).suffix.lstrip(".").lower()
-    # "table_aware" only applies to actual PDFs -- pdfplumber can't parse
-    # anything else, so any other extension always falls back to anydoc
-    # regardless of what the uploader picked.
+    # Insurance policy PDFs need layout/table-aware extraction by default.
+    # Non-PDF files continue through anydoc regardless of the selected option.
     use_table_aware = converter == "table_aware" and ext == "pdf"
     try:
         if use_table_aware:

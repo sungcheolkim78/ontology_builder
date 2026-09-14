@@ -28,5 +28,11 @@ def test_markdown_text_structures_korean_articles_and_bullets():
     assert "- 보험금을 지급합니다." in result
 
 
+def test_markdown_text_structures_policy_section_headings():
+    result = module.markdown_text("LY0849001(260504)\n삼성 인터넷 급여 실손의료비보장보험(2605)\n제1관 일반사항 및 용어의 정의")
+    assert "제1관 일반사항 및 용어의 정의" in result
+    assert "## 제1관 일반사항 및 용어의 정의" in result
+
+
 def test_markdown_text_removes_standalone_page_number():
     assert module.markdown_text("내용\n- 12 -\n다음") == "내용\n\n다음"

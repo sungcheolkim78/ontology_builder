@@ -11,6 +11,7 @@ from app.chunking import (
     guess_section_label,
     markdown_text,
     normalize_table,
+    parse_section_heading,
     parse_article_heading,
     table_to_markdown,
 )
@@ -53,6 +54,31 @@ def test_parse_article_heading_matches_bracket_title():
         "article_no": "1",
         "sub_no": None,
         "title": "목적",
+    }
+
+
+@pytest.mark.parametrize(
+    ("line", "article_no", "sub_no"),
+    [
+        ("### 제4 조 [보험금 지급에 관한 세부규정]", "4", None),
+        ("### 제2조의 2 [용어의 정의2]", "2", "2"),
+    ],
+)
+def test_parse_article_heading_accepts_pdf_inserted_spaces(line, article_no, sub_no):
+    result = parse_article_heading(line)
+    assert result["article_no"] == article_no
+    assert result["sub_no"] == sub_no
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["제1관 목적 및 용어의 정의", "제 1 관 목적 및 용어의 정의", "## 제1관 목적"],
+)
+def test_parse_section_heading_accepts_korean_policy_section_forms(line):
+    assert parse_section_heading(line) == {
+        "level": "관",
+        "no": "1",
+        "title": "목적 및 용어의 정의" if "용어" in line else "목적",
     }
 
 
@@ -113,7 +139,18 @@ def test_chunk_markdown_scopes_ids_and_labels_per_rider_section():
     assert rider["section_index"] == 1
     assert rider["section_label"] == "치아보험특약(갱신형)"
     assert rider["title"] == "특약목적"
-    assert rider["path"] == "치아보험특약(갱신형) > 제1조(특약목적)"
+    assert rider["ancestors"] == [{"level": "관", "no": "1", "title": "목적"}]
+    assert rider["path"] == "치아보험특약(갱신형) > 제1관 목적 > 제1조(특약목적)"
+
+
+def test_chunk_markdown_preserves_section_heading_on_article_chunk():
+    result = chunk_markdown(
+        "제2관 보험금의 지급\n### 제4 조 [보험금 지급에 관한 세부규정]\n본문",
+        "sample.md",
+    )
+    chunk = result["chunks"][0]
+    assert chunk["article_no"] == "4"
+    assert chunk["ancestors"] == [{"level": "관", "no": "2", "title": "보험금의 지급"}]
 
 
 def test_chunk_markdown_file_reads_from_document_dir_and_writes_chunks_json():

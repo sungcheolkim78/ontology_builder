@@ -28,7 +28,7 @@ DATA_DIR = data_dir()
 # --- PDF -> Markdown (table-aware) -----------------------------------------
 
 HEADING_PATTERNS = (
-    (re.compile(r"^제\s*\d+\s*[장편]\b"), "##"),
+    (re.compile(r"^제\s*\d+\s*[편장절관]\b"), "##"),
     (re.compile(r"^제\s*\d+\s*조(?:\s*\([^)]*\))?"), "###"),
     (re.compile(r"^\d+\.\s+\S"), "###"),
 )
@@ -188,7 +188,14 @@ def convert_pdf_to_markdown_file(filename: str, data: bytes) -> dict:
 # artifact always has extra text trailing the closing bracket/paren, so
 # requiring the title bracket to end the line rejects both at once.
 ARTICLE_HEADING_PATTERN = re.compile(
-    r"^###\s*제(?P<no>\d+)조(?:의(?P<sub>\d+))?\s*(?:\[(?P<title_b>.+)\]|\((?P<title_p>.+)\))\s*$"
+    r"^###\s*제\s*(?P<no>\d+)\s*조"
+    r"(?:\s*의\s*(?P<sub>\d+))?\s*"
+    r"(?:\[(?P<title_b>.+)\]|\((?P<title_p>.+)\))\s*$"
+)
+
+SECTION_HEADING_PATTERN = re.compile(
+    r"^(?:##\s*)?제\s*(?P<no>\d+)\s*"
+    r"(?P<level>편|장|절|관)\b\s*(?P<title>.*?)\s*$"
 )
 
 
@@ -200,6 +207,38 @@ def parse_article_heading(line: str) -> dict[str, str | None] | None:
     if title is None:
         title = match.group("title_p")
     return {"article_no": match.group("no"), "sub_no": match.group("sub"), "title": title}
+
+
+def parse_section_heading(line: str) -> dict[str, str] | None:
+    """Parse a policy hierarchy heading such as ``제 2 관 보험금의 지급``."""
+    match = SECTION_HEADING_PATTERN.match(line.strip())
+    if not match:
+        return None
+    return {
+        "level": match.group("level"),
+        "no": match.group("no"),
+        "title": match.group("title").strip(),
+    }
+
+
+_SECTION_LEVELS = {"편": 0, "장": 1, "절": 2, "관": 3}
+
+
+def section_ancestors(lines: list[str], end: int) -> list[dict[str, str]]:
+    """Return the active policy hierarchy immediately before ``end``.
+
+    Section headings are kept as a small stack so a new 관 replaces the prior
+    관 while retaining its enclosing 편/장/절.
+    """
+    stack: list[dict[str, str]] = []
+    for line in lines[:end]:
+        heading = parse_section_heading(line)
+        if heading is None:
+            continue
+        level = _SECTION_LEVELS[heading["level"]]
+        stack = [item for item in stack if _SECTION_LEVELS[item["level"]] < level]
+        stack.append(heading)
+    return stack
 
 
 def guess_section_label(lines: list[str], start: int, end: int) -> str | None:
@@ -266,6 +305,12 @@ def chunk_markdown(text: str, source_name: str) -> dict:
         article_ref = f"제{parsed['article_no']}조" + (
             f"의{parsed['sub_no']}" if parsed["sub_no"] else ""
         )
+        ancestors = section_ancestors(lines, index)
+        ancestor_path = [
+            f"제{item['no']}{item['level']} {item['title']}".rstrip()
+            for item in ancestors
+        ]
+        path_parts = [section_label, *ancestor_path, f"{article_ref}({parsed['title']})"]
         chunks.append(
             {
                 "id": f"{section_index}::{article_ref}",
@@ -274,7 +319,8 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 "article_no": parsed["article_no"],
                 "sub_no": parsed["sub_no"],
                 "title": parsed["title"],
-                "path": f"{section_label} > {article_ref}({parsed['title']})",
+                "ancestors": ancestors,
+                "path": " > ".join(path_parts),
                 "line_start": index + 1,
                 "line_end": end,
                 "text": _body_text(lines, index + 1, end),

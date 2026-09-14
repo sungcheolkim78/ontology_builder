@@ -21,7 +21,7 @@ except ImportError as exc:  # pragma: no cover - exercised by user environments
 
 
 HEADING_PATTERNS = (
-    (re.compile(r"^제\s*\d+\s*[장편]\b"), "##"),
+    (re.compile(r"^제\s*\d+\s*[편장절관]\b"), "##"),
     (re.compile(r"^제\s*\d+\s*조(?:\s*\([^)]*\))?"), "###"),
     (re.compile(r"^\d+\.\s+\S"), "###"),
 )
@@ -253,4 +253,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
