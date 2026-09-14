@@ -21,12 +21,34 @@ except ImportError as exc:  # pragma: no cover - exercised by user environments
 
 
 HEADING_PATTERNS = (
-    (re.compile(r"^제\s*\d+\s*[장편]\b"), "##"),
-    (re.compile(r"^제\s*\d+\s*조(?:\s*\([^)]*\))?"), "###"),
-    (re.compile(r"^\d+\.\s+\S"), "###"),
+    (re.compile(r"^제\s*\d+\s*[장편관]\b"), "##"),
+    # A real 제N조 heading is the article number plus its bracketed/parenthesized
+    # title and nothing else on the line -- the trailing `$` is load-bearing:
+    # a sentence that merely *references* an article ("제3조(보상내용) 및
+    # 제4조...은 각 보장종목에 해당하는 약관을 참조하시기 바랍니다.") starts the
+    # same way but keeps going past the title, so it fails this full-line match
+    # and falls through to plain body text instead of becoming a false heading.
+    (re.compile(r"^제\s*\d+\s*조(?:\s*의\s*\d+)?(?:\s*[\(\[][^)\]]*[)\]])?\s*$"), "###"),
 )
 BULLET_PATTERN = re.compile(r"^[●■◆▶▣□◦ㆍ∙]\s*")
+# A numbered sub-item within an article (e.g. "2. 외래제비용...") is a list
+# item, not its own heading level. It's sometimes prefixed with the "㈜" note
+# marker (e.g. "㈜ 1. 「국민건강보험법」..." or "㈜1. ...") when it follows a
+# table footnote -- the optional prefix keeps that variant recognized too,
+# instead of falling through as an unstyled, undifferentiated line.
+NUMBERED_ITEM_PATTERN = re.compile(r"^(?:㈜\s*)?\d+\.\s+\S")
+# A circled number (①②③...) marks a 항 (paragraph) within a 조 (article). The
+# PDF text layer doesn't put a blank line before these, so they otherwise run
+# on straight from the end of the previous 항's text -- force a new paragraph.
+CIRCLED_NUMBER_PATTERN = re.compile(r"^[①-⑳]")
 PAGE_NUMBER_PATTERN = re.compile(r"^[-–—]?\s*\d+\s*[-–—]?$|^\d+\s*/\s*\d+$")
+
+# The cover page opens with a policy code line (e.g. "LY0816002(260626)"),
+# then the policy name, then a short description, before the first 제N관
+# heading. FRONT_MATTER_CODE_PATTERN identifies the code line; the
+# description's start is marked by a line beginning with "※".
+FRONT_MATTER_CODE_PATTERN = re.compile(r"^[A-Z]{1,6}\d{3,}(?:\([0-9]{2,10}\))?$")
+GROUP_HEADING_START_PATTERN = re.compile(r"^제\s*\d+\s*관\b")
 
 
 def sha256_file(path: Path) -> str:
@@ -45,14 +67,55 @@ def clean_text(text: str | None) -> str:
     return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 
 
+def style_cover_page(lines: list[str]) -> tuple[list[str], list[str]] | None:
+    """Split a mini-cover opening into a styled block plus the remaining lines.
+
+    The main contract and every rider (특약) in a Samsung Life policy PDF each
+    restart with their own mini cover: a policy code, the policy/rider name, a
+    short description, then the first 제N관 heading -- this recurs at the start
+    of every such section throughout the document, not just on page 1. Returns
+    (styled_lines, rest) when this shape is found at the start of `lines`, else
+    None so the caller falls back to normal handling.
+    """
+    content = [(index, line) for index, line in enumerate(lines) if line]
+    if not content:
+        return None
+    first_index, code = content[0]
+    if not FRONT_MATTER_CODE_PATTERN.match(code):
+        return None
+    group_pos = next(
+        (index for index, line in enumerate(lines) if GROUP_HEADING_START_PATTERN.match(line)),
+        None,
+    )
+    if group_pos is None or group_pos <= first_index:
+        return None
+
+    body = [line for line in lines[first_index + 1 : group_pos] if line]
+    note_index = next((i for i, line in enumerate(body) if line.startswith("※")), len(body))
+    name_lines, desc_lines = body[:note_index], body[note_index:]
+    if not name_lines:
+        return None
+
+    styled = [f"**보험코드:** {code}", "", f"# {name_lines[0]}", *name_lines[1:]]
+    if desc_lines:
+        styled.append("")
+        styled.extend(f"> {line}" for line in desc_lines)
+    styled.append("")
+    return styled, lines[group_pos:]
+
+
 def markdown_text(text: str | None) -> str:
     """Lightly structure Korean headings and bullets without rewriting content."""
     cleaned = clean_text(text)
     if not cleaned:
         return ""
+    lines = [raw_line.strip() for raw_line in cleaned.splitlines()]
     output: list[str] = []
-    for raw_line in cleaned.splitlines():
-        line = raw_line.strip()
+    cover = style_cover_page(lines)
+    if cover is not None:
+        styled, lines = cover
+        output.extend(styled)
+    for line in lines:
         if not line or PAGE_NUMBER_PATTERN.fullmatch(line):
             if output and output[-1] != "":
                 output.append("")
@@ -62,6 +125,12 @@ def markdown_text(text: str | None) -> str:
         )
         if heading:
             output.extend([f"{heading} {line}", ""])
+        elif CIRCLED_NUMBER_PATTERN.match(line):
+            if output and output[-1] != "":
+                output.append("")
+            output.append(line)
+        elif NUMBERED_ITEM_PATTERN.match(line):
+            output.append(f"- {line}")
         elif BULLET_PATTERN.match(line):
             output.append(f"- {BULLET_PATTERN.sub('', line)}")
         else:
@@ -199,11 +268,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-dir", type=Path, default=Path("data/raw/pdf"))
     parser.add_argument("--output-dir", type=Path, default=Path("data/raw/md"))
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="convert at most N discovered PDF(s)"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.limit is not None and args.limit < 1:
+        print("error: --limit must be at least 1", file=sys.stderr)
+        return 2
     input_dir = args.input_dir.resolve()
     output_dir = args.output_dir.resolve()
     if not input_dir.is_dir():
@@ -213,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     if not pdfs:
         print(f"error: no PDF files found under {input_dir}", file=sys.stderr)
         return 2
+    if args.limit is not None:
+        pdfs = pdfs[: args.limit]
 
     converted: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
