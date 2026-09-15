@@ -149,8 +149,18 @@ business logic of its own beyond request/response shaping.
 
 `parser.py`, `chunking.py`, `embeddings.py`, and `goldenset.py` all live
 under `app/preprocess/` — the document-preprocessing stages upstream of
-`ontology.py`/`graphrag.py`, grouped into their own package (imported as
+`ontology`/`graphrag.py`, grouped into their own package (imported as
 `app.preprocess.parser`, etc.) rather than by any shared code between them.
+Two more single-concern packages exist the same way: `app/graph/` holds
+`graphdb.py` and `graphrag.py` (the graph-DB layer and its retrieval logic),
+and `app/llm/` holds `chat.py`, `prompts.py`, and `telemetry.py` (everything
+about talking to an LLM that isn't itself a pipeline stage). `ontology.py`
+is likewise a package, `app/ontology/`, split by concern into
+`persistence.py`, `extraction.py`, `legal_guards.py`, and `domain_schema.py`
+(see that package's own `__init__.py` docstring for the split and why
+`get_chat_model`/`get_embedding_model` are re-exported from there rather
+than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
+each submodule).
 
 - `parser.py` — the pdf -> markdown stage of document ingestion, all of it
   writing `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
@@ -217,7 +227,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   /api/documents/{filename}/goldenset/answers`) -- an answer generated
   against a since-changed schema is no longer shown as "the" current answer,
   though it stays in the file for later inspection.
-- `chat.py` — builds the `ChatOpenAI` client (OpenRouter) and converts
+- `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Every other module that
   needs an LLM call imports `get_chat_model` from here.
 - `embeddings.py` — builds the `OpenAIEmbeddings` client (also OpenRouter,
@@ -230,7 +240,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   embedded per node (`label` + `detail`), reused by both extraction
   (`ontology.embed_nodes`) and query embedding (`graphrag.embed_query`) so
   the two sides of a similarity comparison are computed consistently.
-- `graphdb.py` — owns the single LadybugDB connection
+- `graphdb.py` (`app/graph/graphdb.py`) — owns the single LadybugDB connection
   (`backend/data/graph/graph.ladybugdb`), opened lazily and cached at module
   level. There's one Cypher node table and one Cypher rel table per
   distinct node/edge *type name*, shared across every document rather
@@ -257,7 +267,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   single type's own nodes by `array_cosine_similarity()` against a
   query vector, filtering out `NULL` rows rather than sorting them
   arbitrarily.
-- `prompts.py` — every LLM prompt template this app sends, as plain string
+- `prompts.py` (`app/llm/prompts.py`) — every LLM prompt template this app sends, as plain string
   constants (with the design-rationale comments explaining why each one asks
   for what it does), kept separate from `ontology.py`'s extraction/storage
   logic so the prompt text can be read or edited on its own. `ontology.py`
@@ -265,7 +275,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   `VALIDATION_PROMPT`, `DISCOVERY_PROMPT`, `SUMMARY_PROMPT`,
   `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`, `SCHEMA_CONSOLIDATION_PROMPT`);
   `goldenset.py` imports `QUESTION_PROMPT`/`ANSWER_PROMPT` the same way.
-- `ontology.py` — two LLM-driven steps, run separately by design: propose a
+- `ontology.py` (`app/ontology/`, a package — see below) — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,
   or `DEFAULT_SCHEMA` as a last resort). Nodes/edges also get an optional
@@ -329,7 +339,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   to reuse the document's own term for it verbatim, per EXTRACT_PROMPT's own
   "canonical surface form" instruction -- then rewrites every edge to point
   at the merged canonical ids and drops exact-duplicate edges.
-- `graphrag.py` — the retrieval side of chat, a schema-aware search rather
+- `graphrag.py` (`app/graph/graphrag.py`) — the retrieval side of chat, a schema-aware search rather
   than plain keyword matching. Stage 1: `determine_relevant_types()`
   sends the document's schema + the question to the LLM, asking which
   node/edge *types* (by exact schema name) are relevant; empty result on
@@ -382,7 +392,7 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
   endpoint (`POST /api/documents/{filename}/goldenset/{id}/answer`, a
   single-message history) share exactly the same answering logic and can
   never silently drift apart.
-- `telemetry.py` — `invoke_with_telemetry(operation, model, prompt)` wraps
+- `telemetry.py` (`app/llm/telemetry.py`) — `invoke_with_telemetry(operation, model, prompt)` wraps
   every chat-completion call site (chat answer, schema generation, graph
   extraction, type analysis, keyword extraction) and
   `embed_with_telemetry(operation, model, texts)` wraps both embedding
@@ -434,10 +444,10 @@ under `app/preprocess/` — the document-preprocessing stages upstream of
 
 **Testing LLM calls:** `get_chat_model`/`get_embedding_model` are imported
 into each module's own namespace, so tests patch them per-module
-(`app.ontology.get_chat_model`, `app.graphrag.get_chat_model`,
+(`app.ontology.get_chat_model`, `app.graph.graphrag.get_chat_model`,
 `app.main.get_chat_model`; `app.ontology.get_embedding_model`,
-`app.graphrag.get_embedding_model`) rather than at their definitions in
-`app.chat`/`app.preprocess.embeddings`. Every test file whose code path can reach
+`app.graph.graphrag.get_embedding_model`) rather than at their definitions in
+`app.llm.chat`/`app.preprocess.embeddings`. Every test file whose code path can reach
 `embed_nodes()`/`embed_query()` has an autouse fixture stubbing
 `get_embedding_model` with a fake `embed_documents()`, so no test run ever
 makes a real OpenRouter embeddings call even for tests that don't

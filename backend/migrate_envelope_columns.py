@@ -22,7 +22,7 @@ contract as migrate_schema_versions.py, migrate_data_layout.py).
 Usage:
     cd backend && source .venv/bin/activate && python migrate_envelope_columns.py
 """
-from app import graphdb
+from app.graph import graphdb
 
 
 def migrate_envelope_columns():

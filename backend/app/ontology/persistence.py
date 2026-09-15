@@ -2,11 +2,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from app import graphdb
+from app.graph import graphdb
 from app import ontology
 from app.preprocess.embeddings import node_embedding_text
 from app.paths import document_dir_for, documents_dir
-from app.telemetry import embed_with_telemetry
+from app.llm.telemetry import embed_with_telemetry
 
 DOCUMENTS_DIR = documents_dir()
 

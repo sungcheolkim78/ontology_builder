@@ -8,10 +8,10 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
-from app import graphdb
+from app.graph import graphdb
 from app import ontology
 from app.paths import document_dir_for
-from app.prompts import (
+from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
     EVOLUTION_PROMPT,
@@ -22,7 +22,7 @@ from app.prompts import (
     VALIDATION_PROMPT,
 )
 from app.schema_validation import normalize_schema
-from app.telemetry import embed_with_telemetry, invoke_with_telemetry
+from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 from .persistence import (
     DEFAULT_SCHEMA,

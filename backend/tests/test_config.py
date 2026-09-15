@@ -45,7 +45,7 @@ def test_get_config_includes_operation_models_defaulting_to_the_general_model():
 
 
 def test_set_model_switches_active_model():
-    from app.chat import set_model_name
+    from app.llm.chat import set_model_name
 
     client = TestClient(app)
     try:
@@ -64,7 +64,7 @@ def test_set_model_switches_active_model():
 
 
 def test_set_model_for_one_operation_leaves_others_on_the_general_model():
-    from app.chat import set_model_name
+    from app.llm.chat import set_model_name
 
     client = TestClient(app)
     try:

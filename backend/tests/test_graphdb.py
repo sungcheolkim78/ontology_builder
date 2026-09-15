@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from app import graphdb
+from app.graph import graphdb
 from app.preprocess.embeddings import EMBEDDING_DIM
 
 

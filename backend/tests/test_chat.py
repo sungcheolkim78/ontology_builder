@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
-from app import graphdb
+from app.graph import graphdb
 
 NODES = [
     {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
@@ -53,7 +53,7 @@ class FakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
@@ -96,7 +96,7 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
             "Ada Lovelace worked on the Analytical Engine.",
         ]
     )
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -141,7 +141,7 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
     model = SequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -190,7 +190,7 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
             "Ada Lovelace is the person mentioned.",
         ]
     )
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -242,7 +242,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
             ),
         ]
     )
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 

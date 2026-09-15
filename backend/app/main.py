@@ -8,9 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from app import graphdb
+from app.graph import graphdb
 from app.auth import APP_PASSWORD, is_valid_token, issue_token
-from app.chat import (
+from app.llm.chat import (
     MODEL_CATALOG,
     OPERATION_KEYS,
     get_chat_model,
@@ -19,7 +19,7 @@ from app.chat import (
     set_model_name,
     to_langchain_messages,
 )
-from app.graphrag import answer_question, search_graph
+from app.graph.graphrag import answer_question, search_graph
 from app.schema_validation import normalize_schema
 from app.ontology import (
     activate_version,
@@ -70,7 +70,7 @@ from app.preprocess.goldenset import (
     save_goldenset,
 )
 from app.preprocess.parser import convert_pdf_to_markdown_file, parse_to_markdown_file
-from app.telemetry import configure_telemetry, invoke_with_telemetry, trace
+from app.llm.telemetry import configure_telemetry, invoke_with_telemetry, trace
 
 configure_telemetry()
 

@@ -9,7 +9,7 @@ Usage:
 """
 import json
 
-from app import graphdb
+from app.graph import graphdb
 from app.ontology import DOCUMENTS_DIR
 
 

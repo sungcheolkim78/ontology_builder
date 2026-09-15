@@ -32,7 +32,7 @@ def stub_embedding_model(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def clean_dirs():
-    from app import graphdb
+    from app.graph import graphdb
     graphdb.reset_connection()
     for d in (DATA_DIR, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR):
         if d.exists():
@@ -481,7 +481,7 @@ def test_embed_nodes_empty_list_skips_the_embedding_call(monkeypatch):
 
 
 def test_embed_graph_computes_and_stores_embeddings():
-    from app import graphdb
+    from app.graph import graphdb
 
     graphdb.write_graph(
         "doc_raw", [{"id": "n1", "label": "Alice", "type": "Person", "detail": "engineer"}], []
@@ -555,7 +555,7 @@ def test_extract_saves_and_returns_graph(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
-    from app import graphdb
+    from app.graph import graphdb
     assert graphdb.load_graph("doc_raw", version=1) == graph
 
 
@@ -917,7 +917,7 @@ def test_legal_fixture_extraction_produces_full_rule_chain_with_evidence(monkeyp
 
 
 def test_legal_fixture_reextraction_is_idempotent(monkeypatch):
-    from app import graphdb
+    from app.graph import graphdb
     from app.ontology import extract_graph
 
     monkeypatch.setattr(
@@ -943,8 +943,8 @@ def test_legal_fixture_reextraction_is_idempotent(monkeypatch):
 
 
 def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
-    from app import graphdb
-    from app.graphrag import answer_question
+    from app.graph import graphdb
+    from app.graph.graphrag import answer_question
     from app.ontology import extract_graph
 
     # Extract through the real pipeline first (not the raw fixture response
@@ -968,7 +968,7 @@ def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
         "keywords": {"Condition": ["암 진단 확정"], "PaymentAmount": ["가입금액의 50%"]},
     }
     model_cq1 = SequencedChatModel([json.dumps(analysis_cq1), "가입금액의 50%를 지급합니다."])
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model_cq1)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model_cq1)
 
     result_cq1 = answer_question(
         [{"role": "user", "content": cq1["question"]}], LEGAL_FIXTURE_SCHEMA, "legal_fixture", hops=0
@@ -988,7 +988,7 @@ def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
         "keywords": {"Exclusion": ["계약일로부터 90일 이내 면책"]},
     }
     model_cq3 = SequencedChatModel([json.dumps(analysis_cq3), "계약일로부터 90일 이내에는 지급하지 않습니다."])
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model_cq3)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model_cq3)
 
     result_cq3 = answer_question(
         [{"role": "user", "content": cq3["question"]}], LEGAL_FIXTURE_SCHEMA, "legal_fixture", hops=0
@@ -1245,7 +1245,7 @@ def test_extract_endpoint_uses_chunks_when_present(monkeypatch):
 
 
 def test_get_ontology_returns_saved_graph():
-    from app import graphdb
+    from app.graph import graphdb
     seed_schema_version("doc_raw", DEFAULT_SCHEMA)
     nodes = [{"id": "n1", "label": "Alice", "type": "Person"}]
     edges = []
@@ -1267,7 +1267,7 @@ def test_get_ontology_returns_404_when_not_extracted():
 
 
 def test_reset_database_endpoint_clears_extracted_graphs():
-    from app import graphdb
+    from app.graph import graphdb
     graphdb.write_graph("doc_raw", [{"id": "n1", "label": "Alice", "type": "Person"}], [])
     client = TestClient(app)
 
@@ -1390,7 +1390,7 @@ def test_use_schema_returns_404_when_source_missing():
 
 
 def _seed_schema_and_graph(stem="doc_raw"):
-    from app import graphdb
+    from app.graph import graphdb
     from app.ontology import create_schema_version
 
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
@@ -1503,7 +1503,7 @@ def test_activate_version_raises_for_unknown_version():
 
 
 def test_delete_version_removes_schema_file_and_graph_rows():
-    from app import graphdb
+    from app.graph import graphdb
     from app.ontology import create_schema_version, delete_version, list_versions
 
     v1 = create_schema_version("doc_raw", {"node_types": [], "edge_types": []})
@@ -1737,7 +1737,7 @@ def test_apply_evolution_adds_node_type_and_node_creates_new_version():
     assert {"name": "Organization", "description": "an org"} in schema_v2["node_types"]
     assert result["node_count"] == 2  # original Alice node preserved + new one
 
-    from app import graphdb
+    from app.graph import graphdb
     graph_v2 = graphdb.load_graph("doc_raw", version=2)
     ids = {n["id"] for n in graph_v2["nodes"]}
     assert ids == {"n1", "n2"}

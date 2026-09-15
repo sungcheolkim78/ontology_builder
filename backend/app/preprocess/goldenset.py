@@ -25,11 +25,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from app.chat import get_chat_model
+from app.llm.chat import get_chat_model
 from app.ontology import parse_json_response
 from app.paths import document_dir_for
-from app.prompts import ANSWER_PROMPT, QUESTION_PROMPT
-from app.telemetry import invoke_with_telemetry
+from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
+from app.llm.telemetry import invoke_with_telemetry
 
 logger = logging.getLogger(__name__)
 

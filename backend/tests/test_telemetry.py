@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.exceptions import ModelConnectionError
 
-from app.telemetry import embed_with_telemetry, invoke_with_telemetry
+from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 
 class FakeResponse:

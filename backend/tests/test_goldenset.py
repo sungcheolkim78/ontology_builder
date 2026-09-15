@@ -5,7 +5,7 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
-from app import graphdb
+from app.graph import graphdb
 from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
@@ -40,7 +40,7 @@ class FakeEmbeddingModel:
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
     monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
-    monkeypatch.setattr("app.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)
@@ -281,7 +281,7 @@ def test_goldenset_answer_endpoint_generates_saves_and_returns_record(monkeypatc
             "Alice는 Acme에서 일합니다.",
         ]
     )
-    monkeypatch.setattr("app.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset/q001/answer", json={"hops": 2})
