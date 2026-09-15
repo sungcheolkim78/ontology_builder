@@ -5,7 +5,7 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
 from app import graphdb

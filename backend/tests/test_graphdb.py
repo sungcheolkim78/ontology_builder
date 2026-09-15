@@ -4,7 +4,7 @@ import time
 import pytest
 
 from app import graphdb
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 
 
 @pytest.fixture(autouse=True)

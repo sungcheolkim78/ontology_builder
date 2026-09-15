@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import graphdb
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
-from app.parser import DATA_DIR
+from app.preprocess.parser import DATA_DIR
 from app.paths import document_dir_for
 
 
@@ -93,7 +93,7 @@ def _answer_payload(ids, answerable=True, quote="Alice works at Acme."):
 
 
 def test_compact_document_for_questions_keeps_every_heading_within_budget():
-    from app.goldenset import compact_document_for_questions
+    from app.preprocess.goldenset import compact_document_for_questions
 
     document = "# A\n" + ("x" * 100) + "\n# B\n" + ("y" * 100)
 
@@ -105,19 +105,19 @@ def test_compact_document_for_questions_keeps_every_heading_within_budget():
 
 
 def test_compact_document_for_questions_returns_unchanged_when_under_budget():
-    from app.goldenset import compact_document_for_questions
+    from app.preprocess.goldenset import compact_document_for_questions
 
     document = "# A\nshort"
     assert compact_document_for_questions(document, max_chars=1000) == document
 
 
 def test_generate_goldenset_single_group_two_llm_calls(monkeypatch):
-    from app.goldenset import generate_goldenset
+    from app.preprocess.goldenset import generate_goldenset
 
     questions = _question_payload(1)
     answers = _answer_payload(["q001"])
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.goldenset.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.preprocess.goldenset.get_chat_model", lambda: fake_model)
 
     result = generate_goldenset("Alice works at Acme.", "doc_raw.md", question_count=1)
 
@@ -130,12 +130,12 @@ def test_generate_goldenset_single_group_two_llm_calls(monkeypatch):
 
 
 def test_generate_goldenset_downgrades_unverifiable_evidence(monkeypatch):
-    from app.goldenset import generate_goldenset
+    from app.preprocess.goldenset import generate_goldenset
 
     questions = _question_payload(1)
     answers = _answer_payload(["q001"], quote="this text is not in the document")
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.goldenset.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.preprocess.goldenset.get_chat_model", lambda: fake_model)
 
     result = generate_goldenset("Alice works at Acme.", "doc_raw.md", question_count=1)
 
@@ -145,7 +145,7 @@ def test_generate_goldenset_downgrades_unverifiable_evidence(monkeypatch):
 
 
 def test_generate_goldenset_rejects_empty_document():
-    from app.goldenset import generate_goldenset
+    from app.preprocess.goldenset import generate_goldenset
 
     with pytest.raises(ValueError):
         generate_goldenset("   ", "doc_raw.md")
@@ -156,7 +156,7 @@ def test_goldenset_endpoint_saves_and_returns_report(monkeypatch):
     questions = _question_payload(1)
     answers = _answer_payload(["q001"])
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.goldenset.get_chat_model", lambda: fake_model)
+    monkeypatch.setattr("app.preprocess.goldenset.get_chat_model", lambda: fake_model)
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset", json={"question_count": 1})
@@ -180,7 +180,7 @@ def test_goldenset_endpoint_returns_404_when_document_missing():
 
 def test_goldenset_endpoint_returns_400_on_invalid_json(monkeypatch):
     write_document()
-    monkeypatch.setattr("app.goldenset.get_chat_model", lambda: FakeChatModel("not json"))
+    monkeypatch.setattr("app.preprocess.goldenset.get_chat_model", lambda: FakeChatModel("not json"))
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset")
@@ -197,7 +197,7 @@ def test_get_goldenset_returns_404_when_none_saved():
 
 
 def test_record_and_latest_goldenset_answers_filters_by_schema_version():
-    from app.goldenset import latest_goldenset_answers, record_goldenset_answer
+    from app.preprocess.goldenset import latest_goldenset_answers, record_goldenset_answer
 
     write_document()
     record_goldenset_answer(
@@ -215,7 +215,7 @@ def test_record_and_latest_goldenset_answers_filters_by_schema_version():
 
 
 def test_latest_goldenset_answers_picks_most_recent_matching_version():
-    from app.goldenset import latest_goldenset_answers, record_goldenset_answer
+    from app.preprocess.goldenset import latest_goldenset_answers, record_goldenset_answer
 
     write_document()
     record_goldenset_answer(
@@ -232,7 +232,7 @@ def test_latest_goldenset_answers_picks_most_recent_matching_version():
 
 
 def test_latest_goldenset_answers_returns_empty_when_no_active_schema():
-    from app.goldenset import latest_goldenset_answers
+    from app.preprocess.goldenset import latest_goldenset_answers
 
     assert latest_goldenset_answers("doc_raw", active_schema_version=None) == {}
 
@@ -249,7 +249,7 @@ def _write_graphrag_fixture(stem="doc_raw"):
     graphdb.write_graph(
         stem, [{"id": "n1", "label": "Alice", "type": "Person"}], [], version=version
     )
-    from app.goldenset import save_goldenset
+    from app.preprocess.goldenset import save_goldenset
 
     save_goldenset(
         stem,
@@ -305,7 +305,7 @@ def test_goldenset_answer_endpoint_generates_saves_and_returns_record(monkeypatc
 
 def test_goldenset_answer_endpoint_returns_400_without_schema_or_graph():
     write_document()
-    from app.goldenset import save_goldenset
+    from app.preprocess.goldenset import save_goldenset
 
     save_goldenset(
         "doc_raw",

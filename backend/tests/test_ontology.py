@@ -5,10 +5,10 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR, embed_graph, embed_nodes
-from app.parser import DATA_DIR
+from app.preprocess.parser import DATA_DIR
 from app.paths import document_dir_for
 
 
@@ -2692,7 +2692,7 @@ def test_get_chunks_returns_404_when_not_chunked():
 def test_list_documents_reports_has_chunks_and_summary():
     write_document()
     from app.ontology import save_document_summary
-    from app.chunking import chunk_markdown_file
+    from app.preprocess.chunking import chunk_markdown_file
 
     save_document_summary("doc_raw", "요약입니다.")
     chunk_markdown_file("doc_raw")

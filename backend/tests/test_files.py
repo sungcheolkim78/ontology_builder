@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import graphdb
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
-from app.parser import DATA_DIR
+from app.preprocess.parser import DATA_DIR
 from app.paths import document_dir_for
 
 
@@ -137,7 +137,7 @@ def test_list_documents_falls_back_to_derived_filename_without_manifest():
 
 def test_list_documents_reports_goldenset_status():
     write_raw("report_raw")
-    from app.goldenset import save_goldenset
+    from app.preprocess.goldenset import save_goldenset
 
     save_goldenset("report_raw", {"source_file": "report_raw.md", "source_sha256": "x", "questions": []})
     client = TestClient(app)

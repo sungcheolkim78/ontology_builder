@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app import graphdb
-from app.embeddings import EMBEDDING_DIM
+from app.preprocess.embeddings import EMBEDDING_DIM
 from app.graphrag import (
     analyze_question,
     search_graph,
