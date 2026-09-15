@@ -4,19 +4,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-<<<<<<< HEAD
-from app.parser import DATA_DIR, normalize_policy_headings
-=======
 from app.preprocess.parser import (
     DATA_DIR,
     convert_general_pdf_to_markdown,
     convert_pdf_to_markdown_file,
     general_page_to_markdown,
     markdown_text,
+    normalize_policy_headings,
     normalize_table,
     table_to_markdown,
 )
->>>>>>> d45d004182ba4ebae79f8cc382b56b91fdeef35a
 from app.paths import document_dir_for
 
 
@@ -194,7 +191,7 @@ def test_parse_uses_table_aware_converter_for_pdf_by_default(monkeypatch):
         lambda filename, data: {"filename": "report_raw.md", "path": "data/report_raw.md"},
     )
     monkeypatch.setattr(
-        "app.parser.anydoc.to_markdown_bytes",
+        "app.preprocess.parser.anydoc.to_markdown_bytes",
         lambda data, fmt=None: (_ for _ in ()).throw(
             AssertionError("insurance PDFs should use the table-aware converter")
         ),

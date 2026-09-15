@@ -2,8 +2,17 @@
 """Download Samsung Life individual-insurance policy PDFs by category.
 
 The script uses Samsung Life's public product-disclosure API and PCMS viewer.
-It prefers distinct products that are currently on sale and supplements them
-with the most recent historical products when a category has too few results.
+--per-category is how many NEW distinct products to fetch per category on
+this run, skipping ones already recorded in manifest.json -- so re-running
+the script grows the corpus over time instead of re-selecting the same top
+N products every time. It prefers products that are currently on sale and
+supplements them with the most recent historical products when a category
+doesn't have enough new ones left. Every run also consults any existing
+manifest.json for entries whose local file is missing on disk (never
+actually downloaded, e.g. from a --dry-run, or removed since) and
+re-downloads those using their already-resolved URL. --overwrite bypasses
+the "already downloaded" skip and re-selects/re-fetches the current top N
+per category instead.
 """
 
 from __future__ import annotations
@@ -167,16 +176,40 @@ def fetch_all_products(category: str, timeout: float, page_size: int = 100) -> l
     return unique_products(products)
 
 
-def select_products(category: str, count: int, timeout: float) -> list[Product]:
-    current = fetch_current_products(category, timeout)
+def select_products(
+    category: str,
+    count: int,
+    timeout: float,
+    exclude: frozenset[str] = frozenset(),
+) -> list[Product]:
+    """Select up to `count` distinct products not already in `exclude`.
+
+    `exclude` holds NFKC-casefolded product names (typically ones already
+    present in a prior run's manifest) so repeated runs fetch new products
+    instead of re-selecting the same currently-listed top N every time.
+    """
+    current = [
+        product
+        for product in fetch_current_products(category, timeout)
+        if unicodedata.normalize("NFKC", product.name).casefold() not in exclude
+    ]
     if len(current) >= count:
         return current[:count]
 
     selected = list(current)
     selected_names = {
         unicodedata.normalize("NFKC", product.name).casefold() for product in selected
-    }
-    for product in fetch_all_products(category, timeout):
+    } | set(exclude)
+    try:
+        historical = fetch_all_products(category, timeout)
+    except Exception as exc:
+        print(
+            f"[{category}] warning: failed to load historical products, "
+            f"falling back to {len(selected)} currently listed product(s): {exc}",
+            file=sys.stderr,
+        )
+        return selected
+    for product in historical:
         key = unicodedata.normalize("NFKC", product.name).casefold()
         if key in selected_names:
             continue
@@ -267,6 +300,84 @@ def download_product(
     }
 
 
+def missing_download_records(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Manifest entries whose local file is absent (never downloaded, or removed since)."""
+    return [
+        record
+        for record in files
+        if record.get("local_file") and not Path(record["local_file"]).exists()
+    ]
+
+
+def redownload_from_record(record: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """Re-download a manifest entry's PDF using its already-resolved source_url."""
+    source_url = record.get("source_url")
+    if not source_url:
+        raise DownloadError(f"no source_url recorded for {record.get('product_name')}")
+
+    target = Path(record["local_file"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = request_bytes(source_url, timeout=timeout, retries=3)
+    if not content.startswith(b"%PDF-"):
+        raise DownloadError(f"downloaded content is not a PDF: {record.get('product_name')}")
+    temporary = target.with_suffix(target.suffix + ".part")
+    temporary.write_bytes(content)
+    temporary.replace(target)
+
+    updated = dict(record)
+    updated["size_bytes"] = target.stat().st_size
+    updated["sha256"] = sha256_file(target)
+    updated["action"] = "downloaded"
+    return updated
+
+
+def load_existing_manifest(manifest_path: Path) -> dict[str, Any] | None:
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"warning: ignoring unreadable manifest {manifest_path}: {exc}", file=sys.stderr)
+        return None
+
+
+def file_record_key(record: dict[str, Any]) -> tuple[str, str]:
+    name = unicodedata.normalize("NFKC", str(record.get("product_name", ""))).casefold()
+    return (str(record.get("category", "")), name)
+
+
+def merge_file_records(
+    existing: list[dict[str, Any]], new: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged = list(existing)
+    index_by_key = {file_record_key(record): i for i, record in enumerate(merged)}
+    for record in new:
+        key = file_record_key(record)
+        if key in index_by_key:
+            merged[index_by_key[key]] = record
+        else:
+            index_by_key[key] = len(merged)
+            merged.append(record)
+    return merged
+
+
+def downloaded_names_by_category(files: list[dict[str, Any]]) -> dict[str, set[str]]:
+    by_category: dict[str, set[str]] = {}
+    for record in files:
+        category = str(record.get("category", ""))
+        name = unicodedata.normalize("NFKC", str(record.get("product_name", ""))).casefold()
+        by_category.setdefault(category, set()).add(name)
+    return by_category
+
+
+def merge_categories(existing: list[str], requested: list[str]) -> list[str]:
+    merged = list(existing)
+    for category in requested:
+        if category not in merged:
+            merged.append(category)
+    return merged
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Download Samsung Life individual-insurance policy PDFs."
@@ -275,7 +386,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir", type=Path, default=Path("data/raw/pdf"), help="output directory"
     )
     parser.add_argument(
-        "--per-category", type=int, default=5, help="distinct products per category"
+        "--per-category",
+        type=int,
+        default=5,
+        help="new distinct products to fetch per category, skipping ones already in manifest.json",
     )
     parser.add_argument(
         "--categories",
@@ -304,10 +418,21 @@ def main(argv: list[str] | None = None) -> int:
     records: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
 
+    manifest_path = output_dir / "manifest.json"
+    existing_manifest = load_existing_manifest(manifest_path)
+    existing_files = existing_manifest.get("files", []) if existing_manifest else []
+    already_downloaded = (
+        {} if args.overwrite else downloaded_names_by_category(existing_files)
+    )
+
     for category in args.categories:
-        print(f"[{category}] selecting {args.per_category} product(s)")
+        exclude = frozenset(already_downloaded.get(category, ()))
+        print(
+            f"[{category}] selecting {args.per_category} new product(s) "
+            f"({len(exclude)} already downloaded)"
+        )
         try:
-            products = select_products(category, args.per_category, args.timeout)
+            products = select_products(category, args.per_category, args.timeout, exclude=exclude)
         except Exception as exc:
             failures.append({"category": category, "error": str(exc)})
             print(f"[{category}] failed to load products: {exc}", file=sys.stderr)
@@ -315,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if len(products) < args.per_category:
             print(
-                f"[{category}] warning: only {len(products)} distinct products were found",
+                f"[{category}] warning: only {len(products)} new distinct product(s) were found",
                 file=sys.stderr,
             )
         for index, product in enumerate(products, 1):
@@ -336,27 +461,51 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print(f"[{category}] download failed: {product.name}: {exc}", file=sys.stderr)
 
+    missing_records = missing_download_records(existing_files)
+    if missing_records:
+        if args.dry_run:
+            print(f"skipping re-download of {len(missing_records)} missing file(s) (dry run)")
+        else:
+            for record in missing_records:
+                category = record.get("category", "")
+                name = record.get("product_name", "")
+                print(f"[{category}] re-downloading missing file: {name}")
+                try:
+                    records.append(redownload_from_record(record, args.timeout))
+                except Exception as exc:
+                    failures.append({"category": category, "product_name": name, "error": str(exc)})
+                    print(f"[{category}] re-download failed: {name}: {exc}", file=sys.stderr)
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    merged_files = merge_file_records(existing_files, records)
+    merged_categories = merge_categories(
+        existing_manifest.get("requested_categories", []) if existing_manifest else [],
+        args.categories,
+    )
+
     manifest = {
         "format_version": 1,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": (existing_manifest or {}).get("created_at", now),
+        "updated_at": now,
         "source": "Samsung Life product disclosure",
         "source_page": (
             f"{SITE_BASE}/individual/products/disclosure/sales/PDO-PRPRI010110M"
         ),
         "major_category": "개인",
-        "requested_categories": args.categories,
+        "requested_categories": merged_categories,
         "requested_per_category": args.per_category,
         "dry_run": args.dry_run,
-        "files": records,
+        "files": merged_files,
         "failures": failures,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(
-        f"done: {len(records)} succeeded, {len(failures)} failed; manifest: {manifest_path}"
+        f"done: {len(records)} succeeded, {len(failures)} failed; "
+        f"manifest: {manifest_path} ({len(merged_files)} total file(s))"
     )
     return 1 if failures else 0
 

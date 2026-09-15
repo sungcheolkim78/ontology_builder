@@ -269,19 +269,12 @@ clickable chips that toggle that type's graph filter, and
 ontology graph panel — see the Frontend section.
 
 **`POST /api/parse`** — multipart upload, field `file`, optional field
-<<<<<<< HEAD
 `converter` (`"table_aware"` default or `"anydoc"`; table-aware applies only
-to actual `.pdf` uploads — see `app.chunking`). Insurance-policy PDFs use the
+to actual `.pdf` uploads — see `app.preprocess.parser`). Insurance-policy PDFs use the
 table-aware route by default, while non-PDF uploads continue through anydoc.
 Extracts the extension from the filename (sanitized via `os.path.basename` to
 prevent path traversal), calls `convert_pdf_to_markdown_file` for table-aware
 PDFs or `anydoc.to_markdown_bytes(data, ext)` otherwise,
-=======
-`converter` (`"anydoc"` default or `"table_aware"`, the latter only
-applying to actual `.pdf` uploads — see `app.preprocess.parser`). Extracts the
-extension from the filename (sanitized via `os.path.basename` to
-prevent path traversal), calls `anydoc.to_markdown_bytes(data, ext)`,
->>>>>>> d45d004182ba4ebae79f8cc382b56b91fdeef35a
 saves the result to `backend/data/documents/{stem}/raw.md`, returns
 `{"filename": "...", "path": "data/..."}` (content is not included in
 the response — fetch it separately via `/api/files/{filename}`). The

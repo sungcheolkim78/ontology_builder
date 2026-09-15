@@ -8,13 +8,8 @@ from app.preprocess.chunking import (
     chunk_markdown,
     chunk_markdown_file,
     guess_section_label,
-<<<<<<< HEAD
-    markdown_text,
-    normalize_table,
-    parse_section_heading,
-=======
->>>>>>> d45d004182ba4ebae79f8cc382b56b91fdeef35a
     parse_article_heading,
+    parse_section_heading,
 )
 from app.paths import document_dir_for
 
