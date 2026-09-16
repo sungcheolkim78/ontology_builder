@@ -100,7 +100,7 @@ against the venv, not inside a container.
 
 Tests never touch the real `backend/data` — `tests/conftest.py` points
 `ONTOLOGY_DATA_DIR` at a throwaway temp directory before any `app.*` module
-is imported, and `app/paths.py`'s `data_dir()` (used by `parser.DATA_DIR`,
+is imported, and `app/utils/paths.py`'s `data_dir()` (used by `parser.DATA_DIR`,
 `ontology.DOCUMENTS_DIR`, `graphdb.DB_PATH`) honors that override. This
 exists because `test_graphdb.py`/`test_ontology.py`/`test_files.py`'s
 fixtures delete and recreate `DATA_DIR`/`DOCUMENTS_DIR`/`graphdb.DB_PATH`
@@ -160,10 +160,25 @@ is likewise a package, `app/ontology/`, split by concern into
 (see that package's own `__init__.py` docstring for the split and why
 `get_chat_model`/`get_embedding_model` are re-exported from there rather
 than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
-each submodule).
+each submodule). `app.ontology.schema_validation` (normalization/validation
+of a schema's `node_types`/`edge_types` shape) lives inside this same
+package rather than as its own top-level module, since it's a leaf every
+other `app.ontology` submodule reaches for, not a pipeline stage of its
+own.
+
+`app/utils/` holds cross-cutting helpers with no pipeline stage or route of
+their own: `auth.py` (token issuing/checking) and `paths.py` (every
+filesystem-path computation for `backend/data`'s layout — `data_dir`,
+`documents_dir`, `document_dir_for`, plus the small filename-derived
+helpers `stem_for`, `document_path_for`, `chunk_path_for`,
+`document_raw_files`). Those four were originally private helpers inside
+`main.py`; they moved here once several unrelated routes needed the same
+`{stem}.md` ⇄ `raw.md`/`chunks.json` path logic, so `main.py` stays
+request/response shaping only and any future module needing a document's
+on-disk path doesn't have to reach into `main.py` for it.
 
 - `parser.py` — the pdf -> markdown stage of document ingestion, all of it
-  writing `backend/data/documents/{stem}/raw.md` (`app.paths.document_dir_for`
+  writing `backend/data/documents/{stem}/raw.md` (`app.utils.paths.document_dir_for`
   owns this per-document folder layout; every other per-document artifact
   -- schema versions, chunks, discovery, summary, manifest -- lives
   alongside it in that same folder). The `{stem}_raw.md`-shaped filename

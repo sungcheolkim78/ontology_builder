@@ -27,7 +27,7 @@ from pathlib import Path
 
 from app.llm.chat import get_chat_model
 from app.ontology import parse_json_response
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
 from app.llm.telemetry import invoke_with_telemetry
 

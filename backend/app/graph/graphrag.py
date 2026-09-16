@@ -5,7 +5,7 @@ from app.graph import graphdb
 from app.llm.chat import get_chat_model, to_langchain_messages
 from app.preprocess.embeddings import get_embedding_model
 from app.ontology import parse_json_response
-from app.schema_validation import normalize_schema
+from app.ontology.schema_validation import normalize_schema
 from app.llm.telemetry import invoke_with_telemetry, embed_with_telemetry
 
 # How many of a type's own nodes to keep when keyword matching finds none

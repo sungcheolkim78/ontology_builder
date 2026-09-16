@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.graph import graphdb
 from app import ontology
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
@@ -21,7 +21,7 @@ from app.llm.prompts import (
     SUMMARY_PROMPT,
     VALIDATION_PROMPT,
 )
-from app.schema_validation import normalize_schema
+from .schema_validation import normalize_schema
 from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 from .persistence import (

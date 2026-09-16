@@ -11,7 +11,7 @@ Korean insurance-policy PDFs (see that directory's README for the
 heading/section heuristics and their known limitations); the per-page logic
 there is preserved as-is, only the file-path-based I/O is replaced with
 bytes/DATA_DIR-based I/O so it fits this app's upload flow and `data_dir()`
-override (see app.paths) -- saved as the document's actual `raw.md`; and
+override (see app.utils.paths) -- saved as the document's actual `raw.md`; and
 `convert_general_pdf_to_markdown` -- plain per-page text, no table detection
 or heading/bullet restructuring, for a PDF with no such structure to
 exploit -- saved alongside as `raw0.md`, a reference copy for comparing the
@@ -29,7 +29,7 @@ from typing import Any
 
 import anydoc
 import pdfplumber
-from app.paths import data_dir, document_dir_for
+from app.utils.paths import data_dir, document_dir_for
 
 DATA_DIR = data_dir()
 
@@ -83,9 +83,9 @@ def parse_to_markdown_file(filename: str, data: bytes) -> dict:
 
     # "filename" stays {stem}_raw.md -- a synthetic, stable identifier the
     # rest of the app (and the frontend) treats as opaque, decoupled from
-    # where the file actually lives on disk (see app.paths.document_dir_for).
+    # where the file actually lives on disk (see app.utils.paths.document_dir_for).
     # The document folder is keyed by *this* stem (including "_raw"), since
-    # that's what _stem() later derives back from the returned filename.
+    # that's what app.utils.paths.stem_for() later derives back from the returned filename.
     out_stem = f"{stem}_raw"
     doc_dir = document_dir_for(out_stem)
     doc_dir.mkdir(parents=True, exist_ok=True)

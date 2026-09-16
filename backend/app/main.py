@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app.graph import graphdb
-from app.auth import APP_PASSWORD, is_valid_token, issue_token
+from app.utils.auth import APP_PASSWORD, is_valid_token, issue_token
 from app.llm.chat import (
     MODEL_CATALOG,
     OPERATION_KEYS,
@@ -20,7 +20,7 @@ from app.llm.chat import (
     to_langchain_messages,
 )
 from app.graph.graphrag import answer_question, search_graph
-from app.schema_validation import normalize_schema
+from app.ontology.schema_validation import normalize_schema
 from app.ontology import (
     activate_version,
     apply_domain_schema_changes,
@@ -59,7 +59,7 @@ from app.ontology import (
     use_domain_schema,
     validate_ontology,
 )
-from app.paths import document_dir_for, documents_dir
+from app.utils.paths import chunk_path_for, document_path_for, document_raw_files, stem_for
 from app.preprocess.chunking import chunk_markdown_file
 from app.preprocess.goldenset import (
     generate_goldenset,
@@ -185,7 +185,7 @@ def chat(request: ChatRequest):
         input=messages[-1]["content"] if messages else None,
     ) as span:
         if request.filename and messages:
-            stem = _stem(request.filename)
+            stem = stem_for(request.filename)
             version = get_active_version(stem)
             schema = load_schema(stem, version) if version is not None else None
             if schema and graphdb.has_graph(stem, version=version):
@@ -223,36 +223,21 @@ async def parse(file: UploadFile = File(...), converter: str = Form("table_aware
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"PDF 변환 실패: {e}")
     save_document_manifest(
-        _stem(result["filename"]), file.filename, converter="table_aware" if use_table_aware else "anydoc"
+        stem_for(result["filename"]), file.filename, converter="table_aware" if use_table_aware else "anydoc"
     )
     return result
-
-
-def _document_raw_files() -> list[tuple[str, Path]]:
-    """(stem, raw.md path) for every registered document, newest first --
-    the single place that knows a document is "a folder under documents_dir()
-    with a raw.md in it", so /api/files and /api/documents can't drift apart
-    on what counts as a document."""
-    if not documents_dir().is_dir():
-        return []
-    entries = [
-        (d.name, d / "raw.md")
-        for d in documents_dir().iterdir()
-        if d.is_dir() and not d.name.startswith(".") and (d / "raw.md").is_file()
-    ]
-    return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)
 
 
 @app.get("/api/files")
 def list_files():
     return {
-        "files": [{"filename": f"{stem}.md"} for stem, _ in _document_raw_files()]
+        "files": [{"filename": f"{stem}.md"} for stem, _ in document_raw_files()]
     }
 
 
 @app.get("/api/files/{filename}", response_class=PlainTextResponse)
 def get_file(filename: str):
-    safe_path = _document_path(filename)
+    safe_path = document_path_for(filename)
     if not safe_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return safe_path.read_text()
@@ -261,7 +246,7 @@ def get_file(filename: str):
 @app.get("/api/documents")
 def list_documents():
     documents = []
-    for stem, raw_path in _document_raw_files():
+    for stem, raw_path in document_raw_files():
         manifest = load_document_manifest(stem)
         active_version = get_active_version(stem)
         stat = raw_path.stat()
@@ -273,7 +258,7 @@ def list_documents():
                 "size_bytes": stat.st_size,
                 "modified_at": stat.st_mtime,
                 "summary": load_document_summary(stem),
-                "has_chunks": _chunk_path(stem).is_file(),
+                "has_chunks": chunk_path_for(stem).is_file(),
                 "has_goldenset": goldenset_path_for(stem).is_file(),
                 "has_schema": active_version is not None,
                 "has_graph": active_version is not None
@@ -284,30 +269,18 @@ def list_documents():
     return {"documents": documents}
 
 
-def _document_path(filename: str) -> Path:
-    return document_dir_for(_stem(filename)) / "raw.md"
-
-
-def _stem(filename: str) -> str:
-    return Path(os.path.basename(filename)).stem
-
-
-def _chunk_path(stem: str) -> Path:
-    return document_dir_for(stem) / "chunks.json"
-
-
 @app.post("/api/documents/{filename}/chunk")
 def create_chunks(filename: str):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    result = chunk_markdown_file(_stem(filename))
+    result = chunk_markdown_file(stem_for(filename))
     return result
 
 
 @app.get("/api/documents/{filename}/chunk")
 def get_chunks(filename: str):
-    path = _chunk_path(_stem(filename))
+    path = chunk_path_for(stem_for(filename))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="chunks not found")
     return json.loads(path.read_text())
@@ -315,20 +288,20 @@ def get_chunks(filename: str):
 
 @app.post("/api/documents/{filename}/summary")
 def create_summary(filename: str):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
     try:
         summary = summarize_document(doc_path.read_text())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    save_document_summary(_stem(filename), summary)
+    save_document_summary(stem_for(filename), summary)
     return {"summary": summary}
 
 
 @app.get("/api/documents/{filename}/summary")
 def get_summary(filename: str):
-    summary = load_document_summary(_stem(filename))
+    summary = load_document_summary(stem_for(filename))
     if summary is None:
         raise HTTPException(status_code=404, detail="summary not found")
     return {"summary": summary}
@@ -340,10 +313,10 @@ class CreateGoldensetRequest(BaseModel):
 
 @app.post("/api/documents/{filename}/goldenset")
 def create_goldenset(filename: str, request: CreateGoldensetRequest | None = None):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = _stem(filename)
+    stem = stem_for(filename)
     question_count = request.question_count if request else 10
     try:
         # Always the whole raw.md, never chunks.json -- see the module-level
@@ -367,7 +340,7 @@ def create_goldenset(filename: str, request: CreateGoldensetRequest | None = Non
 
 @app.get("/api/documents/{filename}/goldenset")
 def get_goldenset(filename: str):
-    report = load_goldenset(_stem(filename))
+    report = load_goldenset(stem_for(filename))
     if report is None:
         raise HTTPException(status_code=404, detail="goldenset not found")
     return report
@@ -381,10 +354,10 @@ class CreateGoldensetAnswerRequest(BaseModel):
 def create_goldenset_answer(
     filename: str, question_id: str, request: CreateGoldensetAnswerRequest | None = None
 ):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = _stem(filename)
+    stem = stem_for(filename)
     goldenset = load_goldenset(stem)
     if goldenset is None:
         raise HTTPException(status_code=404, detail="goldenset not found")
@@ -430,7 +403,7 @@ def create_goldenset_answer(
 
 @app.get("/api/documents/{filename}/goldenset/answers")
 def get_goldenset_answers(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     return {"active_schema_version": version, "answers": latest_goldenset_answers(stem, version)}
 
@@ -453,7 +426,7 @@ class DiscoverRequest(BaseModel):
 @app.post("/api/ontology/{filename}/discover")
 def discover(filename: str, request: DiscoverRequest | None = None):
     max_chars = request.max_chars if request else None
-    stem = _stem(filename)
+    stem = stem_for(filename)
     try:
         with trace(
             "discover-ontology",
@@ -478,7 +451,7 @@ def discover(filename: str, request: DiscoverRequest | None = None):
 
 @app.get("/api/ontology/{filename}/discover")
 def get_discovery(filename: str):
-    report = load_discovery(_stem(filename))
+    report = load_discovery(stem_for(filename))
     if report is None:
         raise HTTPException(status_code=404, detail="discovery not found")
     return report
@@ -494,7 +467,7 @@ class CreateSchemaRequest(BaseModel):
 def create_schema(filename: str, request: CreateSchemaRequest | None = None):
     document_type = request.document_type if request else "general"
     max_chars = request.max_chars if request else None
-    stem = _stem(filename)
+    stem = stem_for(filename)
     discovery = load_discovery(stem) if (request and request.use_discovery) else None
     try:
         with trace(
@@ -538,13 +511,13 @@ def use_schema(filename: str, request: UseSchemaRequest):
         ),
         "general",
     )
-    version = create_schema_version(_stem(filename), schema, document_type=source_document_type)
+    version = create_schema_version(stem_for(filename), schema, document_type=source_document_type)
     return {**schema, "version": version}
 
 
 @app.get("/api/ontology/{filename}/schema")
 def get_schema(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     if version is None:
         raise HTTPException(status_code=404, detail="schema not found")
@@ -558,7 +531,7 @@ def get_schema(filename: str):
 
 @app.post("/api/ontology/{filename}/extract")
 def create_extraction(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     try:
         with trace(
             "extract-graph",
@@ -583,7 +556,7 @@ def create_extraction(filename: str):
 
 @app.post("/api/ontology/{filename}/embed")
 def create_embeddings(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     if version is None or not graphdb.has_graph(stem, version=version):
         raise HTTPException(status_code=404, detail="ontology not extracted yet")
@@ -597,10 +570,10 @@ class ValidateRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/validate")
 def validate(filename: str, request: ValidateRequest | None = None):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     if version is None:
         raise HTTPException(status_code=404, detail="schema not found")
@@ -623,10 +596,10 @@ class EvolveRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/evolve")
 def evolve(filename: str, request: EvolveRequest):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     if version is None:
         raise HTTPException(status_code=404, detail="schema not found")
@@ -649,7 +622,7 @@ class EvolveApplyRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/evolve/apply")
 def evolve_apply(filename: str, request: EvolveApplyRequest):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     if get_active_version(stem) is None:
         raise HTTPException(status_code=404, detail="schema not found")
     try:
@@ -675,10 +648,10 @@ def converge_domain(request: DomainConvergeRequest):
         raise HTTPException(status_code=400, detail="filenames must not be empty")
     docs = []
     for filename in request.filenames:
-        doc_path = _document_path(filename)
+        doc_path = document_path_for(filename)
         if not doc_path.is_file():
             raise HTTPException(status_code=404, detail=f"document not found: {filename}")
-        docs.append({"stem": _stem(filename), "text": doc_path.read_text()})
+        docs.append({"stem": stem_for(filename), "text": doc_path.read_text()})
 
     seed_schema = request.seed_schema
     remaining = docs
@@ -745,10 +718,10 @@ def converge_domain_persisted(domain: str, request: DomainRunConvergeRequest):
         raise HTTPException(status_code=400, detail="filenames must not be empty")
     docs = []
     for filename in request.filenames:
-        doc_path = _document_path(filename)
+        doc_path = document_path_for(filename)
         if not doc_path.is_file():
             raise HTTPException(status_code=404, detail=f"document not found: {filename}")
-        docs.append({"stem": _stem(filename), "text": doc_path.read_text()})
+        docs.append({"stem": stem_for(filename), "text": doc_path.read_text()})
     try:
         result = run_domain_convergence(domain, docs, max_chars=request.max_chars)
     except ValueError as e:
@@ -777,7 +750,7 @@ class UseDomainSchemaRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/schema/use-domain")
 def use_domain_schema_endpoint(filename: str, request: UseDomainSchemaRequest):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     try:
         version = use_domain_schema(stem, request.domain, document_type=request.document_type)
     except ValueError as e:
@@ -794,7 +767,7 @@ class StabilityRequest(BaseModel):
 
 @app.post("/api/ontology/{filename}/schema/stability")
 def schema_stability(filename: str, request: StabilityRequest | None = None):
-    doc_path = _document_path(filename)
+    doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
     document_type = request.document_type if request else "general"
@@ -811,7 +784,7 @@ def schema_stability(filename: str, request: StabilityRequest | None = None):
 
 @app.get("/api/ontology/{filename}")
 def get_ontology(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     version = get_active_version(stem)
     if version is None:
         raise HTTPException(status_code=404, detail="ontology not extracted yet")
@@ -823,7 +796,7 @@ def get_ontology(filename: str):
 
 @app.get("/api/ontology/{filename}/schema/versions")
 def get_schema_versions(filename: str):
-    stem = _stem(filename)
+    stem = stem_for(filename)
     active = get_active_version(stem)
     return {
         "versions": [
@@ -840,7 +813,7 @@ def get_schema_versions(filename: str):
 @app.post("/api/ontology/{filename}/schema/versions/{version}/activate")
 def activate_schema_version(filename: str, version: int):
     try:
-        activate_version(_stem(filename), version)
+        activate_version(stem_for(filename), version)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "ok"}
@@ -849,7 +822,7 @@ def activate_schema_version(filename: str, version: int):
 @app.delete("/api/ontology/{filename}/schema/versions/{version}")
 def delete_schema_version(filename: str, version: int):
     try:
-        delete_version(_stem(filename), version)
+        delete_version(stem_for(filename), version)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "ok"}

@@ -1,6 +1,6 @@
 import copy
 
-from app.schema_validation import normalize_schema, validate_graph, validate_schema
+from app.ontology.schema_validation import normalize_schema, validate_graph, validate_schema
 
 LEGACY_SCHEMA = {
     "node_types": [

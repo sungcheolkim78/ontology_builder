@@ -10,7 +10,7 @@ from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
 from app.preprocess.parser import DATA_DIR
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 
 
 class FakeChatModel:

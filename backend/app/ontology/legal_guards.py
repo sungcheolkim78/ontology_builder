@@ -1,4 +1,4 @@
-from app.schema_validation import validate_graph
+from .schema_validation import validate_graph
 
 # Structural node_type names named explicitly in the design spec (section
 # 3.3/5.1): these identify *where* text occurs, never *what* it says. Domain
@@ -76,7 +76,7 @@ def validate_legal_edge_shapes(graph: dict) -> list[dict]:
     """Validates direction/endpoint expectations for STATES/HAS_CONDITION/
     HAS_EXCEPTION/SUPPORTED_BY edges when a graph uses those exact names.
     Silently ignores every other edge_type -- this is not a general schema
-    validator (see app.schema_validation for that), just a guard against the
+    validator (see app.ontology.schema_validation for that), just a guard against the
     one reification pattern this app's own legal prompt asks for."""
     nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
     issues = []
@@ -138,7 +138,7 @@ def validate_legal_edge_shapes(graph: dict) -> list[dict]:
 
 def run_graph_validation(schema: dict, graph: dict) -> list[dict]:
     """Single entry point for graph-shape and evidence validation before
-    persistence (design spec section 7): combines app.schema_validation's
+    persistence (design spec section 7): combines app.ontology.schema_validation's
     generic instance checks (wrong endpoints, missing required properties,
     invalid numeric values, duplicate canonical nodes, missing legal
     evidence) with this module's own legal-reification guards

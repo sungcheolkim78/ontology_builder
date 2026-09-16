@@ -11,7 +11,7 @@ from app.preprocess.chunking import (
     parse_article_heading,
     parse_section_heading,
 )
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 
 
 @pytest.fixture(autouse=True)

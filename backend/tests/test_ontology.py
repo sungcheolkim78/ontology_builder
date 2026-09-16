@@ -9,7 +9,7 @@ from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR, embed_graph, embed_nodes
 from app.preprocess.parser import DATA_DIR
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 
 
 class FakeChatModel:
@@ -1333,7 +1333,7 @@ def test_load_document_manifest_returns_none_when_missing():
 
 
 def test_get_schema_returns_saved_schema():
-    from app.schema_validation import normalize_schema
+    from app.ontology.schema_validation import normalize_schema
 
     # The stored file itself stays exactly as saved (see
     # test_use_domain_schema_creates_new_version_for_document and friends,
@@ -1610,7 +1610,7 @@ def test_activate_schema_version_endpoint_switches_active_version(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema/versions/1/activate")
 
     assert response.status_code == 200
-    from app.schema_validation import normalize_schema
+    from app.ontology.schema_validation import normalize_schema
 
     assert client.get("/api/ontology/doc_raw.md/schema").json() == normalize_schema(schema_v1)
 
@@ -2292,7 +2292,7 @@ def test_run_domain_convergence_seeds_from_first_document_when_domain_is_new(mon
 
 def test_run_domain_convergence_records_schema_contract_version_and_validation_summary(monkeypatch):
     from app.ontology import domain_convergence_history, run_domain_convergence
-    from app.schema_validation import SCHEMA_CONTRACT_VERSION
+    from app.ontology.schema_validation import SCHEMA_CONTRACT_VERSION
 
     seed_schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(seed_schema)])
@@ -2305,7 +2305,7 @@ def test_run_domain_convergence_records_schema_contract_version_and_validation_s
     # Distinct from iterations[i]["validation_summary"] (per-document
     # extraction/graph quality, from validate_ontology's own LLM report) --
     # this is the converged schema's own structural validity, from
-    # app.schema_validation.validate_schema.
+    # app.ontology.schema_validation.validate_schema.
     assert entry["schema_validation_summary"] == {"error_count": 0, "warning_count": 0}
 
 
@@ -2464,7 +2464,7 @@ def test_get_domain_schema_endpoint_returns_schema_and_metadata():
 
     assert response.status_code == 200
     body = response.json()
-    from app.schema_validation import normalize_schema
+    from app.ontology.schema_validation import normalize_schema
 
     assert body["node_types"] == normalize_schema(schema)["node_types"]
     assert body["calibration_stems"] == []

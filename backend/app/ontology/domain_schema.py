@@ -2,8 +2,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from app.paths import data_dir
-from app.schema_validation import SCHEMA_CONTRACT_VERSION, summarize_validation_issues, validate_schema
+from app.utils.paths import data_dir
+from .schema_validation import SCHEMA_CONTRACT_VERSION, summarize_validation_issues, validate_schema
 
 from .extraction import converge_domain_schema, generate_schema
 from .persistence import _apply_schema_type_changes, create_schema_version

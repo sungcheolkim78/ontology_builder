@@ -279,7 +279,7 @@ saves the result to `backend/data/documents/{stem}/raw.md`, returns
 `{"filename": "...", "path": "data/..."}` (content is not included in
 the response — fetch it separately via `/api/files/{filename}`). The
 returned `"filename"` (`{stem}_raw.md`) is a synthetic, stable
-identifier — see `app.paths.document_dir_for` — decoupled from the
+identifier — see `app.utils.paths.document_dir_for` — decoupled from the
 actual on-disk path.
 `anydoc.ConvertError` and `ValueError` (e.g. unrecognized extension)
 both map to HTTP 400. A `.md` upload skips `anydoc` entirely (it only
@@ -505,9 +505,9 @@ Cypher queries via `graphdb.py`, not in-memory `networkx` graphs.
 `test_chat.py`, `test_chunking.py`, `test_config.py`, `test_files.py`,
 `test_graphdb.py`, `test_graphrag.py`, `test_ontology.py`, `test_parse.py`,
 `test_paths.py`, `test_telemetry.py`.
-`test_auth.py` patches both `app.auth.APP_PASSWORD` and
+`test_auth.py` patches both `app.utils.auth.APP_PASSWORD` and
 `app.main.APP_PASSWORD` per test (the latter is a separate name bound
-by `main.py`'s `from app.auth import APP_PASSWORD`, so patching only
+by `main.py`'s `from app.utils.auth import APP_PASSWORD`, so patching only
 the former leaves the middleware's copy unpatched) — none of these
 tests, nor any other test file, ever sets the real `APP_PASSWORD`
 env var, so the auth gate stays inactive for the rest of the suite.

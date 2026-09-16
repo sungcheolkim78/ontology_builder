@@ -4,7 +4,7 @@ from app.main import app
 
 
 def test_login_rejects_when_app_password_unset(monkeypatch):
-    monkeypatch.setattr("app.auth.APP_PASSWORD", "")
+    monkeypatch.setattr("app.utils.auth.APP_PASSWORD", "")
     monkeypatch.setattr("app.main.APP_PASSWORD", "")
     client = TestClient(app)
 
@@ -14,7 +14,7 @@ def test_login_rejects_when_app_password_unset(monkeypatch):
 
 
 def test_login_accepts_correct_password_and_protected_route_requires_it(monkeypatch):
-    monkeypatch.setattr("app.auth.APP_PASSWORD", "hunter2")
+    monkeypatch.setattr("app.utils.auth.APP_PASSWORD", "hunter2")
     monkeypatch.setattr("app.main.APP_PASSWORD", "hunter2")
     client = TestClient(app)
 
@@ -30,7 +30,7 @@ def test_login_accepts_correct_password_and_protected_route_requires_it(monkeypa
 
 
 def test_login_rejects_wrong_password(monkeypatch):
-    monkeypatch.setattr("app.auth.APP_PASSWORD", "hunter2")
+    monkeypatch.setattr("app.utils.auth.APP_PASSWORD", "hunter2")
     monkeypatch.setattr("app.main.APP_PASSWORD", "hunter2")
     client = TestClient(app)
 
@@ -40,7 +40,7 @@ def test_login_rejects_wrong_password(monkeypatch):
 
 
 def test_health_and_config_and_login_stay_open_when_app_password_set(monkeypatch):
-    monkeypatch.setattr("app.auth.APP_PASSWORD", "hunter2")
+    monkeypatch.setattr("app.utils.auth.APP_PASSWORD", "hunter2")
     monkeypatch.setattr("app.main.APP_PASSWORD", "hunter2")
     client = TestClient(app)
 
@@ -54,7 +54,7 @@ def test_options_preflight_bypasses_auth_even_on_protected_routes(monkeypatch):
     app's own Authorization header, so requiring one here breaks every real
     cross-origin request behind it -- observed in production as OPTIONS
     /api/parse returning 401 the moment APP_PASSWORD was set."""
-    monkeypatch.setattr("app.auth.APP_PASSWORD", "hunter2")
+    monkeypatch.setattr("app.utils.auth.APP_PASSWORD", "hunter2")
     monkeypatch.setattr("app.main.APP_PASSWORD", "hunter2")
     client = TestClient(app)
 

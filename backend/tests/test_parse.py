@@ -14,7 +14,7 @@ from app.preprocess.parser import (
     normalize_table,
     table_to_markdown,
 )
-from app.paths import document_dir_for
+from app.utils.paths import document_dir_for
 
 
 @pytest.fixture(autouse=True)

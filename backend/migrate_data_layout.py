@@ -26,7 +26,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-from app.paths import data_dir, document_dir_for, documents_dir
+from app.utils.paths import data_dir, document_dir_for, documents_dir
 
 
 def _old_graph_dir() -> Path:

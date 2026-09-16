@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-from app.paths import data_dir, document_dir_for
+from app.utils.paths import data_dir, document_dir_for
 
 DATA_DIR = data_dir()
 

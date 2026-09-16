@@ -3,7 +3,7 @@ import shutil
 import tempfile
 
 # Must run before any `app.*` module is imported (conftest.py is loaded by
-# pytest ahead of test module collection) -- app.paths.data_dir() reads this
+# pytest ahead of test module collection) -- app.utils.paths.data_dir() reads this
 # env var once, at each module's import time, to compute DATA_DIR/GRAPH_DIR/
 # DB_PATH. Without this, the test suite reads/writes/deletes the real
 # backend/data tree, which is exactly the accidental-data-loss risk this

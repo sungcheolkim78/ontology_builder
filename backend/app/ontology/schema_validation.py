@@ -1,9 +1,9 @@
 """Normalization and validation for domain schema declarations
 (`node_types`/`edge_types` plus optional typed `properties`/`category`/
 `validation`) -- see docs/superpowers/specs/2026-09-04-flexible-ontology-graph-schema-design.md
-section 4.2/8. Kept separate from app.ontology so the schema *contract*
-(what shape a schema must have) can be read/edited independently of how
-ontology.py loads, generates, or evolves schemas.
+section 4.2/8. Kept as its own module within app.ontology so the schema
+*contract* (what shape a schema must have) can be read/edited independently
+of how the rest of the package loads, generates, or evolves schemas.
 
 `normalize_schema` only fills in additive defaults; it never invents or
 changes a value a caller already supplied, so a legacy schema (names/
