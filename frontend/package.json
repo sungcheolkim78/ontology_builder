@@ -15,6 +15,7 @@
     "lucide-vue-next": "^1.0.0",
     "marked": "^14.1.0",
     "marked-katex-extension": "^5.1.12",
+    "pdfjs-dist": "5.6.205",
     "v-network-graph": "^0.9.23",
     "vue": "^3.4.0"
   },
@@ -22,7 +23,7 @@
     "@vitejs/plugin-vue": "^5.1.0",
     "@vue/test-utils": "^2.5.0",
     "autoprefixer": "^10.5.4",
-    "jsdom": "^30.0.1",
+    "jsdom": "29.1.1",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.19",
     "vite": "^5.4.0",

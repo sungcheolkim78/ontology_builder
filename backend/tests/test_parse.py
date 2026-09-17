@@ -206,6 +206,37 @@ def test_parse_uses_table_aware_converter_for_pdf_by_default(monkeypatch):
     assert response.status_code == 200
 
 
+def test_parse_saves_original_pdf_bytes_as_source_pdf(monkeypatch):
+    monkeypatch.setattr(
+        "app.main.convert_pdf_to_markdown_file",
+        lambda filename, data: {"filename": "report_raw.md", "path": "data/report_raw.md"},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/parse",
+        files={"file": ("report.pdf", b"%PDF-1.4 fake pdf bytes", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    saved = document_dir_for("report_raw") / "source.pdf"
+    assert saved.read_bytes() == b"%PDF-1.4 fake pdf bytes"
+
+
+def test_parse_does_not_save_source_pdf_for_non_pdf_upload(monkeypatch):
+    monkeypatch.setattr(
+        "app.preprocess.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"
+    )
+    client = TestClient(app)
+
+    client.post(
+        "/api/parse",
+        files={"file": ("report.docx", b"fake docx bytes", "application/octet-stream")},
+    )
+
+    assert not (document_dir_for("report_raw") / "source.pdf").exists()
+
+
 def test_parse_ignores_table_aware_for_non_pdf_upload(monkeypatch):
     monkeypatch.setattr(
         "app.preprocess.parser.anydoc.to_markdown_bytes", lambda data, fmt=None: "# hello"

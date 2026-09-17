@@ -1,10 +1,24 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DocumentPreview from '../DocumentPreview.vue'
+import PdfViewer from '../PdfViewer.vue'
 
 vi.mock('../../utils/api.js', () => ({
   apiFetch: vi.fn(),
+  API_BASE: '',
+  authState: { token: null },
 }))
+
+// PdfViewer.vue imports pdfjs-dist at module scope, and pdfjs-dist itself
+// references browser APIs (DOMMatrix) jsdom doesn't provide -- mocking the
+// package here is what lets DocumentPreview.vue's own (unrelated) tests
+// import it at all. PdfViewer's own rendering/highlight logic is covered
+// separately (see PdfViewer.test.js and utils/__tests__/pdfHighlight.test.js).
+vi.mock('pdfjs-dist', () => ({
+  getDocument: vi.fn(),
+  GlobalWorkerOptions: {},
+}))
+vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '' }))
 
 import { apiFetch } from '../../utils/api.js'
 
@@ -94,5 +108,54 @@ describe('DocumentPreview chunk toggle', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="chunk-row-header"]').exists()).toBe(false)
+  })
+})
+
+describe('DocumentPreview PDF toggle', () => {
+  function mountWithStubbedPdfViewer(file) {
+    return mount(DocumentPreview, {
+      props: { file },
+      global: { stubs: { PdfViewer: true } },
+    })
+  }
+
+  it('does not render a PDF tab when the document has no source pdf', async () => {
+    mockApi({ chunkStatus: 404 })
+    const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: false })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="view-mode-pdf"]').exists()).toBe(false)
+  })
+
+  it('renders a PDF tab when the document has a source pdf', async () => {
+    mockApi({ chunkStatus: 404 })
+    const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="view-mode-pdf"]').exists()).toBe(true)
+  })
+
+  it('switches to the PDF view on click and passes it a jump request', async () => {
+    mockApi({ chunkStatus: 404 })
+    const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: true })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="view-mode-pdf"]').trigger('click')
+
+    const pdfViewer = wrapper.findComponent(PdfViewer)
+    expect(pdfViewer.exists()).toBe(true)
+    expect(pdfViewer.props('jumpRequest')).toMatchObject({ page: 1 })
+  })
+
+  it('resets the PDF tab when the file changes to one without a pdf', async () => {
+    mockApi({ chunkStatus: 404 })
+    const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: true })
+    await flushPromises()
+
+    await wrapper.setProps({ file: { filename: 'other_raw.md', has_pdf: false } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="view-mode-pdf"]').exists()).toBe(false)
   })
 })

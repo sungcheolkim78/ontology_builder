@@ -2,7 +2,9 @@
 import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
+import { pageForLine } from '../utils/pdfHighlight.js'
 import ChunkView from './ChunkView.vue'
+import PdfViewer from './PdfViewer.vue'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -10,6 +12,9 @@ const props = defineProps({
 
 const chunkData = ref(null)
 const viewMode = ref('raw')
+const hasPdf = ref(false)
+const pdfJumpRequest = ref(null)
+let pdfJumpCounter = 0
 
 const html = ref('')
 const rawText = ref('')
@@ -47,7 +52,8 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
 
-const totalLines = computed(() => (rawText.value ? rawText.value.split('\n').length : 0))
+const lines = computed(() => (rawText.value ? rawText.value.split('\n') : []))
+const totalLines = computed(() => lines.value.length)
 
 const thumbHeightPercent = computed(() => {
   if (scrollHeight.value === 0) return 100
@@ -72,6 +78,25 @@ const currentLine = computed(() => {
   return Math.min(totalLines.value, Math.round(fraction * (totalLines.value - 1)) + 1)
 })
 
+// Jumps the PDF viewer to whatever raw.md line is currently in view --
+// its PDF page comes from the nearest preceding `<!-- page: N -->` marker
+// (see pageForLine), and its own text becomes the search target the viewer
+// highlights on that page (see PdfViewer.vue/utils/pdfHighlight.js).
+function jumpToPdf() {
+  const line = currentLine.value || 1
+  pdfJumpCounter += 1
+  pdfJumpRequest.value = {
+    page: pageForLine(lines.value, line),
+    text: (lines.value[line - 1] || '').trim(),
+    id: pdfJumpCounter,
+  }
+}
+
+function switchToPdf() {
+  jumpToPdf()
+  viewMode.value = 'pdf'
+}
+
 async function loadChunkData(file) {
   chunkData.value = null
   try {
@@ -90,6 +115,8 @@ watch(
     rawText.value = ''
     viewMode.value = 'raw'
     chunkData.value = null
+    hasPdf.value = !!file?.has_pdf
+    pdfJumpRequest.value = null
     if (!file) return
     loadChunkData(file)
     try {
@@ -114,7 +141,7 @@ watch(
     <div class="panel-header">
       <span>문서 Preview</span>
       <div
-        v-if="chunkData"
+        v-if="chunkData || hasPdf"
         data-testid="view-toggle"
         class="flex flex-shrink-0 gap-1 text-[11px]"
       >
@@ -126,12 +153,21 @@ watch(
           @click="viewMode = 'raw'"
         >원문</button>
         <button
+          v-if="chunkData"
           type="button"
           data-testid="view-mode-chunk"
           class="rounded px-1.5 py-0.5"
           :class="viewMode === 'chunk' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
           @click="viewMode = 'chunk'"
         >청크</button>
+        <button
+          v-if="hasPdf"
+          type="button"
+          data-testid="view-mode-pdf"
+          class="rounded px-1.5 py-0.5"
+          :class="viewMode === 'pdf' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          @click="switchToPdf"
+        >PDF</button>
       </div>
     </div>
     <div class="flex min-h-0 flex-1 flex-col p-3">
@@ -139,6 +175,9 @@ watch(
       <p v-else-if="error" class="text-xs text-red-400">{{ error }}</p>
       <div v-else-if="viewMode === 'chunk' && chunkData" class="min-h-0 flex-1 overflow-y-scroll">
         <ChunkView :data="chunkData" />
+      </div>
+      <div v-else-if="viewMode === 'pdf' && hasPdf" class="min-h-0 flex-1">
+        <PdfViewer :filename="file.filename" :jump-request="pdfJumpRequest" />
       </div>
       <template v-else>
         <div class="flex min-h-0 flex-1 gap-2">
@@ -151,6 +190,12 @@ watch(
         </div>
         <p class="mt-1 flex-shrink-0 border-t border-border pt-1 text-[11px] text-ink-faint">
           {{ currentLine }} of {{ totalLines }} lines
+          <button
+            v-if="hasPdf"
+            type="button"
+            class="ml-2 rounded px-1 text-accent hover:bg-white/5"
+            @click="switchToPdf"
+          >이 줄을 PDF에서 보기</button>
         </p>
       </template>
     </div>

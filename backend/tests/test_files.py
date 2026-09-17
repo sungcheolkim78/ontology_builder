@@ -115,6 +115,7 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
         "converter": "anydoc",
         "summary": None,
         "has_chunks": False,
+        "has_pdf": False,
         "has_goldenset": False,
         "has_schema": True,
         "has_graph": False,
@@ -148,6 +149,17 @@ def test_list_documents_reports_goldenset_status():
     assert response.json()["documents"][0]["has_goldenset"] is True
 
 
+def test_list_documents_reports_has_pdf_status():
+    d = write_raw("report_raw")
+    (d / "source.pdf").write_bytes(b"%PDF-1.4")
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert response.json()["documents"][0]["has_pdf"] is True
+
+
 def test_list_documents_returns_empty_list_when_no_data_dir():
     client = TestClient(app)
 
@@ -171,6 +183,27 @@ def test_get_file_returns_404_for_missing_file():
     client = TestClient(app)
 
     response = client.get("/api/files/does_not_exist.md")
+
+    assert response.status_code == 404
+
+
+def test_get_document_pdf_returns_saved_bytes():
+    d = write_raw("report_raw")
+    (d / "source.pdf").write_bytes(b"%PDF-1.4 fake pdf bytes")
+    client = TestClient(app)
+
+    response = client.get("/api/documents/report_raw.md/pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content == b"%PDF-1.4 fake pdf bytes"
+
+
+def test_get_document_pdf_returns_404_when_not_saved():
+    write_raw("report_raw")
+    client = TestClient(app)
+
+    response = client.get("/api/documents/report_raw.md/pdf")
 
     assert response.status_code == 404
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import anydoc
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app.graph import graphdb
@@ -222,9 +222,18 @@ async def parse(file: UploadFile = File(...), converter: str = Form("table_aware
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"PDF 변환 실패: {e}")
+    stem = _stem(result["filename"])
     save_document_manifest(
-        _stem(result["filename"]), file.filename, converter="table_aware" if use_table_aware else "anydoc"
+        stem, file.filename, converter="table_aware" if use_table_aware else "anydoc"
     )
+    if ext == "pdf":
+        # Kept alongside raw.md so the frontend can offer a page/line-accurate
+        # PDF viewer -- the conversion above is lossy (tables/headings are
+        # reconstructed heuristically), so viewing the actual source is the
+        # only way to check a given passage against the real document.
+        pdf_path = _pdf_path(stem)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(data)
     return result
 
 
@@ -274,6 +283,7 @@ def list_documents():
                 "modified_at": stat.st_mtime,
                 "summary": load_document_summary(stem),
                 "has_chunks": _chunk_path(stem).is_file(),
+                "has_pdf": _pdf_path(stem).is_file(),
                 "has_goldenset": goldenset_path_for(stem).is_file(),
                 "has_schema": active_version is not None,
                 "has_graph": active_version is not None
@@ -286,6 +296,18 @@ def list_documents():
 
 def _document_path(filename: str) -> Path:
     return document_dir_for(_stem(filename)) / "raw.md"
+
+
+def _pdf_path(stem: str) -> Path:
+    return document_dir_for(stem) / "source.pdf"
+
+
+@app.get("/api/documents/{filename}/pdf")
+def get_document_pdf(filename: str):
+    pdf_path = _pdf_path(_stem(filename))
+    if not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="pdf not found")
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 def _stem(filename: str) -> str:
