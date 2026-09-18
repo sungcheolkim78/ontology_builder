@@ -88,4 +88,23 @@ describe('ChunkView', () => {
     expect(wrapper.html()).toContain('<strong>성립</strong>')
     expect(wrapper.text()).toContain('용어의 정의는 다음과 같습니다.')
   })
+
+  it('emits chunk-selected with the full chunk object when expanding a chunk', async () => {
+    const wrapper = mountView()
+    const rows = wrapper.findAll('[data-testid="chunk-row-header"]')
+
+    await rows[0].trigger('click')
+
+    expect(wrapper.emitted('chunk-selected')).toEqual([[SAMPLE_DATA.chunks[0]]])
+  })
+
+  it('does not emit chunk-selected when collapsing an already-expanded chunk', async () => {
+    const wrapper = mountView()
+    const rows = wrapper.findAll('[data-testid="chunk-row-header"]')
+
+    await rows[0].trigger('click')
+    await rows[0].trigger('click')
+
+    expect(wrapper.emitted('chunk-selected')).toHaveLength(1)
+  })
 })

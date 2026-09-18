@@ -6,6 +6,7 @@ import { preambleLineCount } from '../utils/chunkFormat.js'
 const props = defineProps({
   data: { type: Object, required: true },
 })
+const emit = defineEmits(['chunk-selected'])
 
 const expandedIds = ref(new Set())
 
@@ -13,12 +14,13 @@ function isExpanded(id) {
   return expandedIds.value.has(id)
 }
 
-function toggle(id) {
+function toggle(chunk) {
   const next = new Set(expandedIds.value)
-  if (next.has(id)) {
-    next.delete(id)
+  if (next.has(chunk.id)) {
+    next.delete(chunk.id)
   } else {
-    next.add(id)
+    next.add(chunk.id)
+    emit('chunk-selected', chunk)
   }
   expandedIds.value = next
 }
@@ -45,7 +47,7 @@ function renderMarkdown(text) {
           type="button"
           data-testid="chunk-row-header"
           class="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-ink hover:bg-white/5"
-          @click="toggle(chunk.id)"
+          @click="toggle(chunk)"
         >
           <span class="text-ink-faint">{{ isExpanded(chunk.id) ? '▾' : '▸' }}</span>
           <span class="break-all">{{ chunk.path }}</span>
