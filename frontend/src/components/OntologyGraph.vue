@@ -12,10 +12,11 @@ const props = defineProps({
   enabledTypes: { type: Set, default: () => new Set() },
   enabledEdgeTypes: { type: Set, default: () => new Set() },
   highlightedNodeIds: { type: Array, default: () => [] },
-  // Bumped (a new object) by App.vue whenever SettingsPanel's workflow
-  // actions (schema generation, extraction, schema-library apply, DB reset)
-  // change what's in the backend for the current file -- this view has no
-  // buttons of its own anymore, so it only ever learns to refresh this way.
+  // Bumped (a new object) by App.vue whenever OntologyWorkflowView's or
+  // FileExplorerView's workflow actions (schema generation, extraction,
+  // schema-library apply, DB reset) change what's in the backend for the
+  // current file -- this view has no buttons of its own anymore, so it only
+  // ever learns to refresh this way.
   schemaRefreshRequest: { type: Object, default: null },
 })
 const emit = defineEmits(['types-available', 'edge-types-available', 'node-selected', 'edge-selected'])
@@ -767,10 +768,11 @@ async function viewGraph() {
 
 watch(() => props.file, loadGraph, { immediate: true })
 
-// A single consolidated trigger for every backend-side change SettingsPanel's
-// workflow actions can make (schema generation, extraction, schema-library
-// apply, DB reset) -- always reloads the full graph+schema, and additionally
-// forces schema-preview mode when the action was specifically a fresh schema
+// A single consolidated trigger for every backend-side change
+// OntologyWorkflowView's or FileExplorerView's workflow actions can make
+// (schema generation, extraction, schema-library apply, DB reset) -- always
+// reloads the full graph+schema, and additionally forces schema-preview mode
+// when the action was specifically a fresh schema
 // generation (see showSchemaPreview above).
 watch(
   () => props.schemaRefreshRequest,
