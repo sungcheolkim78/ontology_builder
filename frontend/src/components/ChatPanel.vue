@@ -35,7 +35,7 @@ function sortRelatedNodes(relatedNodes, nodeTypes) {
   })
 }
 
-const emit = defineEmits(['highlight-nodes', 'toggle-type'])
+const emit = defineEmits(['highlight-nodes', 'toggle-type', 'cite-evidence'])
 
 // One id for this component instance's whole lifetime -- `messages` itself
 // is never reset on file switch (see the watcher above), so this is a
@@ -209,7 +209,7 @@ async function sendMessage() {
               type="button"
               class="chip border-[color:var(--chip-color)] text-[color:var(--chip-color)] hover:bg-[color:var(--chip-color)] hover:text-white"
               :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
-              @click="emit('highlight-nodes', [node.id])"
+              @click="() => { emit('highlight-nodes', [node.id]); emit('cite-evidence', { text: node.evidence_text || node.label }) }"
             >
               {{ node.label }}
             </button>

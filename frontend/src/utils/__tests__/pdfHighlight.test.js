@@ -5,6 +5,7 @@ import {
   itemsInRange,
   normalizeForMatch,
   pageForLine,
+  pageForQuote,
 } from '../pdfHighlight.js'
 
 describe('normalizeForMatch', () => {
@@ -86,5 +87,26 @@ describe('pageForLine', () => {
 
   it('picks up a marker that is the target line itself', () => {
     expect(pageForLine(lines, 5)).toBe(2)
+  })
+})
+
+describe('pageForQuote', () => {
+  const rawText = '# 제목\n<!-- page: 1 -->\n첫 페이지 문장입니다.\n\n<!-- page: 2 -->\n둘째 페이지 문장입니다.\n'
+  const lines = rawText.split('\n')
+
+  it('finds a quote on page 1', () => {
+    expect(pageForQuote(rawText, lines, '첫 페이지 문장')).toBe(1)
+  })
+
+  it('finds a quote past a later page marker', () => {
+    expect(pageForQuote(rawText, lines, '둘째 페이지 문장')).toBe(2)
+  })
+
+  it('falls back to page 1 when the quote is not found verbatim', () => {
+    expect(pageForQuote(rawText, lines, '존재하지 않는 문장')).toBe(1)
+  })
+
+  it('falls back to page 1 for an empty quote', () => {
+    expect(pageForQuote(rawText, lines, '')).toBe(1)
   })
 })

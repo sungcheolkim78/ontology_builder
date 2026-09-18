@@ -81,3 +81,59 @@ describe('ChatPanel goldenset toggle', () => {
     expect(wrapper.find('[data-testid="goldenset-view"]').exists()).toBe(false)
   })
 })
+
+describe('ChatPanel evidence citation', () => {
+  function mountWithRelatedNode(relatedNode) {
+    apiFetch.mockImplementation((path) => {
+      if (path.includes('/goldenset')) return Promise.resolve(jsonResponse(null, 404))
+      return Promise.resolve(
+        jsonResponse({
+          role: 'assistant',
+          content: '답변',
+          node_types: [],
+          edge_types: [],
+          related_nodes: [relatedNode],
+        })
+      )
+    })
+    return mount(ChatPanel, { props: { file: { filename: 'doc_raw.md' } } })
+  }
+
+  async function sendAndClickChip(wrapper, label) {
+    await wrapper.find('input[type="text"]').setValue('질문')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const chip = wrapper.findAll('button').find((b) => b.text() === label)
+    await chip.trigger('click')
+  }
+
+  it('emits cite-evidence with evidence_text when present', async () => {
+    const wrapper = mountWithRelatedNode({
+      id: 'n1',
+      label: '보험금',
+      type: 'Benefit',
+      evidence_text: '사망 시 보험금을 지급한다',
+    })
+
+    await sendAndClickChip(wrapper, '보험금')
+
+    expect(wrapper.emitted('cite-evidence')).toEqual([[{ text: '사망 시 보험금을 지급한다' }]])
+  })
+
+  it('falls back to label when evidence_text is absent', async () => {
+    const wrapper = mountWithRelatedNode({ id: 'n1', label: '보험금', type: 'Benefit' })
+
+    await sendAndClickChip(wrapper, '보험금')
+
+    expect(wrapper.emitted('cite-evidence')).toEqual([[{ text: '보험금' }]])
+  })
+
+  it('still emits highlight-nodes as before when a chip is clicked', async () => {
+    const wrapper = mountWithRelatedNode({ id: 'n1', label: '보험금', type: 'Benefit' })
+
+    await sendAndClickChip(wrapper, '보험금')
+
+    expect(wrapper.emitted('highlight-nodes')).toEqual([[['n1']]])
+  })
+})

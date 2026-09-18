@@ -76,3 +76,18 @@ export function pageForLine(lines, lineNumber) {
   }
   return page
 }
+
+// Maps an evidence_text quote (verbatim per the backend's own verification --
+// see app.ontology.extraction._find_evidence_span) straight back to a raw.md
+// line number by locating it as a substring and counting newlines up to that
+// point, then reuses pageForLine for the line->page step. Silently falls back
+// to page 1 (letting PdfViewer's own on-page search no-op) if the quote isn't
+// found verbatim -- same graceful-miss behavior PdfViewer.vue already has for
+// any jump request whose text doesn't match on the target page.
+export function pageForQuote(rawText, lines, quote) {
+  if (!quote) return 1
+  const index = rawText.indexOf(quote)
+  if (index === -1) return 1
+  const lineNumber = rawText.slice(0, index).split('\n').length
+  return pageForLine(lines, lineNumber)
+}
