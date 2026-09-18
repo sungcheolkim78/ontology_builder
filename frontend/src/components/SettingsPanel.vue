@@ -98,6 +98,7 @@ const showGoldensetReport = ref(false)
 function fileStageBadges(f) {
   return [
     { key: 'md', label: 'MD', done: true },
+    { key: 'pdf', label: 'PDF', done: !!f.has_pdf },
     { key: 'chunk', label: 'Chunk', done: !!f.has_chunks },
     { key: 'goldenset', label: 'Golden', done: !!f.has_goldenset },
     { key: 'schema', label: 'Schema', done: !!f.has_schema },
@@ -735,7 +736,8 @@ async function onOperationModelChange(key) {
 }
 
 function selectFile(filename) {
-  emit('file-selected', { filename, path: `data/${filename}` })
+  const doc = files.value.find((f) => f.filename === filename)
+  emit('file-selected', { filename, path: `data/${filename}`, has_pdf: !!doc?.has_pdf })
 }
 
 async function useSchema(sourceStem) {
@@ -956,7 +958,8 @@ async function handleFileChange(event) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     await loadDocuments()
-    emit('file-selected', data)
+    const doc = files.value.find((f) => f.filename === data.filename)
+    emit('file-selected', { ...data, has_pdf: !!doc?.has_pdf })
   } catch (err) {
     uploadError.value = '업로드 실패: ' + err.message
   } finally {

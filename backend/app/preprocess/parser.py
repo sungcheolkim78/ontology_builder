@@ -96,46 +96,72 @@ def parse_to_markdown_file(filename: str, data: bytes) -> dict:
 
 # --- PDF -> Markdown --------------------------------------------------------
 
-# 제N장/제N편/제N관 (chapter/part/subsection) and 제N조 (article) references
-# all optionally carry a parenthesized title (e.g. "제2장(보장내용)",
-# "제3조(목적)") -- but chapter/part/subsection titles are just as often bare,
-# unparenthesized text instead (e.g. "제1관 목적 및 용어의 정의", "제1편
-# 총칙"), unlike articles, which in this pipeline are never genuine without
-# one (see chunking.chunk_markdown's ARTICLE_HEADING_PATTERN, which requires
-# the same). So the genuine-heading rule differs by kind:
-#   - article: genuine only if it has a parenthesized title AND that title
-#     runs to the end of the line AND a blank line (or nothing, i.e. it's
-#     the first line seen) precedes it.
-#   - chapter (including 관): genuine if -- when it does have a
-#     parenthesized title -- that title runs to the end of the line, AND
-#     either way a blank line (or nothing) precedes it.
-# Any of those conditions failing means it's a citation, not a heading:
-# trailing content after a *closed* title (as in "제3조(보험금의
-# 지급사유)에 해당하는 ...") is the classic mid-sentence case; no blank line
-# before it (as in "...별도의 규정이 없는 한\n제3조(보험금의 지급사유)",
-# where a citation lands alone on its own line purely from PDF line-wrap,
-# with the sentence it belongs to continuing on the *next* line) is the
-# other -- a real heading is set off from surrounding prose, a citation
-# isn't. Either way the reference gets linked as `[...]` in place instead of
-# restructured into a heading line, which would otherwise misrepresent
-# running prose as a new section.
-CHAPTER_PATTERN = re.compile(r"^제\s*\d+\s*[장편관](?P<title>\s*\([^)]*\))?")
-ARTICLE_PATTERN = re.compile(r"^제\s*\d+\s*조(?P<title>\s*\([^)]*\))?")
-NUMBERED_PATTERN = re.compile(r"^\d+\.\s+\S")
-
-REFERENCE_HEADING_PATTERNS = (
-    (CHAPTER_PATTERN, "##", "chapter"),
-    (ARTICLE_PATTERN, "###", "article"),
+HEADING_PATTERNS = (
+    (re.compile(r"^제\s*\d+\s*[장편관]\b"), "##"),
+    # A real 제N조 heading is the article number plus its bracketed/parenthesized
+    # title and nothing else on the line -- the trailing `$` is load-bearing:
+    # a sentence that merely *references* an article ("제3조(보상내용) 및
+    # 제4조...은 각 보장종목에 해당하는 약관을 참조하시기 바랍니다.") starts the
+    # same way but keeps going past the title, so it fails this full-line match
+    # and falls through to plain body text instead of becoming a false heading.
+    (re.compile(r"^제\s*\d+\s*조(?:\s*의\s*\d+)?(?:\s*[\(\[][^)\]]*[)\]])?\s*$"), "###"),
 )
 BULLET_PATTERN = re.compile(r"^[●■◆▶▣□◦ㆍ∙]\s*")
+# A numbered sub-item within an article (e.g. "2. 외래제비용...") is a list
+# item, not its own heading level. It's sometimes prefixed with the "㈜" note
+# marker (e.g. "㈜ 1. 「국민건강보험법」..." or "㈜1. ...") when it follows a
+# table footnote -- the optional prefix keeps that variant recognized too,
+# instead of falling through as an unstyled, undifferentiated line.
+NUMBERED_ITEM_PATTERN = re.compile(r"^(?:㈜\s*)?\d+\.\s+\S")
+# A circled number (①②③...) marks a 항 (paragraph) within a 조 (article). The
+# PDF text layer doesn't put a blank line before these, so they otherwise run
+# on straight from the end of the previous 항's text -- force a new paragraph.
+CIRCLED_NUMBER_PATTERN = re.compile(r"^[①-⑳]")
 PAGE_NUMBER_PATTERN = re.compile(r"^[-–—]?\s*\d+\s*[-–—]?$|^\d+\s*/\s*\d+$")
 
-# A numbered list item (e.g. "1. 보장내용") nests one level below whatever
-# chapter/article heading last preceded it -- "###" directly under a chapter
-# (##), "####" directly under an article (###). Without one yet, default to
-# the historical flat "###" (no chapter/article context to nest under).
-NUMBERED_HEADING_LEVEL = {"chapter": "###", "article": "####"}
-DEFAULT_NUMBERED_HEADING_LEVEL = "###"
+# The cover page opens with a policy code line (e.g. "LY0816002(260626)"),
+# then the policy name, then a short description, before the first 제N관
+# heading. FRONT_MATTER_CODE_PATTERN identifies the code line; the
+# description's start is marked by a line beginning with "※".
+FRONT_MATTER_CODE_PATTERN = re.compile(r"^[A-Z]{1,6}\d{3,}(?:\([0-9]{2,10}\))?$")
+GROUP_HEADING_START_PATTERN = re.compile(r"^제\s*\d+\s*관\b")
+
+
+def style_cover_page(lines: list[str]) -> tuple[list[str], list[str]] | None:
+    """Split a mini-cover opening into a styled block plus the remaining lines.
+
+    The main contract and every rider (특약) in a Samsung Life policy PDF each
+    restart with their own mini cover: a policy code, the policy/rider name, a
+    short description, then the first 제N관 heading -- this recurs at the start
+    of every such section throughout the document, not just on page 1. Returns
+    (styled_lines, rest) when this shape is found at the start of `lines`, else
+    None so the caller falls back to normal handling.
+    """
+    content = [(index, line) for index, line in enumerate(lines) if line]
+    if not content:
+        return None
+    first_index, code = content[0]
+    if not FRONT_MATTER_CODE_PATTERN.match(code):
+        return None
+    group_pos = next(
+        (index for index, line in enumerate(lines) if GROUP_HEADING_START_PATTERN.match(line)),
+        None,
+    )
+    if group_pos is None or group_pos <= first_index:
+        return None
+
+    body = [line for line in lines[first_index + 1 : group_pos] if line]
+    note_index = next((i for i, line in enumerate(body) if line.startswith("※")), len(body))
+    name_lines, desc_lines = body[:note_index], body[note_index:]
+    if not name_lines:
+        return None
+
+    styled = [f"**보험코드:** {code}", "", f"# {name_lines[0]}", *name_lines[1:]]
+    if desc_lines:
+        styled.append("")
+        styled.extend(f"> {line}" for line in desc_lines)
+    styled.append("")
+    return styled, lines[group_pos:]
 
 
 def markdown_text(text: str | None) -> str:
@@ -143,45 +169,29 @@ def markdown_text(text: str | None) -> str:
     cleaned = clean_text(text)
     if not cleaned:
         return ""
+    lines = [raw_line.strip() for raw_line in cleaned.splitlines()]
     output: list[str] = []
-    last_heading_kind: str | None = None
-    for raw_line in cleaned.splitlines():
-        line = raw_line.strip()
+    cover = style_cover_page(lines)
+    if cover is not None:
+        styled, lines = cover
+        output.extend(styled)
+    for line in lines:
         if not line or PAGE_NUMBER_PATTERN.fullmatch(line):
             if output and output[-1] != "":
                 output.append("")
             continue
-
-        reference = next(
-            (
-                (prefix, kind, match)
-                for pattern, prefix, kind in REFERENCE_HEADING_PATTERNS
-                if (match := pattern.match(line))
-            ),
-            None,
+        heading = next(
+            (prefix for pattern, prefix in HEADING_PATTERNS if pattern.match(line)), None
         )
-        if reference:
-            prefix, kind, match = reference
-            has_title = match.group("title") is not None
-            trailing = line[match.end():]
-            preceded_by_blank = not output or output[-1] == ""
-            if kind == "article":
-                genuine = has_title and not trailing and preceded_by_blank
-            else:
-                genuine = preceded_by_blank and (not has_title or not trailing)
-            if genuine:
-                output.extend([f"{prefix} {line}", ""])
-                last_heading_kind = kind
-                continue
-            line = f"[{line[:match.end()]}]{trailing}"
-        elif NUMBERED_PATTERN.match(line):
-            numbered_prefix = NUMBERED_HEADING_LEVEL.get(
-                last_heading_kind, DEFAULT_NUMBERED_HEADING_LEVEL
-            )
-            output.extend([f"{numbered_prefix} {line}", ""])
-            continue
-
-        if BULLET_PATTERN.match(line):
+        if heading:
+            output.extend([f"{heading} {line}", ""])
+        elif CIRCLED_NUMBER_PATTERN.match(line):
+            if output and output[-1] != "":
+                output.append("")
+            output.append(line)
+        elif NUMBERED_ITEM_PATTERN.match(line):
+            output.append(f"- {line}")
+        elif BULLET_PATTERN.match(line):
             output.append(f"- {BULLET_PATTERN.sub('', line)}")
         else:
             output.append(line)

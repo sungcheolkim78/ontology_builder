@@ -23,7 +23,9 @@ def documents_dir() -> Path:
 def document_dir_for(stem: str) -> Path:
     """The single folder holding everything about one document: raw.md,
     manifest.json, summary.json, discovery.json, chunks.json, versions.json,
-    schema_v{N}.json. Centralizing this here (rather than each module
+    schema_v{N}.json, and (PDF uploads only) source.pdf -- the original bytes,
+    kept alongside the lossy raw.md conversion so the frontend can offer a
+    page/line-accurate PDF viewer. Centralizing this here (rather than each module
     computing its own path) is what lets a new per-document artifact kind
     be added as just another file under this folder, with no new top-level
     data/ directory and no new helper elsewhere."""
@@ -45,6 +47,10 @@ def document_path_for(filename: str) -> Path:
 
 def chunk_path_for(stem: str) -> Path:
     return document_dir_for(stem) / "chunks.json"
+
+
+def pdf_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "source.pdf"
 
 
 def document_raw_files() -> list[tuple[str, Path]]:
