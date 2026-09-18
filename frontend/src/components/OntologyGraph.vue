@@ -18,7 +18,7 @@ const props = defineProps({
   // buttons of its own anymore, so it only ever learns to refresh this way.
   schemaRefreshRequest: { type: Object, default: null },
 })
-const emit = defineEmits(['types-available', 'edge-types-available'])
+const emit = defineEmits(['types-available', 'edge-types-available', 'node-selected', 'edge-selected'])
 
 const nodes = ref([])
 const edges = ref([])
@@ -112,6 +112,7 @@ const vngEdges = computed(() => {
 
 const layouts = ref({ nodes: {} })
 const selectedNodes = ref([])
+const selectedEdges = ref([])
 
 // --- node/edge hover tooltip ---
 const hoveredNode = ref(null)
@@ -165,6 +166,31 @@ watch(
     focusOnNodes(selectedNodes.value)
   }
 )
+
+// v-network-graph's own click-to-select (v-model:selected-nodes/-edges below) --
+// distinct from the highlightedNodeIds watcher above, which is driven by an
+// external prop instead. displayNodes/displayEdges already carry every field
+// the backend returned (detail, confidence, evidence_text, source_section,
+// ...) in graph mode, or the schema's own name/description in schema mode --
+// the inspector renders whichever of those this emits.
+watch(selectedNodes, (ids) => {
+  const id = ids[0]
+  emit('node-selected', id ? (displayNodes.value.find((n) => n.id === id) ?? null) : null)
+})
+
+// vngEdges keys edges by a synthetic `e${index}` id (see the vngEdges computed
+// above) since edges have no id of their own from the backend -- that index
+// maps straight back into visibleEdges, which (unlike vngEdges) still carries
+// every field the backend returned, not just what v-network-graph needs to render.
+watch(selectedEdges, (ids) => {
+  const id = ids[0]
+  if (!id) {
+    emit('edge-selected', null)
+    return
+  }
+  const index = Number(id.slice(1))
+  emit('edge-selected', visibleEdges.value[index] ?? null)
+})
 
 watch(
   displayNodes,
@@ -366,6 +392,7 @@ const configs = computed(() => ({
       fontSize: () => 11 / zoomLevel.value,
       color: '#9aa1b2',
     },
+    selectable: true,
   },
 }))
 
@@ -853,6 +880,7 @@ watch(
         <v-network-graph
           ref="graphRef"
           v-model:selected-nodes="selectedNodes"
+          v-model:selected-edges="selectedEdges"
           v-model:zoom-level="zoomLevel"
           :nodes="vngNodes"
           :edges="vngEdges"
