@@ -25,7 +25,7 @@ Requires a running `podman machine` and `backend/.env` with a real
 proxies `/api` and `/health` to the backend container. LLM tracing
 (`backend/.env`'s optional `LANGFUSE_*` vars) points at a separate,
 self-hosted Langfuse server shared across projects on this machine, not
-something `podman-compose.yml` itself runs -- see `docs/LANGFUSE.md`
+something `podman-compose.yml` itself runs -- see `docs/features/langfuse/LANGFUSE-spec.md`
 before expecting traces to show up anywhere. Ladybug Explorer (a
 GUI for browsing `backend/data/graph/graph.ladybugdb` directly via Cypher)
 is at `localhost:8001`, running in `MODE=READ_ONLY` so it can stay up
@@ -413,7 +413,7 @@ on-disk path doesn't have to reach into `main.py` for it.
   `embed_with_telemetry(operation, model, texts)` wraps both embedding
   call sites (`ontology.embed_nodes`, `graphrag.embed_query`) in a
   **Langfuse** `generation`/`embedding` observation (the `langfuse`
-  Python SDK — see `docs/LANGFUSE.md`). This replaced a raw-OpenTelemetry
+  Python SDK — see `docs/features/langfuse/LANGFUSE-spec.md`). This replaced a raw-OpenTelemetry
   span sent to a bundled Jaeger container: Langfuse's SDK is itself
   OpenTelemetry-based (confirmed by pointing it at an unreachable host and
   observing its OTLP exporter's own retry/timeout log lines), but gives
@@ -424,7 +424,7 @@ on-disk path doesn't have to reach into `main.py` for it.
   prompt/response text (or embedding input count/output count) --
   deliberately including the actual text, for debugging; this is fine
   only because the Langfuse server this points at by default is
-  self-hosted and not shared with anyone else (see `docs/LANGFUSE.md`).
+  self-hosted and not shared with anyone else (see `docs/features/langfuse/LANGFUSE-spec.md`).
   Both share a `_call_with_retry()` helper that retries the call up to
   `max_retries` (default 2) times, with a fixed delay, on
   `langchain_core.exceptions.ModelConnectionError` — the provider-agnostic
@@ -444,7 +444,7 @@ on-disk path doesn't have to reach into `main.py` for it.
   `invoke_with_telemetry`/`embed_with_telemetry` calls one request can make
   (e.g. `/api/chat`'s `analyze-question` → `embed-query` → `answer-chat`)
   nest under one trace instead of each showing up as its own unrelated
-  root -- see `docs/LANGFUSE.md`'s "Trace hierarchy" section, which
+  root -- see `docs/features/langfuse/LANGFUSE-spec.md`'s "Trace hierarchy" section, which
   includes a real captured example fetched via `langfuse-cli` and audited
   against Langfuse's own trace-instrumentation best practices. That
   guidance -- and the naming below -- comes from the `langfuse` Agent
