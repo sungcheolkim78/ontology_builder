@@ -25,7 +25,7 @@ const ITEMS = [
       class="flex flex-col items-center gap-1 rounded-md px-1.5 py-2.5 text-[10px] font-medium transition-colors"
       :class="activeView === item.id
         ? 'bg-accent-muted/60 text-ink'
-        : 'text-ink-faint hover:bg-white/5 hover:text-ink-muted'"
+        : 'text-ink-faint hover:bg-ink/5 hover:text-ink-muted'"
       @click="emit('nav-select', item.id)"
     >
       <component :is="item.icon" :size="18" />

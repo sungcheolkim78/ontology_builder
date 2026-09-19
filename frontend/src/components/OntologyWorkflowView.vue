@@ -415,12 +415,12 @@ async function applyEvolution() {
 }
 
 const DECISION_STYLES = {
-  ADD: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400',
+  ADD: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
   MODIFY: 'border-sky-500/50 bg-sky-500/15 text-sky-400',
-  MERGE: 'border-violet-500/50 bg-violet-500/15 text-violet-400',
-  DEPRECATE: 'border-amber-500/50 bg-amber-500/15 text-amber-400',
-  REJECT: 'border-border bg-white/5 text-ink-faint',
-  NEEDS_HUMAN_REVIEW: 'border-red-500/50 bg-red-500/15 text-red-400',
+  MERGE: 'border-violet-500/50 bg-violet-500/15 text-violet-700 dark:text-violet-400',
+  DEPRECATE: 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  REJECT: 'border-border bg-ink/5 text-ink-faint',
+  NEEDS_HUMAN_REVIEW: 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400',
 }
 
 function decisionClass(decision) {
@@ -437,11 +437,11 @@ function changeSummary(change) {
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
 const SEVERITY_STYLES = {
-  CRITICAL: 'border-red-500/50 bg-red-500/15 text-red-400',
-  HIGH: 'border-orange-500/50 bg-orange-500/15 text-orange-400',
-  MEDIUM: 'border-amber-500/50 bg-amber-500/15 text-amber-400',
+  CRITICAL: 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400',
+  HIGH: 'border-orange-500/50 bg-orange-500/15 text-orange-700 dark:text-orange-400',
+  MEDIUM: 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-400',
   LOW: 'border-sky-500/50 bg-sky-500/15 text-sky-400',
-  INFO: 'border-border bg-white/5 text-ink-muted',
+  INFO: 'border-border bg-ink/5 text-ink-muted',
 }
 
 function severityClass(severity) {
@@ -704,7 +704,7 @@ onMounted(async () => {
             문서에서 후보 개념·관계·속성·이벤트·규칙을 탐색적으로 도출합니다. 스키마 생성과는 별개의
             참고용 보고서이며, 자동으로 스키마에 반영되지 않습니다.
           </p>
-          <p v-if="discoveryError" class="mt-1 text-[11px] text-red-400">{{ discoveryError }}</p>
+          <p v-if="discoveryError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ discoveryError }}</p>
           <button
             v-if="discoveryReport && !showDiscoveryReport"
             type="button"
@@ -780,9 +780,9 @@ onMounted(async () => {
         </button>
 
         <p v-if="workflowProgress" class="text-[11px] italic text-ink-muted">{{ workflowProgress }}</p>
-        <p v-if="workflowMessage" class="text-[11px] text-emerald-400">{{ workflowMessage }}</p>
-        <p v-if="workflowError" class="text-[11px] text-red-400">{{ workflowError }}</p>
-        <p v-if="validationError" class="text-[11px] text-red-400">{{ validationError }}</p>
+        <p v-if="workflowMessage" class="text-[11px] text-emerald-700 dark:text-emerald-400">{{ workflowMessage }}</p>
+        <p v-if="workflowError" class="text-[11px] text-red-600 dark:text-red-400">{{ workflowError }}</p>
+        <p v-if="validationError" class="text-[11px] text-red-600 dark:text-red-400">{{ validationError }}</p>
       </div>
 
       <details class="mt-4 border-t border-border pt-3">
@@ -821,7 +821,7 @@ onMounted(async () => {
             <p class="text-[11px] leading-snug text-ink-faint">
               문서 전체를 기준으로 질문·정답·근거 인용을 생성합니다 (청크 단위가 아닌 문서 전체 기준).
             </p>
-            <p v-if="goldensetError" class="mt-1 text-[11px] text-red-400">{{ goldensetError }}</p>
+            <p v-if="goldensetError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ goldensetError }}</p>
             <button
               v-if="goldensetReport && !showGoldensetReport"
               type="button"
@@ -862,7 +862,7 @@ onMounted(async () => {
                 <span
                   v-for="t in domainSchema.node_types"
                   :key="t.name"
-                  class="chip border-border bg-white/5 text-ink-muted"
+                  class="chip border-border bg-ink/5 text-ink-muted"
                 >{{ t.name }}</span>
                 <span
                   v-for="t in domainSchema.edge_types"
@@ -877,7 +877,7 @@ onMounted(async () => {
               <p v-if="domainFiles.length === 0" class="text-[11px] text-ink-faint">문서가 없습니다</p>
               <ul v-else class="max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border p-1.5">
                 <li v-for="f in domainFiles" :key="f.filename">
-                  <label class="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-white/5">
+                  <label class="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-ink/5">
                     <input
                       type="checkbox"
                       :checked="selectedCalibrationFiles.has(f.filename)"
@@ -900,8 +900,8 @@ onMounted(async () => {
                 체크한 문서를 순서대로 반영해 도메인 스키마를 진화시킵니다. 문서 수가 많을수록 LLM
                 호출이 문서당 여러 번 발생하니 대표 문서 위주로 고르세요.
               </p>
-              <p v-if="convergeError" class="mt-1 text-[11px] text-red-400">{{ convergeError }}</p>
-              <p v-if="convergeMessage" class="mt-1 text-[11px] text-emerald-400">{{ convergeMessage }}</p>
+              <p v-if="convergeError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ convergeError }}</p>
+              <p v-if="convergeMessage" class="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">{{ convergeMessage }}</p>
             </section>
 
             <section v-if="domainEvaluation" class="mb-3">
@@ -983,10 +983,10 @@ onMounted(async () => {
               >
                 {{ isApplyingDomainReview ? '반영 중...' : '선택한 변경 반영' }}
               </button>
-              <p v-if="domainReviewError" class="mt-1 text-[11px] text-red-400">{{ domainReviewError }}</p>
+              <p v-if="domainReviewError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ domainReviewError }}</p>
             </section>
 
-            <p v-if="domainUseError" class="text-[11px] text-red-400">{{ domainUseError }}</p>
+            <p v-if="domainUseError" class="text-[11px] text-red-600 dark:text-red-400">{{ domainUseError }}</p>
             <button
               type="button"
               class="btn-primary w-full"
@@ -1007,7 +1007,7 @@ onMounted(async () => {
         <label
           v-for="type in availableTypes"
           :key="type"
-          class="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 text-xs hover:bg-white/5"
+          class="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 text-xs hover:bg-ink/5"
         >
           <span class="flex min-w-0 items-center gap-1.5 break-all">
             <input
@@ -1028,7 +1028,7 @@ onMounted(async () => {
         <label
           v-for="type in availableEdgeTypes"
           :key="type"
-          class="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 text-xs hover:bg-white/5"
+          class="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 text-xs hover:bg-ink/5"
         >
           <span class="flex min-w-0 items-center gap-1.5 break-all">
             <input
@@ -1130,32 +1130,32 @@ onMounted(async () => {
               <span
                 class="chip"
                 :class="validationReport.validation_summary?.ontology_valid
-                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
-                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400'"
               >
                 온톨로지 {{ validationReport.validation_summary?.ontology_valid ? '유효' : '문제 있음' }}
               </span>
               <span
                 class="chip"
                 :class="validationReport.validation_summary?.extraction_valid
-                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
-                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400'"
               >
                 추출 {{ validationReport.validation_summary?.extraction_valid ? '유효' : '문제 있음' }}
               </span>
               <span
                 class="chip"
                 :class="validationReport.validation_summary?.provenance_valid
-                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
-                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400'"
               >
                 근거 {{ validationReport.validation_summary?.provenance_valid ? '유효' : '문제 있음' }}
               </span>
               <span
                 class="chip"
                 :class="validationReport.validation_summary?.competency_questions_answerable
-                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
-                  : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400'"
               >
                 질의응답 {{ validationReport.validation_summary?.competency_questions_answerable ? '가능' : '불가' }}
               </span>
@@ -1223,8 +1223,8 @@ onMounted(async () => {
                   <span
                     class="chip flex-shrink-0"
                     :class="q.answerable
-                      ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400'
-                      : 'border-red-500/50 bg-red-500/15 text-red-400'"
+                      ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                      : 'border-red-500/50 bg-red-500/15 text-red-600 dark:text-red-400'"
                   >
                     {{ q.answerable ? '가능' : '불가' }}
                   </span>
@@ -1245,7 +1245,7 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
-          <p v-if="evolutionError" class="text-[11px] text-red-400">{{ evolutionError }}</p>
+          <p v-if="evolutionError" class="text-[11px] text-red-600 dark:text-red-400">{{ evolutionError }}</p>
           <span v-else></span>
           <button
             type="button"
@@ -1303,8 +1303,8 @@ onMounted(async () => {
         </div>
         <div class="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-2.5">
           <div class="min-w-0">
-            <p v-if="evolutionApplyError" class="text-[11px] text-red-400">{{ evolutionApplyError }}</p>
-            <p v-else-if="evolutionApplyMessage" class="text-[11px] text-emerald-400">{{ evolutionApplyMessage }}</p>
+            <p v-if="evolutionApplyError" class="text-[11px] text-red-600 dark:text-red-400">{{ evolutionApplyError }}</p>
+            <p v-else-if="evolutionApplyMessage" class="text-[11px] text-emerald-700 dark:text-emerald-400">{{ evolutionApplyMessage }}</p>
             <p v-else class="text-[11px] text-ink-faint">{{ acceptedChangeIds.size }}개 선택됨</p>
           </div>
           <button
@@ -1359,7 +1359,7 @@ onMounted(async () => {
               >
                 <div class="mb-1 flex flex-wrap items-center gap-1.5">
                   <span class="text-xs font-medium text-ink">{{ c.name }}</span>
-                  <span class="chip border-border bg-white/5 text-ink-muted">{{ c.category }}</span>
+                  <span class="chip border-border bg-ink/5 text-ink-muted">{{ c.category }}</span>
                   <span v-if="c.parent" class="text-[10px] text-ink-faint">parent: {{ c.parent }}</span>
                   <span class="text-[10px] text-ink-faint">{{ c.confidence }}</span>
                 </div>
@@ -1379,7 +1379,7 @@ onMounted(async () => {
               >
                 <div class="mb-1 flex flex-wrap items-center gap-1.5">
                   <span class="text-xs font-medium text-ink">{{ r.source }} → {{ r.target }} ({{ r.name }})</span>
-                  <span class="chip border-border bg-white/5 text-ink-muted">{{ r.category }}</span>
+                  <span class="chip border-border bg-ink/5 text-ink-muted">{{ r.category }}</span>
                   <span class="text-[10px] text-ink-faint">{{ r.confidence }}</span>
                 </div>
                 <p class="text-[11px] text-ink-muted">{{ r.definition }}</p>
@@ -1447,7 +1447,7 @@ onMounted(async () => {
 
           <div v-if="discoveryReport.warnings?.length">
             <h3 class="section-label">주의/검증 필요</h3>
-            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-400">
+            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-700 dark:text-amber-400">
               <li v-for="(w, i) in discoveryReport.warnings" :key="i">{{ w }}</li>
             </ul>
           </div>
@@ -1486,11 +1486,11 @@ onMounted(async () => {
             class="rounded-md border border-border bg-surface-sunken p-2.5"
           >
             <div class="mb-1 flex flex-wrap items-center gap-1.5">
-              <span class="chip border-border bg-white/5 text-ink-muted">{{ q.question_type }}</span>
+              <span class="chip border-border bg-ink/5 text-ink-muted">{{ q.question_type }}</span>
               <span class="text-[10px] text-ink-faint">{{ q.importance }}</span>
               <span
                 class="chip"
-                :class="q.answerable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-400'"
+                :class="q.answerable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'"
               >{{ q.answerable ? '답변 가능' : '답변 불가' }}</span>
             </div>
             <p class="text-xs font-medium text-ink">{{ q.question }}</p>
@@ -1504,7 +1504,7 @@ onMounted(async () => {
           </div>
           <div v-if="goldensetReport.warnings?.length">
             <h3 class="section-label">주의/검증 필요</h3>
-            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-400">
+            <ul class="list-disc space-y-1 pl-4 text-xs text-amber-700 dark:text-amber-400">
               <li v-for="(w, i) in goldensetReport.warnings" :key="i">{{ w }}</li>
             </ul>
           </div>

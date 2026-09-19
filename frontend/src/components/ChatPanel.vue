@@ -5,6 +5,7 @@ import 'katex/dist/katex.min.css'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { colorForNodeType } from '../utils/nodeColors.js'
 import { apiFetch } from '../utils/api.js'
+import { themeState } from '../utils/theme.js'
 import GoldensetView from './GoldensetView.vue'
 
 marked.use(markedKatex({ throwOnError: false }))
@@ -133,14 +134,14 @@ async function sendMessage() {
           type="button"
           data-testid="view-mode-chat"
           class="rounded px-1.5 py-0.5"
-          :class="viewMode === 'chat' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          :class="viewMode === 'chat' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-ink/5'"
           @click="viewMode = 'chat'"
         >채팅</button>
         <button
           type="button"
           data-testid="view-mode-golden"
           class="rounded px-1.5 py-0.5"
-          :class="viewMode === 'golden' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+          :class="viewMode === 'golden' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-ink/5'"
           @click="viewMode = 'golden'"
         >골든셋</button>
       </div>
@@ -173,7 +174,7 @@ async function sendMessage() {
                   v-for="type in msg.nodeTypes"
                   :key="'n-' + type"
                   type="button"
-                  class="chip border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white"
+                  class="chip border-emerald-500/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500 hover:text-white"
                   :class="{ 'opacity-40 line-through': !enabledTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'node', type })"
                 >
@@ -189,7 +190,7 @@ async function sendMessage() {
                   v-for="type in msg.edgeTypes"
                   :key="'e-' + type"
                   type="button"
-                  class="chip border-amber-500/50 text-amber-400 hover:bg-amber-500 hover:text-white"
+                  class="chip border-amber-500/50 text-amber-700 dark:text-amber-400 hover:bg-amber-500 hover:text-white"
                   :class="{ 'opacity-40 line-through': !enabledEdgeTypes.has(type) }"
                   @click="emit('toggle-type', { kind: 'edge', type })"
                 >
@@ -208,7 +209,7 @@ async function sendMessage() {
               :key="node.id"
               type="button"
               class="chip border-[color:var(--chip-color)] text-[color:var(--chip-color)] hover:bg-[color:var(--chip-color)] hover:text-white"
-              :style="{ '--chip-color': colorForNodeType(node.type, availableTypes) }"
+              :style="{ '--chip-color': colorForNodeType(node.type, availableTypes, themeState.mode) }"
               @click="() => { emit('highlight-nodes', [node.id]); emit('cite-evidence', { text: node.evidence_text || node.label }) }"
             >
               {{ node.label }}
@@ -216,7 +217,7 @@ async function sendMessage() {
           </div>
         </div>
         <p v-if="isLoading" class="text-xs italic text-ink-faint">응답 중... (ESC로 취소)</p>
-        <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
+        <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
       </div>
 
       <form class="flex flex-shrink-0 gap-2" @submit.prevent="sendMessage">
@@ -246,13 +247,13 @@ async function sendMessage() {
   padding: 0.25rem 0.5rem;
 }
 .markdown :deep(code) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgb(var(--color-ink) / 0.08);
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
   font-size: 0.85em;
 }
 .markdown :deep(pre) {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgb(var(--color-ink) / 0.05);
   padding: 0.5rem;
   border-radius: 6px;
   overflow-x: auto;

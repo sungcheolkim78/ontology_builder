@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { apiFetch } from '../utils/api.js'
+import { setTheme, themeState } from '../utils/theme.js'
 
 const emit = defineEmits(['hops-changed', 'markdown-changed', 'database-reset'])
 
@@ -152,6 +153,24 @@ async function resetDatabase() {
     </div>
     <div class="flex-1 space-y-4 overflow-y-auto p-4">
       <div>
+        <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">테마</h3>
+        <div class="inline-flex rounded-md border border-border p-0.5">
+          <button
+            type="button"
+            class="rounded px-2.5 py-1 text-xs transition-colors"
+            :class="themeState.mode === 'light' ? 'bg-accent-muted text-ink' : 'text-ink-faint hover:bg-ink/5'"
+            @click="setTheme('light')"
+          >Light</button>
+          <button
+            type="button"
+            class="rounded px-2.5 py-1 text-xs transition-colors"
+            :class="themeState.mode === 'dark' ? 'bg-accent-muted text-ink' : 'text-ink-faint hover:bg-ink/5'"
+            @click="setTheme('dark')"
+          >Dark</button>
+        </div>
+      </div>
+
+      <div>
         <h3 class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">LLM 모델</h3>
         <p class="mb-1 text-[11px] text-ink-faint">기본 모델 (채팅, 골든셋 생성 등 아래에 없는 모든 작업)</p>
         <select
@@ -166,7 +185,7 @@ async function resetDatabase() {
           </optgroup>
         </select>
         <p v-if="isSettingModel" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
-        <p v-if="modelSetError" class="mt-1 text-[11px] text-red-400">{{ modelSetError }}</p>
+        <p v-if="modelSetError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ modelSetError }}</p>
         <p v-if="maxTokens" class="mt-1 text-[11px] text-ink-muted">
           max tokens: {{ maxTokens.toLocaleString('en-US') }}
         </p>
@@ -187,7 +206,7 @@ async function resetDatabase() {
             </optgroup>
           </select>
           <p v-if="isSettingOperationModel[op.key]" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
-          <p v-if="operationModelSetError[op.key]" class="mt-1 text-[11px] text-red-400">
+          <p v-if="operationModelSetError[op.key]" class="mt-1 text-[11px] text-red-600 dark:text-red-400">
             {{ operationModelSetError[op.key] }}
           </p>
         </div>
@@ -229,7 +248,7 @@ async function resetDatabase() {
         <p class="mt-1 text-[11px] leading-snug text-ink-faint">
           WAL 파일 손상 등으로 그래프 조회가 계속 실패할 때 사용하세요. 모든 문서의 추출된 그래프가 삭제됩니다.
         </p>
-        <p v-if="resetDbError" class="mt-1 text-[11px] text-red-400">{{ resetDbError }}</p>
+        <p v-if="resetDbError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ resetDbError }}</p>
       </div>
     </div>
   </section>

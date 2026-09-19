@@ -5,6 +5,7 @@ import 'v-network-graph/lib/style.css'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 import { colorForNodeType } from '../utils/nodeColors.js'
 import { apiFetch } from '../utils/api.js'
+import { themeState } from '../utils/theme.js'
 import { FileDown, Focus, ImageDown, Maximize, Network, Shapes } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -86,7 +87,7 @@ const nodeTypeOrder = computed(() => [...new Set(displayNodes.value.map((n) => n
 const edgeTypeOrder = computed(() => [...new Set(displayEdges.value.map((e) => e.type))].sort())
 
 function colorFor(type) {
-  return colorForNodeType(type, nodeTypeOrder.value)
+  return colorForNodeType(type, nodeTypeOrder.value, themeState.mode)
 }
 
 function edgeColorFor(type) {
@@ -371,7 +372,7 @@ const configs = computed(() => ({
     label: {
       visible: showNodeLabels.value,
       text: 'name',
-      color: '#c7ccd6',
+      color: themeState.mode === 'dark' ? '#c7ccd6' : '#3a3f4d',
       fontSize: () => 10 / zoomLevel.value,
     },
   },
@@ -391,7 +392,7 @@ const configs = computed(() => ({
     gap: 12,
     label: {
       fontSize: () => 11 / zoomLevel.value,
-      color: '#9aa1b2',
+      color: themeState.mode === 'dark' ? '#9aa1b2' : '#6b7280',
     },
     selectable: true,
   },
@@ -466,11 +467,11 @@ async function fitSoon() {
 }
 
 // --- export as SVG / JPG ---
-// Matches tailwind.config.js's `canvas` token -- the graph viewport itself
-// has no background of its own (it shows the dark page background through),
-// so a plain serialization of the live SVG would export transparent/white
-// instead of matching what's actually on screen.
-const GRAPH_EXPORT_BACKGROUND = '#0b0d12'
+// Matches style.css's --color-canvas token for the current theme -- the
+// graph viewport itself has no background of its own (it shows the page
+// background through), so a plain serialization of the live SVG would
+// export transparent/white instead of matching what's actually on screen.
+const graphExportBackground = computed(() => (themeState.mode === 'dark' ? '#0b0d12' : '#f7f8fa'))
 
 // v-network-graph styles nodes/edges/labels per-instance via the `configs`
 // object above (colors, widths, font sizes), which it applies as inline SVG
@@ -615,7 +616,7 @@ function finishExportSvg(svg, { vx, vy, vw, vh }) {
   background.setAttribute('y', String(vy))
   background.setAttribute('width', String(vw))
   background.setAttribute('height', String(vh))
-  background.setAttribute('fill', GRAPH_EXPORT_BACKGROUND)
+  background.setAttribute('fill', graphExportBackground.value)
   clone.insertBefore(background, clone.firstChild)
 
   const markup = `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`
@@ -865,14 +866,14 @@ watch(
             Edge Label
           </label>
         </div>
-        <p v-if="exportError" class="flex-shrink-0 text-xs text-red-400">{{ exportError }}</p>
-        <p v-if="error" class="flex-shrink-0 text-xs text-red-400">{{ error }}</p>
+        <p v-if="exportError" class="flex-shrink-0 text-xs text-red-600 dark:text-red-400">{{ exportError }}</p>
+        <p v-if="error" class="flex-shrink-0 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
         <p v-if="displayMode === 'none' && !error" class="flex-shrink-0 text-xs text-ink-faint">
           스키마를 생성하거나 라이브러리에서 선택하세요
         </p>
       </template>
 
-      <p v-else-if="status === 'error'" class="flex-shrink-0 text-xs text-red-400">{{ error }}</p>
+      <p v-else-if="status === 'error'" class="flex-shrink-0 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
 
       <div
         v-if="displayMode !== 'none'"

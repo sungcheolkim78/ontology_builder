@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ontology Builder</title>
+    <script>
+      // Applied before Vue mounts / CSS variables resolve, so a returning
+      // dark-mode user doesn't see a flash of the (default) light theme.
+      // utils/theme.js re-applies the same class from the same storage key
+      // once the app boots, so this is just the early paint.
+      try {
+        if (localStorage.getItem('theme') === 'dark') {
+          document.documentElement.classList.add('dark')
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

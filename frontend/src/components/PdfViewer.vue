@@ -159,20 +159,20 @@ onBeforeUnmount(() => {
     <div class="flex flex-shrink-0 items-center gap-2 border-b border-border px-2 py-1 text-[11px] text-ink-faint">
       <button
         type="button"
-        class="rounded px-1.5 py-0.5 hover:bg-white/5 disabled:opacity-30"
+        class="rounded px-1.5 py-0.5 hover:bg-ink/5 disabled:opacity-30"
         :disabled="pageNumber <= 1"
         @click="goToPage(pageNumber - 1)"
       >이전</button>
       <span>{{ pageNumber }} / {{ pageCount || '?' }} 페이지</span>
       <button
         type="button"
-        class="rounded px-1.5 py-0.5 hover:bg-white/5 disabled:opacity-30"
+        class="rounded px-1.5 py-0.5 hover:bg-ink/5 disabled:opacity-30"
         :disabled="pageCount === 0 || pageNumber >= pageCount"
         @click="goToPage(pageNumber + 1)"
       >다음</button>
     </div>
     <div class="min-h-0 flex-1 overflow-auto bg-black/20 p-2" ref="containerRef">
-      <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
+      <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
       <p v-else-if="isLoading" class="text-xs text-ink-faint">PDF 불러오는 중...</p>
       <div v-else class="relative inline-block">
         <canvas ref="canvasRef"></canvas>

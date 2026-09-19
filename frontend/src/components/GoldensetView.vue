@@ -108,13 +108,13 @@ async function generateAnswer(question) {
       class="rounded-lg border border-border bg-surface-raised p-3"
     >
       <div class="mb-1 flex flex-wrap items-center gap-1.5">
-        <span class="chip border-border bg-white/5 text-ink-muted">{{ q.question_type }}</span>
+        <span class="chip border-border bg-ink/5 text-ink-muted">{{ q.question_type }}</span>
         <span class="text-[10px] text-ink-faint">{{ q.importance }}</span>
         <span
           class="chip"
           :class="q.answerable
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-            : 'border-amber-500/30 bg-amber-500/10 text-amber-400'"
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+            : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'"
         >{{ q.answerable ? '답변 가능' : '답변 불가' }}</span>
       </div>
       <p class="text-[13px] font-medium text-ink">{{ q.question }}</p>
@@ -141,12 +141,12 @@ async function generateAnswer(question) {
               @click="generateAnswer(q)"
             >{{ generated[q.id]?.loading ? '생성 중...' : '답변 생성' }}</button>
           </div>
-          <p v-if="generated[q.id]?.error" class="text-[11px] text-red-400">{{ generated[q.id].error }}</p>
+          <p v-if="generated[q.id]?.error" class="text-[11px] text-red-600 dark:text-red-400">{{ generated[q.id].error }}</p>
           <template v-else-if="generated[q.id]?.content">
             <p class="whitespace-pre-wrap text-[12px] text-ink">{{ generated[q.id].content }}</p>
             <div v-if="generated[q.id].nodeTypes?.length || generated[q.id].edgeTypes?.length" class="mt-1 flex flex-wrap gap-1">
-              <span v-for="t in generated[q.id].nodeTypes" :key="'n-' + t" class="chip border-emerald-500/40 text-emerald-400">{{ t }}</span>
-              <span v-for="t in generated[q.id].edgeTypes" :key="'e-' + t" class="chip border-amber-500/40 text-amber-400">{{ t }}</span>
+              <span v-for="t in generated[q.id].nodeTypes" :key="'n-' + t" class="chip border-emerald-500/40 text-emerald-700 dark:text-emerald-400">{{ t }}</span>
+              <span v-for="t in generated[q.id].edgeTypes" :key="'e-' + t" class="chip border-amber-500/40 text-amber-700 dark:text-amber-400">{{ t }}</span>
             </div>
             <p class="mt-1 text-[10px] text-ink-faint">
               스키마 v{{ generated[q.id].schemaVersion }} · hops {{ generated[q.id].hopsUsed }} · {{ generated[q.id].generatedAt }}

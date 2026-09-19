@@ -44,7 +44,7 @@ async function submit() {
       <button type="submit" class="btn-primary" :disabled="isSubmitting">
         {{ isSubmitting ? '확인 중...' : '입장' }}
       </button>
-      <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
+      <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
     </form>
   </div>
 </template>

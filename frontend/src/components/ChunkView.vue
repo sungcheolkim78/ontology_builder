@@ -46,7 +46,7 @@ function renderMarkdown(text) {
         <button
           type="button"
           data-testid="chunk-row-header"
-          class="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-ink hover:bg-white/5"
+          class="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-ink hover:bg-ink/5"
           @click="toggle(chunk)"
         >
           <span class="text-ink-faint">{{ isExpanded(chunk.id) ? '▾' : '▸' }}</span>

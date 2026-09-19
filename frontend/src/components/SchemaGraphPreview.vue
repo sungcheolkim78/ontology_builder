@@ -74,21 +74,21 @@ const statusText = computed(() => {
             class="rounded-md border px-2.5 py-1 text-xs transition-colors"
             :class="activeTab === 'schema'
               ? 'border-accent/50 bg-accent/20 text-ink'
-              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-ink/5'"
             @click="activeTab = 'schema'"
           >스키마</button>
           <button
             class="rounded-md border px-2.5 py-1 text-xs transition-colors"
             :class="activeTab === 'nodes'
               ? 'border-accent/50 bg-accent/20 text-ink'
-              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-ink/5'"
             @click="activeTab = 'nodes'"
           >Nodes</button>
           <button
             class="rounded-md border px-2.5 py-1 text-xs transition-colors"
             :class="activeTab === 'edges'
               ? 'border-accent/50 bg-accent/20 text-ink'
-              : 'border-border bg-surface-raised text-ink-muted hover:bg-white/5'"
+              : 'border-border bg-surface-raised text-ink-muted hover:bg-ink/5'"
             @click="activeTab = 'edges'"
           >Edges</button>
         </div>
@@ -235,6 +235,6 @@ const statusText = computed(() => {
   font-weight: 600;
 }
 .data-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--color-ink) / 0.03);
 }
 </style>

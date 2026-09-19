@@ -151,7 +151,7 @@ watch(
       <span>Preview</span>
     </div>
     <p v-if="!file" class="p-3 text-xs text-ink-faint">업로드된 문서가 없습니다</p>
-    <p v-else-if="error" class="p-3 text-xs text-red-400">{{ error }}</p>
+    <p v-else-if="error" class="p-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
     <div v-else class="flex min-h-0 flex-1">
       <div v-if="hasPdf" class="min-h-0 min-w-0 flex-1 border-r border-border">
         <PdfViewer :filename="file.filename" :jump-request="pdfJumpRequest" />
@@ -162,14 +162,14 @@ watch(
             type="button"
             data-testid="view-mode-raw"
             class="rounded px-1.5 py-0.5"
-            :class="viewMode === 'raw' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+            :class="viewMode === 'raw' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-ink/5'"
             @click="viewMode = 'raw'"
           >원문</button>
           <button
             type="button"
             data-testid="view-mode-chunk"
             class="rounded px-1.5 py-0.5"
-            :class="viewMode === 'chunk' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-white/5'"
+            :class="viewMode === 'chunk' ? 'bg-accent-muted/60 text-ink' : 'text-ink-faint hover:bg-ink/5'"
             @click="viewMode = 'chunk'"
           >청크</button>
         </div>
@@ -181,7 +181,7 @@ watch(
             <div class="min-h-0 flex-1 overflow-y-scroll" ref="scrollRef" @scroll="onScroll">
               <div class="markdown text-[13px] leading-relaxed text-ink" v-html="html"></div>
             </div>
-            <div class="relative w-1.5 flex-shrink-0 rounded-full bg-white/5">
+            <div class="relative w-1.5 flex-shrink-0 rounded-full bg-ink/5">
               <div class="absolute left-0 right-0 min-h-[16px] rounded-full bg-accent/60" :style="thumbStyle"></div>
             </div>
           </div>
@@ -212,7 +212,7 @@ watch(
   margin: 0.75rem 0 0.35rem;
 }
 .markdown :deep(code) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgb(var(--color-ink) / 0.08);
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
   font-size: 0.85em;
