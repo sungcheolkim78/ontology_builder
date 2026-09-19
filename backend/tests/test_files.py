@@ -169,6 +169,70 @@ def test_list_documents_returns_empty_list_when_no_data_dir():
     assert response.json() == {"documents": []}
 
 
+def test_update_manifest_merges_fields():
+    from app.ontology import load_document_manifest, save_document_manifest
+
+    write_raw("report_raw")
+    save_document_manifest("report_raw", "report.docx", converter="anydoc")
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/documents/report_raw.md/manifest", json={"original_filename": "renamed.docx"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"original_filename": "renamed.docx", "converter": "anydoc"}
+    assert load_document_manifest("report_raw") == {
+        "original_filename": "renamed.docx",
+        "converter": "anydoc",
+    }
+
+
+def test_update_manifest_returns_404_for_missing_document():
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/documents/does_not_exist.md/manifest", json={"original_filename": "x"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_document_removes_files_and_graph():
+    from app.ontology import save_document_manifest
+
+    d = write_raw("report_raw")
+    save_document_manifest("report_raw", "report.docx")
+    (d / "versions.json").write_text(
+        json.dumps(
+            {"active_version": 1, "versions": [{"version": 1, "document_type": "general", "created_at": None}]}
+        )
+    )
+    graphdb.write_graph(
+        "report_raw",
+        [{"id": "n1", "type": "Entity", "label": "A"}],
+        [],
+        version=1,
+    )
+    assert graphdb.has_graph("report_raw", version=1) is True
+    client = TestClient(app)
+
+    response = client.delete("/api/documents/report_raw.md")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert not d.exists()
+    assert graphdb.has_graph("report_raw", version=1) is False
+
+
+def test_delete_document_returns_404_for_missing_document():
+    client = TestClient(app)
+
+    response = client.delete("/api/documents/does_not_exist.md")
+
+    assert response.status_code == 404
+
+
 def test_get_file_returns_saved_markdown_content():
     write_raw("report_raw", "# hello")
     client = TestClient(app)

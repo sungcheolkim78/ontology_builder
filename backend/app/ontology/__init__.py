@@ -43,6 +43,7 @@ from .persistence import (
     _save_versions_manifest,
     activate_version,
     create_schema_version,
+    delete_document,
     delete_version,
     discovery_path_for,
     embed_graph,
@@ -62,6 +63,7 @@ from .persistence import (
     save_schema,
     schema_path_for_version,
     summary_path_for,
+    update_document_manifest,
     versions_path,
 )
 from .legal_guards import (

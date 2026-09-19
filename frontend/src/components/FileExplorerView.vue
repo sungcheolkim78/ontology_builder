@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
@@ -12,6 +12,7 @@ const isUploading = ref(false)
 const uploadError = ref('')
 const uploadConverter = ref('table_aware')
 const files = ref([])
+const fileSearch = ref('')
 const schemas = ref([])
 const isUsingSchema = ref(false)
 const schemaUseError = ref('')
@@ -21,8 +22,23 @@ const isChunking = ref(false)
 const chunkError = ref('')
 const isSummarizing = ref(false)
 const summaryError = ref('')
+const isEditingManifest = ref(false)
+const manifestDraft = reactive({ original_filename: '', converter: 'anydoc' })
+const isSavingManifest = ref(false)
+const manifestSaveError = ref('')
+const isDeletingDocument = ref(false)
+const deleteDocumentError = ref('')
 
 const currentFile = computed(() => files.value.find((f) => f.filename === props.file?.filename))
+
+const filteredFiles = computed(() => {
+  const query = fileSearch.value.trim().toLowerCase()
+  if (!query) return files.value
+  return files.value.filter((f) =>
+    (f.original_filename ?? '').toLowerCase().includes(query) ||
+    f.filename.toLowerCase().includes(query)
+  )
+})
 
 function formatBytes(bytes) {
   if (!bytes && bytes !== 0) return '-'
@@ -209,6 +225,73 @@ async function deleteVersion(version) {
   }
 }
 
+function startEditManifest() {
+  manifestDraft.original_filename = currentFile.value?.original_filename ?? ''
+  manifestDraft.converter = currentFile.value?.converter ?? 'anydoc'
+  manifestSaveError.value = ''
+  isEditingManifest.value = true
+}
+
+function cancelEditManifest() {
+  isEditingManifest.value = false
+}
+
+async function saveManifest() {
+  if (!props.file?.filename) return
+  isSavingManifest.value = true
+  manifestSaveError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/documents/${encodeURIComponent(props.file.filename)}/manifest`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          original_filename: manifestDraft.original_filename,
+          converter: manifestDraft.converter,
+        }),
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    await loadDocuments()
+    isEditingManifest.value = false
+  } catch (err) {
+    manifestSaveError.value = '메타정보 저장 실패: ' + err.message
+  } finally {
+    isSavingManifest.value = false
+  }
+}
+
+async function deleteDocument() {
+  if (!props.file?.filename) return
+  const label = currentFile.value?.original_filename ?? props.file.filename
+  const confirmed = window.confirm(
+    `"${label}" 문서를 삭제하시겠습니까? 원문, 스키마, 그래프 등 이 문서의 모든 데이터가 삭제되며 되돌릴 수 없습니다.`
+  )
+  if (!confirmed) return
+
+  isDeletingDocument.value = true
+  deleteDocumentError.value = ''
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(props.file.filename)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    await loadDocuments()
+    emit('file-selected', null)
+  } catch (err) {
+    deleteDocumentError.value = '문서 삭제 실패: ' + err.message
+  } finally {
+    isDeletingDocument.value = false
+  }
+}
+
 async function handleFileChange(event) {
   const file = event.target.files[0]
   if (!file) return
@@ -234,6 +317,11 @@ async function handleFileChange(event) {
   }
 }
 
+watch(() => props.file?.filename, () => {
+  isEditingManifest.value = false
+  manifestSaveError.value = ''
+  deleteDocumentError.value = ''
+})
 watch(() => props.file?.filename, loadSchemaVersions)
 watch(() => props.schemaVersion, loadSchemaVersions)
 watch(() => props.schemaVersion, () => {
@@ -254,51 +342,59 @@ onMounted(async () => {
       <span>File Explorer</span>
     </div>
     <div class="flex flex-1 overflow-hidden">
-      <!-- Left column: upload + file list -->
-      <div class="flex w-[320px] flex-shrink-0 flex-col overflow-y-auto border-r border-border p-4">
-        <section class="mb-5">
-          <h3 class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">문서 업로드</h3>
-          <div class="mb-2 flex gap-3 text-[11px] text-ink-muted">
-            <label class="flex items-center gap-1.5">
-              <input
-                type="radio"
-                value="anydoc"
-                v-model="uploadConverter"
-                class="h-3 w-3 accent-accent"
-              />
-              anydoc (일반)
-            </label>
-            <label class="flex items-center gap-1.5">
-              <input
-                type="radio"
-                value="table_aware"
-                v-model="uploadConverter"
-                class="h-3 w-3 accent-accent"
-              />
-              Table-aware (PDF 표 인식)
-            </label>
-          </div>
-          <input
-            type="file"
-            @change="handleFileChange"
-            :disabled="isUploading"
-            class="block w-full text-xs text-ink-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface-sunken file:px-2.5 file:py-1 file:text-xs file:text-ink hover:file:bg-white/5"
-          />
-          <p v-if="uploadConverter === 'table_aware'" class="mt-1 text-[11px] leading-snug text-ink-faint">
-            PDF가 아닌 파일은 자동으로 anydoc으로 변환됩니다.
-          </p>
-          <p v-if="isUploading" class="mt-1 text-[11px] text-ink-muted">업로드 중...</p>
-          <p v-if="uploadError" class="mt-1 text-[11px] text-red-400">{{ uploadError }}</p>
-        </section>
+      <!-- Column 1: upload (more actions land here over time) -->
+      <div class="flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r border-border p-4">
+        <h3 class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">문서 업로드</h3>
+        <div class="mb-2 flex flex-col gap-1.5 text-[11px] text-ink-muted">
+          <label class="flex items-center gap-1.5">
+            <input
+              type="radio"
+              value="anydoc"
+              v-model="uploadConverter"
+              class="h-3 w-3 accent-accent"
+            />
+            anydoc (일반)
+          </label>
+          <label class="flex items-center gap-1.5">
+            <input
+              type="radio"
+              value="table_aware"
+              v-model="uploadConverter"
+              class="h-3 w-3 accent-accent"
+            />
+            Table-aware (PDF 표 인식)
+          </label>
+        </div>
+        <input
+          type="file"
+          @change="handleFileChange"
+          :disabled="isUploading"
+          class="block w-full text-xs text-ink-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface-sunken file:px-2.5 file:py-1 file:text-xs file:text-ink hover:file:bg-ink/5"
+        />
+        <p v-if="uploadConverter === 'table_aware'" class="mt-1 text-[11px] leading-snug text-ink-faint">
+          PDF가 아닌 파일은 자동으로 anydoc으로 변환됩니다.
+        </p>
+        <p v-if="isUploading" class="mt-1 text-[11px] text-ink-muted">업로드 중...</p>
+        <p v-if="uploadError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ uploadError }}</p>
+      </div>
 
-        <section>
-          <h3 class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">업로드된 문서</h3>
+      <!-- Column 2: document list, searchable -->
+      <div class="flex w-[280px] flex-shrink-0 flex-col overflow-hidden border-r border-border p-4">
+        <h3 class="mb-1.5 flex-shrink-0 text-[10px] uppercase tracking-wide text-ink-faint">업로드된 문서</h3>
+        <input
+          v-model="fileSearch"
+          type="text"
+          placeholder="파일명 검색"
+          class="field mb-2 w-full flex-shrink-0"
+        />
+        <div class="min-h-0 flex-1 overflow-y-auto">
           <p v-if="files.length === 0" class="text-[11px] text-ink-faint">문서가 없습니다</p>
+          <p v-else-if="filteredFiles.length === 0" class="text-[11px] text-ink-faint">검색 결과가 없습니다</p>
           <ul v-else class="space-y-0.5">
             <li
-              v-for="f in files"
+              v-for="f in filteredFiles"
               :key="f.filename"
-              class="cursor-pointer rounded-md px-2 py-1.5 text-xs hover:bg-white/5"
+              class="cursor-pointer rounded-md px-2 py-1.5 text-xs hover:bg-ink/5"
               :class="f.filename === file?.filename ? 'bg-accent-muted/60 font-medium text-ink' : 'text-ink-muted'"
               @click="selectFile(f.filename)"
             >
@@ -308,21 +404,68 @@ onMounted(async () => {
                   v-for="stage in fileStageBadges(f)"
                   :key="stage.key"
                   class="rounded px-1.5 py-0.5 text-[10px]"
-                  :class="stage.done ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-ink-faint'"
+                  :class="stage.done ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-ink/5 text-ink-faint'"
                 >{{ stage.label }}</span>
               </div>
             </li>
           </ul>
-        </section>
+        </div>
       </div>
 
-      <!-- Right column: metadata + schema versions/library for the selected file -->
+      <!-- Column 3: metadata + schema versions/library for the selected file -->
       <div class="flex-1 overflow-y-auto p-4">
         <p v-if="!file" class="text-[11px] text-ink-faint">좌측에서 문서를 선택하세요</p>
         <template v-else>
           <section class="mb-5">
-            <h3 class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">메타 정보</h3>
-            <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <div class="mb-1.5 flex items-center justify-between">
+              <h3 class="text-[10px] uppercase tracking-wide text-ink-faint">메타 정보</h3>
+              <div class="flex gap-1.5">
+                <button
+                  v-if="!isEditingManifest"
+                  type="button"
+                  class="btn px-2 py-0.5 text-[11px]"
+                  @click="startEditManifest"
+                >편집</button>
+                <button
+                  type="button"
+                  class="btn-danger px-2 py-0.5 text-[11px]"
+                  :disabled="isDeletingDocument"
+                  @click="deleteDocument"
+                >{{ isDeletingDocument ? '삭제 중...' : '문서 삭제' }}</button>
+              </div>
+            </div>
+
+            <form v-if="isEditingManifest" class="space-y-2" @submit.prevent="saveManifest">
+              <div>
+                <label class="mb-0.5 block text-[10px] text-ink-faint">원본 파일명</label>
+                <input
+                  v-model="manifestDraft.original_filename"
+                  type="text"
+                  class="field w-full"
+                  :disabled="isSavingManifest"
+                />
+              </div>
+              <div>
+                <label class="mb-0.5 block text-[10px] text-ink-faint">변환기</label>
+                <select v-model="manifestDraft.converter" class="field w-full" :disabled="isSavingManifest">
+                  <option value="anydoc">anydoc (일반)</option>
+                  <option value="table_aware">Table-aware (pdfplumber)</option>
+                </select>
+              </div>
+              <div class="flex gap-1.5">
+                <button type="submit" class="btn-primary px-2 py-1 text-[11px]" :disabled="isSavingManifest">
+                  {{ isSavingManifest ? '저장 중...' : '저장' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn px-2 py-1 text-[11px]"
+                  :disabled="isSavingManifest"
+                  @click="cancelEditManifest"
+                >취소</button>
+              </div>
+              <p v-if="manifestSaveError" class="text-[11px] text-red-600 dark:text-red-400">{{ manifestSaveError }}</p>
+            </form>
+            <dl v-else class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               <dt class="text-ink-faint">원본 파일명</dt>
               <dd class="break-all text-ink">{{ currentFile?.original_filename ?? '-' }}</dd>
               <dt class="text-ink-faint">저장된 파일명</dt>
@@ -334,6 +477,7 @@ onMounted(async () => {
               <dt class="text-ink-faint">수정 시각</dt>
               <dd class="text-ink-muted">{{ formatModifiedAt(currentFile?.modified_at) }}</dd>
             </dl>
+            <p v-if="deleteDocumentError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ deleteDocumentError }}</p>
 
             <div class="mt-3">
               <div class="mb-1 flex items-center justify-between">
@@ -348,7 +492,7 @@ onMounted(async () => {
               <p v-if="isSummarizing" class="text-[11px] text-ink-muted">생성 중...</p>
               <p v-else-if="currentFile?.summary" class="whitespace-pre-line text-xs leading-snug text-ink-muted">{{ currentFile.summary }}</p>
               <p v-else class="text-[11px] text-ink-faint">생성된 요약이 없습니다</p>
-              <p v-if="summaryError" class="mt-1 text-[11px] text-red-400">{{ summaryError }}</p>
+              <p v-if="summaryError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ summaryError }}</p>
             </div>
 
             <div class="mt-3">
@@ -358,7 +502,7 @@ onMounted(async () => {
                   v-for="stage in pipelineStages"
                   :key="stage.key"
                   class="rounded px-1.5 py-0.5 text-[10px]"
-                  :class="stage.done ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-ink-faint'"
+                  :class="stage.done ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-ink/5 text-ink-faint'"
                   :title="stage.key === 'graph' && currentFile?.has_graph ? `그래프DB: ${currentFile.graphdb_name}` : ''"
                 >{{ stage.label }}</span>
                 <button
@@ -369,7 +513,7 @@ onMounted(async () => {
                 >{{ currentFile?.has_chunks ? '청크 재생성' : '청크 생성' }}</button>
               </div>
               <p v-if="isChunking" class="mt-1 text-[11px] text-ink-muted">청크 생성 중...</p>
-              <p v-if="chunkError" class="mt-1 text-[11px] text-red-400">{{ chunkError }}</p>
+              <p v-if="chunkError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ chunkError }}</p>
             </div>
           </section>
 
@@ -387,11 +531,11 @@ onMounted(async () => {
                   <span class="font-medium text-ink">v{{ v.version }} · {{ v.document_type }}</span>
                   <span
                     v-if="v.is_active"
-                    class="rounded px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-400"
+                    class="rounded px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
                   >활성</span>
                   <span
                     class="rounded px-1.5 py-0.5 text-[10px]"
-                    :class="v.has_graph ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-ink-faint'"
+                    :class="v.has_graph ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-ink/5 text-ink-faint'"
                   >그래프</span>
                 </div>
                 <div class="flex flex-shrink-0 gap-1">
@@ -409,7 +553,7 @@ onMounted(async () => {
                 </div>
               </li>
             </ul>
-            <p v-if="versionActionError" class="mt-1 text-[11px] text-red-400">{{ versionActionError }}</p>
+            <p v-if="versionActionError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ versionActionError }}</p>
           </section>
 
           <section>
@@ -419,7 +563,7 @@ onMounted(async () => {
               <li
                 v-for="s in schemas"
                 :key="s.stem"
-                class="cursor-pointer rounded-md px-2 py-1.5 text-xs text-ink-muted hover:bg-white/5"
+                class="cursor-pointer rounded-md px-2 py-1.5 text-xs text-ink-muted hover:bg-ink/5"
                 :class="{ 'pointer-events-none opacity-40': isUsingSchema }"
                 @click="useSchema(s.stem)"
               >
@@ -427,7 +571,7 @@ onMounted(async () => {
               </li>
             </ul>
             <p v-if="isUsingSchema" class="mt-1 text-[11px] text-ink-muted">적용 중...</p>
-            <p v-if="schemaUseError" class="mt-1 text-[11px] text-red-400">{{ schemaUseError }}</p>
+            <p v-if="schemaUseError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ schemaUseError }}</p>
           </section>
         </template>
       </div>

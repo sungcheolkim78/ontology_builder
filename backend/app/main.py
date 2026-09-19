@@ -27,6 +27,7 @@ from app.ontology import (
     apply_evolution,
     converge_domain_schema,
     create_schema_version,
+    delete_document,
     delete_version,
     discover_for_document,
     domain_calibration_stems,
@@ -56,6 +57,7 @@ from app.ontology import (
     save_graph,
     schema_for_document,
     summarize_document,
+    update_document_manifest,
     use_domain_schema,
     validate_ontology,
 )
@@ -283,6 +285,26 @@ def list_documents():
             }
         )
     return {"documents": documents}
+
+
+class UpdateManifestRequest(BaseModel):
+    original_filename: str | None = None
+    converter: str | None = None
+
+
+@app.patch("/api/documents/{filename}/manifest")
+def update_manifest(filename: str, request: UpdateManifestRequest):
+    if not document_path_for(filename).is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    return update_document_manifest(stem_for(filename), **request.model_dump(exclude_unset=True))
+
+
+@app.delete("/api/documents/{filename}")
+def delete_document_route(filename: str):
+    if not document_path_for(filename).is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+    delete_document(stem_for(filename))
+    return {"status": "ok"}
 
 
 @app.get("/api/documents/{filename}/pdf")

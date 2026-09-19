@@ -1,4 +1,5 @@
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -144,6 +145,34 @@ def load_document_manifest(stem: str) -> dict | None:
     if not path.is_file():
         return None
     return json.loads(path.read_text())
+
+
+def update_document_manifest(stem: str, **updates) -> dict:
+    """Partial update over save_document_manifest's always-overwrite shape --
+    loads whatever's already there (or {} for a document with no manifest
+    yet), applies only the fields the caller actually passed (None values are
+    treated as "not provided", not "clear this field"), and writes the merged
+    result back. Backs the manifest-edit route, which lets a user correct a
+    field (e.g. original_filename) without resupplying the whole manifest."""
+    manifest = load_document_manifest(stem) or {}
+    manifest.update({k: v for k, v in updates.items() if v is not None})
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False))
+    return manifest
+
+
+def delete_document(stem: str) -> None:
+    """Removes a document entirely: its graph rows for every schema version
+    it ever had (graph data lives in the shared LadybugDB, keyed by
+    (source_document, version), not inside the document's own folder --
+    see delete_version, which does the same per-version cleanup), then the
+    whole documents/{stem}/ folder (raw.md, manifest.json, chunks.json,
+    schema_v{N}.json, ...). Unlike delete_version there's no remaining
+    version to fall back to -- the document is gone."""
+    for v in list_versions(stem):
+        graphdb.delete_version_data(stem, v["version"])
+    shutil.rmtree(document_dir_for(stem), ignore_errors=True)
 
 
 def discovery_path_for(stem: str) -> Path:
