@@ -1,0 +1,391 @@
+import json
+import shutil
+
+import pytest
+
+from app.ontology.generate_schema import (
+    discover_for_document,
+    discover_ontology,
+    discover_ontology_from_chunks,
+    find_redundant_type_pairs,
+    generate_schema,
+    generate_schema_from_chunks,
+    measure_schema_stability,
+    schema_for_document,
+    summarize_document,
+)
+from app.preprocess.embeddings import EMBEDDING_DIM
+from app.preprocess.parser import DATA_DIR
+from app.utils.paths import document_dir_for
+
+
+class FakeChatModel:
+    def __init__(self, content):
+        self.content = content
+
+    def invoke(self, messages):
+        return type("FakeResponse", (), {"content": self.content})()
+
+
+class RecordingChatModel:
+    """Same as FakeChatModel, but remembers every prompt it was invoked
+    with -- needed for the discovery-hint tests below, which assert on the
+    prompt text itself rather than just the returned content."""
+
+    def __init__(self, content):
+        self.content = content
+        self.prompts = []
+
+    def invoke(self, prompt):
+        self.prompts.append(prompt)
+        return type("FakeResponse", (), {"content": self.content})()
+
+
+class SequencedChatModel:
+    """Returns each response in order, one per invoke() call -- needed for
+    the *_from_chunks consolidation tests, which make one LLM call per
+    group plus one more for the consolidation pass."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def invoke(self, messages):
+        content = self.responses[self.calls]
+        self.calls += 1
+        return type("FakeResponse", (), {"content": content})()
+
+
+class FakeEmbeddingModel:
+    def embed_documents(self, texts):
+        return [[0.0] * EMBEDDING_DIM for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+
+
+@pytest.fixture(autouse=True)
+def clean_data_dir():
+    if DATA_DIR.exists():
+        shutil.rmtree(DATA_DIR)
+    yield
+    if DATA_DIR.exists():
+        shutil.rmtree(DATA_DIR)
+
+
+def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):
+    stem = filename.removesuffix(".md")
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "raw.md").write_text(content)
+
+
+def write_chunks(stem, chunk_texts):
+    (document_dir_for(stem) / "chunks.json").write_text(
+        json.dumps(
+            {
+                "source": stem,
+                "preamble": {"line_start": 1, "line_end": 1, "text": ""},
+                "chunks": [
+                    {
+                        "id": f"0::c{i}",
+                        "section_index": i,
+                        "section_label": "",
+                        "article_no": str(i + 1),
+                        "sub_no": None,
+                        "title": "",
+                        "path": f"c{i}",
+                        "line_start": 1,
+                        "line_end": 2,
+                        "text": text,
+                    }
+                    for i, text in enumerate(chunk_texts)
+                ],
+            }
+        )
+    )
+
+
+def _discovery_report(domain="d", classes=None, relationships=None, competency_questions=None):
+    return {
+        "domain_model": {"domain": domain, "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
+        "classes": classes or [],
+        "relationships": relationships or [],
+        "attributes": [],
+        "events": [],
+        "rules": [],
+        "terminology": [],
+        "competency_questions": competency_questions or [],
+        "warnings": [],
+    }
+
+
+# --- discover_ontology ------------------------------------------------------
+
+
+def test_discover_ontology_returns_report_from_llm_json(monkeypatch):
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    result = discover_ontology("some document text")
+
+    assert result == report
+
+
+def test_discover_ontology_raises_when_classes_missing(monkeypatch):
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({"no_classes_key": []}))
+    )
+
+    with pytest.raises(ValueError):
+        discover_ontology("some document text")
+
+
+def test_discover_ontology_from_chunks_single_group_skips_consolidation(monkeypatch):
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    fake_model = RecordingChatModel(json.dumps(report))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
+
+    assert result == report
+    assert len(fake_model.prompts) == 1
+
+
+def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch):
+    group1 = _discovery_report(
+        domain="insurance",
+        classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        competency_questions=["What does this cover?"],
+    )
+    group2 = _discovery_report(
+        domain="insurance",
+        classes=[{"name": "InsurancePolicy", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        competency_questions=["What does this cover?"],
+    )
+    consolidated = {
+        "classes": [{"name": "Policy", "definition": "merged", "category": "CONCEPT", "parent": "", "rationale": "merged d1/d2", "confidence": "HIGH"}],
+        "relationships": [],
+    }
+    fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = discover_ontology_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
+    )
+
+    assert result["classes"] == consolidated["classes"]
+    # competency_questions deduped across groups (identical string in both)
+    assert result["competency_questions"] == ["What does this cover?"]
+    assert result["domain_model"]["domain"] == "insurance"
+    assert fake_model.calls == 3
+
+
+# --- generate_schema ---------------------------------------------------------
+
+
+def test_generate_schema_returns_schema_from_llm_json(monkeypatch):
+    schema = {"node_types": [{"name": "Person", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result = generate_schema("some document text")
+
+    assert result == schema
+
+
+def test_generate_schema_raises_for_unknown_document_type():
+    with pytest.raises(ValueError):
+        generate_schema("some document text", document_type="nonsense")
+
+
+def test_generate_schema_raises_when_node_edge_types_missing(monkeypatch):
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
+
+    with pytest.raises(ValueError):
+        generate_schema("some document text")
+
+
+def test_generate_schema_includes_discovery_hint_when_given(monkeypatch):
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    generate_schema("some document text", discovery={"classes": [{"name": "Policy"}]})
+
+    assert "Reference --" in fake_model.prompts[0]
+    assert "Policy" in fake_model.prompts[0]
+
+
+def test_generate_schema_ignores_discovery_by_default(monkeypatch):
+    schema = {"node_types": [], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    generate_schema("some document text")
+
+    assert "Reference --" not in fake_model.prompts[0]
+
+
+def test_generate_schema_from_chunks_single_group_skips_consolidation(monkeypatch):
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = generate_schema_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
+
+    assert result == schema
+    assert len(fake_model.prompts) == 1
+
+
+def test_generate_schema_from_chunks_consolidates_multiple_groups(monkeypatch):
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    schema2 = {"node_types": [{"name": "InsurancePolicy", "description": "d2"}], "edge_types": []}
+    consolidated = {"node_types": [{"name": "Policy", "description": "merged"}], "edge_types": []}
+    fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = generate_schema_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
+    )
+
+    assert result == consolidated
+    assert fake_model.calls == 3
+
+
+# --- discover_for_document / schema_for_document seams -----------------------
+
+
+def test_discover_for_document_raises_file_not_found_when_document_missing():
+    with pytest.raises(FileNotFoundError):
+        discover_for_document("missing_raw")
+
+
+def test_discover_for_document_uses_whole_document_when_no_chunks(monkeypatch):
+    write_document()
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    result = discover_for_document("doc_raw")
+
+    assert result == report
+
+
+def test_discover_for_document_uses_chunks_when_present(monkeypatch):
+    write_document()
+    write_chunks("doc_raw", ["Alice works at Acme."])
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    fake_model = RecordingChatModel(json.dumps(report))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = discover_for_document("doc_raw")
+
+    assert result == report
+    assert len(fake_model.prompts) == 1  # single chunk group -> no consolidation call
+
+
+def test_schema_for_document_raises_file_not_found_when_document_missing():
+    with pytest.raises(FileNotFoundError):
+        schema_for_document("missing_raw")
+
+
+def test_schema_for_document_uses_whole_document_when_no_chunks(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result = schema_for_document("doc_raw")
+
+    assert result == schema
+
+
+def test_schema_for_document_uses_chunks_when_present(monkeypatch):
+    write_document()
+    write_chunks("doc_raw", ["Alice works at Acme."])
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result = schema_for_document("doc_raw")
+
+    assert result["node_types"] == schema["node_types"]
+
+
+# --- summarize_document --------------------------------------------------
+
+
+def test_summarize_document_strips_and_returns_llm_text(monkeypatch):
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
+    )
+
+    assert summarize_document("some document text") == "이 문서는 보험약관을 설명합니다."
+
+
+def test_summarize_document_raises_on_empty_response(monkeypatch):
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel("   "))
+
+    with pytest.raises(ValueError):
+        summarize_document("some document text")
+
+
+# --- find_redundant_type_pairs / measure_schema_stability --------------------
+
+
+def test_find_redundant_type_pairs_flags_near_duplicate_descriptions(monkeypatch):
+    schema = {
+        "node_types": [
+            {"name": "Customer", "description": "a paying customer"},
+            {"name": "Client", "description": "a paying customer"},
+            {"name": "Product", "description": "something sold"},
+        ],
+        "edge_types": [],
+    }
+
+    class VectorFakeEmbeddingModel:
+        def embed_documents(self, texts):
+            # Customer/Client get identical vectors; Product gets an
+            # orthogonal one, so only the first pair should pass threshold.
+            return [[0.0, 1.0] if text.startswith("Product") else [1.0, 0.0] for text in texts]
+
+    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: VectorFakeEmbeddingModel())
+
+    pairs = find_redundant_type_pairs(schema, threshold=0.9)
+
+    assert pairs == [{"element_type": "node_type", "a": "Customer", "b": "Client", "similarity": pytest.approx(1.0)}]
+
+
+def test_find_redundant_type_pairs_skips_types_with_fewer_than_two_entries():
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+
+    pairs = find_redundant_type_pairs(schema)
+
+    assert pairs == []
+
+
+def test_measure_schema_stability_perfect_agreement_across_runs(monkeypatch):
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result = measure_schema_stability("some document text", runs=3)
+
+    assert result["avg_jaccard_similarity"] == 1.0
+    assert result["type_name_sets"] == [["Person"]] * 3
+
+
+def test_measure_schema_stability_disagreement_lowers_similarity(monkeypatch):
+    schemas = [
+        {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []},
+        {"node_types": [{"name": "Individual", "description": "a person"}], "edge_types": []},
+    ]
+    fake_model = SequencedChatModel([json.dumps(s) for s in schemas])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = measure_schema_stability("some document text", runs=2)
+
+    assert result["avg_jaccard_similarity"] == 0.0
+
+
+def test_measure_schema_stability_raises_for_fewer_than_two_runs():
+    with pytest.raises(ValueError):
+        measure_schema_stability("doc", runs=1)
