@@ -1072,9 +1072,9 @@ onMounted(async () => {
       </div>
     </aside>
 
-    <!-- Main area -->
-    <div class="flex min-h-0 flex-1 flex-col">
-      <div class="relative flex min-h-0 flex-[2]">
+    <!-- Main area: 온톨로지 그래프 / 스키마·그래프DB side by side as two columns -->
+    <div class="flex min-h-0 flex-1">
+      <div class="relative flex min-h-0 min-w-0 flex-1">
         <div class="min-h-0 min-w-0 flex-1">
           <OntologyGraph
             :file="file"
@@ -1132,7 +1132,7 @@ onMounted(async () => {
           </dl>
         </div>
       </div>
-      <div class="min-h-0 flex-1 border-t border-border">
+      <div class="min-h-0 min-w-0 flex-1 border-l border-border">
         <SchemaGraphPreview :file="file" :schema-version="schemaVersion" />
       </div>
     </div>
