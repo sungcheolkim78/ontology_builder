@@ -21,15 +21,26 @@ export function normalizeForMatch(text) {
     .replace(WHITESPACE, '')
 }
 
+// A gentler normalization for the PDF viewer's own keyword search box (as
+// opposed to normalizeForMatch's line-quote matching above): lowercased and
+// whitespace-collapsed rather than whitespace-stripped, since a literal user
+// query like "다음 조항" needs its word boundary preserved to avoid matching
+// across unrelated adjacent words.
+export function normalizeForSearch(text) {
+  return (text ?? '').toLowerCase().replace(WHITESPACE, ' ').trim()
+}
+
 // Concatenates normalized item text into one search haystack, keeping a
 // parallel index of which item produced each haystack character range --
 // so a matched substring can be mapped back to the pdf.js text item(s) that
-// produced it (and from there to an on-page bounding box).
-export function buildHaystack(items, itemText = (item) => item.str) {
+// produced it (and from there to an on-page bounding box). `normalize`
+// defaults to the line-quote matcher above; the keyword search box passes
+// normalizeForSearch instead.
+export function buildHaystack(items, itemText = (item) => item.str, normalize = normalizeForMatch) {
   let haystack = ''
   const ranges = []
   for (const item of items) {
-    const normalized = normalizeForMatch(itemText(item))
+    const normalized = normalize(itemText(item))
     if (!normalized) continue
     ranges.push({ start: haystack.length, end: haystack.length + normalized.length, item })
     haystack += normalized
@@ -75,6 +86,33 @@ export function pageForLine(lines, lineNumber) {
     if (match) page = Number(match[1])
   }
   return page
+}
+
+// The reverse of pageForLine, backing the PDF viewer's "Sync" button (PDF
+// page -> markdown scroll position, as opposed to every other helper here,
+// which goes markdown -> PDF). Returns the 1-indexed line of that page's own
+// `<!-- page: N -->` marker, or line 1 if the page has no marker (shouldn't
+// happen for a real PDF-derived document, since page_to_markdown emits one
+// per page, but a page number past the end of a shorter/mismatched document
+// falls back gracefully rather than throwing).
+export function lineForPage(lines, page) {
+  for (let i = 0; i < lines.length; i++) {
+    const match = PAGE_MARKER_PATTERN.exec(lines[i].trim())
+    if (match && Number(match[1]) === page) return i + 1
+  }
+  return 1
+}
+
+// The highest page number markered anywhere in raw.md -- used to show
+// "page N of TOTAL" in the status bar without PreviewView needing to ask
+// PdfViewer (which owns the actual PDF document) for its own page count.
+export function totalPagesInLines(lines) {
+  let max = 1
+  for (const line of lines) {
+    const match = PAGE_MARKER_PATTERN.exec(line.trim())
+    if (match) max = Math.max(max, Number(match[1]))
+  }
+  return max
 }
 
 // Maps an evidence_text quote (verbatim per the backend's own verification --

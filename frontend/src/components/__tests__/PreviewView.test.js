@@ -137,13 +137,26 @@ describe('PreviewView PDF split', () => {
     expect(wrapper.find('[data-testid="view-mode-pdf"]').exists()).toBe(false)
   })
 
-  it('pushes an initial jump request to the PDF pane once the document loads', async () => {
+  it('does not push an automatic jump request when the document loads', async () => {
     mockApi({ chunkStatus: 404 })
     const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: true })
     await flushPromises()
 
     const pdfViewer = wrapper.findComponent(PdfViewer)
-    expect(pdfViewer.props('jumpRequest')).toMatchObject({ page: 1 })
+    expect(pdfViewer.props('jumpRequest')).toBeNull()
+  })
+
+  it('switches to the raw view when the PDF pane emits a sync request', async () => {
+    mockApi({ chunkStatus: 200, chunkBody: CHUNK_DATA })
+    const wrapper = mountWithStubbedPdfViewer({ filename: 'doc_raw.md', has_pdf: true })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-mode-chunk"]').trigger('click')
+    expect(wrapper.find('[data-testid="chunk-row-header"]').exists()).toBe(true)
+
+    await wrapper.findComponent(PdfViewer).vm.$emit('sync', 1)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="chunk-row-header"]').exists()).toBe(false)
   })
 
   it('pushes a jump request to the PDF pane when a chunk is selected', async () => {

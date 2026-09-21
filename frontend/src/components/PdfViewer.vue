@@ -10,7 +10,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { API_BASE, authState } from '../utils/api.js'
-import { buildHaystack, findMatchRange, itemsInRange, normalizeForMatch } from '../utils/pdfHighlight.js'
+import { buildHaystack, findMatchRange, itemsInRange, normalizeForMatch, normalizeForSearch } from '../utils/pdfHighlight.js'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc
 
@@ -22,6 +22,11 @@ const props = defineProps({
   // schemaRefreshRequest for the same pattern elsewhere in this app).
   jumpRequest: { type: Object, default: null },
 })
+
+// 'sync': the current PDF page, so PreviewView.vue can scroll the markdown
+// pane to the matching `<!-- page: N -->` position -- the reverse direction
+// of jumpRequest above (markdown -> PDF).
+const emit = defineEmits(['sync'])
 
 const RENDER_SCALE = 1.4
 
@@ -71,8 +76,12 @@ async function scrollToFirstHighlight() {
   container.scrollTop = Math.max(0, first.top - container.clientHeight / 3)
 }
 
-async function renderPage(targetPage, highlightText) {
-  if (!pdfDoc || !canvasRef.value) return
+// Shared by the two things that put a page on screen: a jump request's
+// (page, highlightText) below, and the keyword search's (page, matchRange)
+// further down -- both need the freshly-rendered page/viewport to compute
+// highlight rects from, just via a different match-finding path.
+async function renderPageCanvas(targetPage) {
+  if (!pdfDoc || !canvasRef.value) return null
   const clamped = Math.min(Math.max(1, targetPage || 1), pdfDoc.numPages)
   pageNumber.value = clamped
   const page = await pdfDoc.getPage(clamped)
@@ -85,10 +94,18 @@ async function renderPage(targetPage, highlightText) {
   try {
     await renderTask.promise
   } catch (err) {
-    if (err?.name === 'RenderingCancelledException') return
+    if (err?.name === 'RenderingCancelledException') return null
     throw err
   }
-  highlights.value = highlightText ? await findHighlightRects(page, viewport, highlightText) : []
+  return { page, viewport }
+}
+
+async function renderPage(targetPage, highlightText) {
+  const rendered = await renderPageCanvas(targetPage)
+  if (!rendered) return
+  highlights.value = highlightText
+    ? await findHighlightRects(rendered.page, rendered.viewport, highlightText)
+    : []
   await scrollToFirstHighlight()
 }
 
@@ -102,10 +119,74 @@ async function applyPendingJump() {
   }
 }
 
+// --- keyword search ---
+// committedSearchQuery/searchCursor are plain (non-reactive) bookkeeping,
+// not shown in the template -- only searchQuery/searchNoMatch need to drive
+// re-renders. A query is "committed" on its first Enter (search from the
+// very start of the document, page 1); every following Enter with the same
+// text continues from just past the last match instead, wrapping back to
+// page 1 if nothing more is found -- editing the query resets this so the
+// next Enter is a fresh "first result" search again.
+const searchQuery = ref('')
+const searchNoMatch = ref(false)
+let committedSearchQuery = null
+let searchCursor = { page: 1, offset: 0 }
+
+async function findNextMatch(needle, fromPage, fromOffset) {
+  const total = pdfDoc.numPages
+  for (let i = 0; i <= total; i++) {
+    const page = ((fromPage - 1 + i) % total) + 1
+    const startOffset = i === 0 ? fromOffset : 0
+    const pdfPage = await pdfDoc.getPage(page)
+    const content = await pdfPage.getTextContent()
+    const { haystack, ranges } = buildHaystack(content.items, (item) => item.str, normalizeForSearch)
+    const match = findMatchRange(haystack.slice(startOffset), needle)
+    if (match) {
+      return {
+        page,
+        start: match.start + startOffset,
+        end: match.end + startOffset,
+        ranges,
+      }
+    }
+  }
+  return null
+}
+
+async function onSearchEnter() {
+  if (!pdfDoc) return
+  const needle = normalizeForSearch(searchQuery.value)
+  if (!needle) return
+  const isNewSearch = needle !== committedSearchQuery
+  committedSearchQuery = needle
+  const from = isNewSearch ? { page: 1, offset: 0 } : searchCursor
+  const result = await findNextMatch(needle, from.page, from.offset)
+  if (!result) {
+    searchNoMatch.value = true
+    return
+  }
+  searchNoMatch.value = false
+  searchCursor = { page: result.page, offset: result.end }
+  const rendered = await renderPageCanvas(result.page)
+  if (!rendered) return
+  highlights.value = itemsInRange(result.ranges, { start: result.start, end: result.end }).map((item) =>
+    itemViewportRect(item, rendered.viewport)
+  )
+  await scrollToFirstHighlight()
+}
+
+function resetSearch() {
+  searchQuery.value = ''
+  searchNoMatch.value = false
+  committedSearchQuery = null
+  searchCursor = { page: 1, offset: 0 }
+}
+
 async function loadDocument(filename) {
   highlights.value = []
   error.value = ''
   pageCount.value = 0
+  resetSearch()
   pdfDoc?.destroy()
   pdfDoc = null
   if (!filename) return
@@ -148,6 +229,10 @@ function goToPage(page) {
   applyPendingJump()
 }
 
+function syncToMarkdown() {
+  emit('sync', pageNumber.value)
+}
+
 onBeforeUnmount(() => {
   renderTask?.cancel()
   pdfDoc?.destroy()
@@ -170,6 +255,24 @@ onBeforeUnmount(() => {
         :disabled="pageCount === 0 || pageNumber >= pageCount"
         @click="goToPage(pageNumber + 1)"
       >다음</button>
+      <div class="h-3.5 w-px bg-border"></div>
+      <button
+        type="button"
+        class="rounded px-1.5 py-0.5 hover:bg-ink/5 disabled:opacity-30"
+        :disabled="!pageCount"
+        title="현재 PDF 페이지와 연관된 원문 위치로 이동"
+        @click="syncToMarkdown"
+      >Sync</button>
+      <input
+        v-model="searchQuery"
+        type="text"
+        placeholder="PDF 내 검색 (Enter)"
+        class="field h-6 w-36 py-0 text-[11px]"
+        :disabled="!pageCount"
+        @input="searchNoMatch = false"
+        @keydown.enter="onSearchEnter"
+      />
+      <span v-if="searchNoMatch" class="text-red-600 dark:text-red-400">검색 결과 없음</span>
     </div>
     <div class="min-h-0 flex-1 overflow-auto bg-black/20 p-2" ref="containerRef">
       <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>

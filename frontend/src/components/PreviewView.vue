@@ -2,7 +2,7 @@
 import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
-import { pageForLine } from '../utils/pdfHighlight.js'
+import { lineForPage, pageForLine, totalPagesInLines } from '../utils/pdfHighlight.js'
 import ChunkView from './ChunkView.vue'
 import PdfViewer from './PdfViewer.vue'
 
@@ -34,12 +34,8 @@ function measureScroll() {
   clientHeight.value = el.clientHeight
 }
 
-// Unlike the old manual "이 줄을 PDF에서 보기" button, the has-PDF split keeps
-// the PdfViewer permanently visible, so every scroll needs to push a fresh
-// jump request instead of waiting for an explicit click.
 function onScroll() {
   measureScroll()
-  if (hasPdf.value) jumpToPdf()
 }
 
 watch(scrollRef, (el) => {
@@ -59,22 +55,6 @@ onBeforeUnmount(() => {
 const lines = computed(() => (rawText.value ? rawText.value.split('\n') : []))
 const totalLines = computed(() => lines.value.length)
 
-const thumbHeightPercent = computed(() => {
-  if (scrollHeight.value === 0) return 100
-  return Math.max(4, Math.min(100, (clientHeight.value / scrollHeight.value) * 100))
-})
-
-const thumbTopPercent = computed(() => {
-  const scrollable = scrollHeight.value - clientHeight.value
-  const fraction = scrollable > 0 ? scrollTop.value / scrollable : 0
-  return (100 - thumbHeightPercent.value) * fraction
-})
-
-const thumbStyle = computed(() => ({
-  height: thumbHeightPercent.value + '%',
-  top: thumbTopPercent.value + '%',
-}))
-
 const currentLine = computed(() => {
   if (totalLines.value === 0) return 0
   const scrollable = scrollHeight.value - clientHeight.value
@@ -82,19 +62,35 @@ const currentLine = computed(() => {
   return Math.min(totalLines.value, Math.round(fraction * (totalLines.value - 1)) + 1)
 })
 
-function jumpToPdf() {
-  const line = currentLine.value || 1
-  pdfJumpCounter += 1
-  pdfJumpRequest.value = {
-    page: pageForLine(lines.value, line),
-    text: (lines.value[line - 1] || '').trim(),
-    id: pdfJumpCounter,
-  }
+// Status-bar page display -- derived from the markdown scroll position
+// alone (via the same `<!-- page: N -->` markers the PDF jump/sync features
+// use), so it stays in sync without PreviewView needing to ask PdfViewer
+// for anything.
+const currentPage = computed(() => (hasPdf.value ? pageForLine(lines.value, currentLine.value || 1) : null))
+const totalPages = computed(() => (hasPdf.value ? totalPagesInLines(lines.value) : null))
+
+// Fired by PdfViewer's 'sync' emit (its Sync button) -- the reverse
+// direction of the old scroll-triggered auto-jump this replaced: an
+// explicit, one-shot "show me where this PDF page is in the markdown"
+// action instead of every markdown scroll silently dragging the PDF along.
+async function scrollToLine(targetLine) {
+  if (viewMode.value !== 'raw') viewMode.value = 'raw'
+  await nextTick()
+  const el = scrollRef.value
+  if (!el || totalLines.value <= 1) return
+  const scrollable = el.scrollHeight - el.clientHeight
+  const fraction = (targetLine - 1) / (totalLines.value - 1)
+  el.scrollTop = Math.max(0, Math.min(scrollable, fraction * scrollable))
+  measureScroll()
 }
 
-// Fired by ChunkView's chunk-selected emit -- same mechanism as scrolling the
-// MD tab, just keyed off the chunk's own line_start instead of the current
-// scroll position.
+function onSyncFromPdf(page) {
+  scrollToLine(lineForPage(lines.value, page))
+}
+
+// Fired by ChunkView's chunk-selected emit -- same mechanism as the PDF
+// viewer's own page navigation, just keyed off the chunk's own line_start
+// instead of a PDF page.
 function onChunkSelected(chunk) {
   if (!hasPdf.value) return
   pdfJumpCounter += 1
@@ -136,7 +132,6 @@ watch(
       await nextTick()
       if (scrollRef.value) scrollRef.value.scrollTop = 0
       measureScroll()
-      if (hasPdf.value) jumpToPdf()
     } catch (err) {
       error.value = '문서를 불러오지 못했습니다: ' + err.message
     }
@@ -154,7 +149,7 @@ watch(
     <p v-else-if="error" class="p-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
     <div v-else class="flex min-h-0 flex-1">
       <div v-if="hasPdf" class="min-h-0 min-w-0 flex-1 border-r border-border">
-        <PdfViewer :filename="file.filename" :jump-request="pdfJumpRequest" />
+        <PdfViewer :filename="file.filename" :jump-request="pdfJumpRequest" @sync="onSyncFromPdf" />
       </div>
       <div class="flex min-h-0 min-w-0 flex-1 flex-col p-3">
         <div v-if="chunkData" data-testid="view-toggle" class="mb-2 flex flex-shrink-0 gap-1 text-[11px]">
@@ -177,16 +172,11 @@ watch(
           <ChunkView :data="chunkData" @chunk-selected="onChunkSelected" />
         </div>
         <template v-else>
-          <div class="flex min-h-0 flex-1 gap-2">
-            <div class="min-h-0 flex-1 overflow-y-scroll" ref="scrollRef" @scroll="onScroll">
-              <div class="markdown text-[13px] leading-relaxed text-ink" v-html="html"></div>
-            </div>
-            <div class="relative w-1.5 flex-shrink-0 rounded-full bg-ink/5">
-              <div class="absolute left-0 right-0 min-h-[16px] rounded-full bg-accent/60" :style="thumbStyle"></div>
-            </div>
+          <div class="min-h-0 flex-1 overflow-y-scroll" ref="scrollRef" @scroll="onScroll">
+            <div class="markdown text-[13px] leading-relaxed text-ink" v-html="html"></div>
           </div>
           <p class="mt-1 flex-shrink-0 border-t border-border pt-1 text-[11px] text-ink-faint">
-            {{ currentLine }} of {{ totalLines }} lines
+            {{ currentLine }} / {{ totalLines }} 줄<template v-if="hasPdf"> · {{ currentPage }} / {{ totalPages }} 페이지</template>
           </p>
         </template>
       </div>
