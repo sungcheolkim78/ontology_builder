@@ -6,20 +6,31 @@ submodule's own docstring/comments for what it owns:
   discovery.json, summary.json, manifest.json) plus the graph-DB-backed
   save/load/embed functions. A dependency-free leaf every other submodule
   can import from.
-- extraction: the LLM-driven pipeline itself -- discover/generate_schema/
-  extract_graph, their chunk-grouped map-reduce variants, domain-schema
+- generate_schema: the LLM-driven schema-generation stage -- discover_ontology/
+  generate_schema, their chunk-grouped map-reduce variants, summarize_document,
+  and the discover_for_document/schema_for_document seams main.py's routes
+  call, plus the schema-quality checks (find_redundant_type_pairs,
+  measure_schema_stability). Depends on utils.
+- extract_graph: the LLM-driven instance-extraction stage -- extract_graph,
+  its chunk-grouped map-reduce variant, and the extract_for_document seam
+  main.py's /extract route calls. Depends on persistence and utils.
+- evolve_graph: validating/evolving what extract_graph produced --
+  validate_ontology/propose_evolution/apply_evolution, plus domain-schema
   convergence (a pipeline concern: it composes extract_graph/
-  validate_ontology/propose_evolution), and the discover_for_document/
-  schema_for_document/extract_for_document seams main.py's routes call.
-  Depends on persistence.
+  validate_ontology/propose_evolution across a sequence of documents).
+  Depends on extract_graph, persistence, and utils.
+- utils: dependency-light helpers shared by two or more of the three
+  submodules above (MAX_DOCUMENT_CHARS/MAX_CHUNK_GROUP_CHARS,
+  parse_json_response, the chunk-grouping/document-loading helpers). A leaf,
+  independent of every other submodule here.
 - legal_guards: this app's own legal-reification structural checks
   (flag_structural_catchall_nodes, validate_legal_edge_shapes) plus
   run_graph_validation, which combines them with app.ontology.schema_validation's
   generic checks. A leaf, independent of every other submodule here.
 - domain_schema: persistence for a *domain*'s (not a document's) converged
   schema -- storage, calibration history, pending-review queue. Depends on
-  extraction (converge_domain_schema/generate_schema) and persistence
-  (create_schema_version).
+  evolve_graph (converge_domain_schema), generate_schema (generate_schema),
+  and persistence (create_schema_version).
 
 get_chat_model/get_embedding_model are imported here, not directly from
 app.llm.chat/app.preprocess.embeddings in each submodule, and every submodule reaches them
@@ -74,47 +85,53 @@ from .legal_guards import (
     run_graph_validation,
     validate_legal_edge_shapes,
 )
-from .extraction import (
+from .utils import (
     MAX_CHUNK_GROUP_CHARS,
     MAX_DOCUMENT_CHARS,
-    _CONFIDENCE_LEVELS,
-    _SECTION_LABEL_RE,
     _check_document_length,
-    _clear_extraction_progress,
+    _dedupe_by_key,
+    _group_document_text,
+    _load_chunk_items,
+    _require_document_text,
+    group_chunks_by_budget,
+    parse_json_response,
+)
+from .generate_schema import (
     _consolidate_schema_types,
     _consolidate_types,
     _cosine_similarity,
-    _dedupe_by_key,
+    _merge_domain_models,
+    discover_for_document,
+    discover_ontology,
+    discover_ontology_from_chunks,
+    find_redundant_type_pairs,
+    generate_schema,
+    generate_schema_from_chunks,
+    measure_schema_stability,
+    schema_for_document,
+    summarize_document,
+)
+from .extract_graph import (
+    _CONFIDENCE_LEVELS,
+    _SECTION_LABEL_RE,
+    _clear_extraction_progress,
     _extraction_progress_dir,
     _find_evidence_span,
-    _group_document_text,
-    _load_chunk_items,
-    _merge_domain_models,
     _merge_group_graphs,
     _normalize_extracted_item,
     _normalize_extracted_properties,
     _properties_by_type,
-    _require_document_text,
     _section_labels_in,
     _write_extraction_progress,
-    apply_evolution,
-    converge_domain_schema,
-    discover_for_document,
-    discover_ontology,
-    discover_ontology_from_chunks,
-    evaluate_domain_schema,
     extract_for_document,
     extract_graph,
     extract_graph_from_chunks,
-    find_redundant_type_pairs,
-    generate_schema,
-    generate_schema_from_chunks,
-    group_chunks_by_budget,
-    measure_schema_stability,
-    parse_json_response,
+)
+from .evolve_graph import (
+    apply_evolution,
+    converge_domain_schema,
+    evaluate_domain_schema,
     propose_evolution,
-    schema_for_document,
-    summarize_document,
     validate_ontology,
 )
 from .domain_schema import (

@@ -156,8 +156,17 @@ Two more single-concern packages exist the same way: `app/graph/` holds
 and `app/llm/` holds `chat.py`, `prompts.py`, and `telemetry.py` (everything
 about talking to an LLM that isn't itself a pipeline stage). `ontology.py`
 is likewise a package, `app/ontology/`, split by concern into
-`persistence.py`, `extraction.py`, `legal_guards.py`, and `domain_schema.py`
-(see that package's own `__init__.py` docstring for the split and why
+`persistence.py`, `generate_schema.py`, `extract_graph.py`,
+`evolve_graph.py`, `utils.py`, `legal_guards.py`, and `domain_schema.py` --
+`generate_schema.py`/`extract_graph.py`/`evolve_graph.py` used to be one
+`extraction.py` module, split by pipeline stage once it grew large enough
+that the three concerns (propose a schema, extract instances against it,
+validate/evolve what was extracted) were easier to navigate as separate
+files; `utils.py` holds what's shared across two or more of them
+(`parse_json_response`, the chunk-grouping/document-loading helpers,
+`MAX_DOCUMENT_CHARS`/`MAX_CHUNK_GROUP_CHARS`) so each of the three stays
+scoped to its own stage
+(see that package's own `__init__.py` docstring for the full split and why
 `get_chat_model`/`get_embedding_model` are re-exported from there rather
 than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
 each submodule). `app.ontology.schema_validation` (normalization/validation
