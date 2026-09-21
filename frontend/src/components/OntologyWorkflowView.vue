@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
+import { finishTask, startTask } from '../utils/taskStatus.js'
 import OntologyGraph from './OntologyGraph.vue'
 import SchemaGraphPreview from './SchemaGraphPreview.vue'
 
@@ -187,6 +188,7 @@ async function discoverOntology() {
   workflowMessage.value = ''
   discoveryError.value = ''
   startElapsedTimer()
+  const taskId = startTask(`온톨로지 발견 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/discover`, {
       method: 'POST',
@@ -200,8 +202,10 @@ async function discoverOntology() {
     discoveryReport.value = await res.json()
     useDiscoveryForSchema.value = true
     showDiscoveryReport.value = true
+    finishTask(taskId, { status: 'success', message: '온톨로지 발견이 완료되었습니다.' })
   } catch (err) {
     discoveryError.value = '온톨로지 발견 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: discoveryError.value })
   } finally {
     isDiscovering.value = false
     stopElapsedTimer()
@@ -231,6 +235,7 @@ async function generateSchema() {
   workflowError.value = ''
   workflowMessage.value = ''
   startElapsedTimer()
+  const taskId = startTask(`스키마 생성 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
       method: 'POST',
@@ -248,8 +253,10 @@ async function generateSchema() {
     const schema = await res.json()
     workflowMessage.value = `스키마 생성 완료 (노드 타입 ${schema.node_types.length}개, 엣지 타입 ${schema.edge_types.length}개)`
     emit('schema-generated')
+    finishTask(taskId, { status: 'success', message: workflowMessage.value })
   } catch (err) {
     workflowError.value = '스키마 생성 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: workflowError.value })
   } finally {
     isGeneratingSchema.value = false
     stopElapsedTimer()
@@ -262,6 +269,7 @@ async function extractGraph() {
   workflowError.value = ''
   workflowMessage.value = ''
   startElapsedTimer()
+  const taskId = startTask(`그래프 추출 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
       method: 'POST',
@@ -273,8 +281,10 @@ async function extractGraph() {
     const graph = await res.json()
     workflowMessage.value = `그래프 추출 완료 (노드 ${graph.nodes.length}개, 엣지 ${graph.edges.length}개)`
     emit('graph-extracted')
+    finishTask(taskId, { status: 'success', message: workflowMessage.value })
   } catch (err) {
     workflowError.value = '그래프 추출 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: workflowError.value })
   } finally {
     isExtracting.value = false
     stopElapsedTimer()
@@ -287,6 +297,7 @@ async function embed() {
   workflowError.value = ''
   workflowMessage.value = ''
   startElapsedTimer()
+  const taskId = startTask(`임베딩 생성 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/embed`, {
       method: 'POST',
@@ -297,8 +308,10 @@ async function embed() {
     }
     const result = await res.json()
     workflowMessage.value = `임베딩 생성 완료 (노드 ${result.embedded}개)`
+    finishTask(taskId, { status: 'success', message: workflowMessage.value })
   } catch (err) {
     workflowError.value = '임베딩 생성 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: workflowError.value })
   } finally {
     isEmbedding.value = false
     stopElapsedTimer()
@@ -312,6 +325,7 @@ async function validateOntology() {
   workflowMessage.value = ''
   validationError.value = ''
   startElapsedTimer()
+  const taskId = startTask(`온톨로지 검증 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/validate`, {
       method: 'POST',
@@ -324,8 +338,10 @@ async function validateOntology() {
     }
     validationReport.value = await res.json()
     showValidationReport.value = true
+    finishTask(taskId, { status: 'success', message: '온톨로지 검증이 완료되었습니다.' })
   } catch (err) {
     validationError.value = '온톨로지 검증 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: validationError.value })
   } finally {
     isValidating.value = false
     stopElapsedTimer()
@@ -347,6 +363,7 @@ async function proposeEvolution() {
   evolutionApplyError.value = ''
   evolutionApplyMessage.value = ''
   startElapsedTimer()
+  const taskId = startTask(`개선안 도출 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/evolve`, {
       method: 'POST',
@@ -368,8 +385,10 @@ async function proposeEvolution() {
     )
     showValidationReport.value = false
     showEvolutionReview.value = true
+    finishTask(taskId, { status: 'success', message: '개선안 도출이 완료되었습니다.' })
   } catch (err) {
     evolutionError.value = '개선안 도출 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: evolutionError.value })
   } finally {
     isProposingEvolution.value = false
     stopElapsedTimer()
@@ -391,6 +410,7 @@ async function applyEvolution() {
   isApplyingEvolution.value = true
   evolutionApplyError.value = ''
   evolutionApplyMessage.value = ''
+  const taskId = startTask(`개선안 반영 — ${props.file.filename}`)
   try {
     const changes = evolutionProposal.value.changes.filter((c) => acceptedChangeIds.value.has(c.change_id))
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/evolve/apply`, {
@@ -407,8 +427,10 @@ async function applyEvolution() {
     evolutionProposal.value = null
     validationReport.value = null
     emit('graph-extracted')
+    finishTask(taskId, { status: 'success', message: evolutionApplyMessage.value })
   } catch (err) {
     evolutionApplyError.value = '개선안 반영 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: evolutionApplyError.value })
   } finally {
     isApplyingEvolution.value = false
   }
@@ -478,6 +500,7 @@ async function createGoldenset() {
   if (!props.file?.filename) return
   isGeneratingGoldenset.value = true
   goldensetError.value = ''
+  const taskId = startTask(`골든셋 작성 — ${props.file.filename}`)
   try {
     const res = await apiFetch(
       `/api/documents/${encodeURIComponent(props.file.filename)}/goldenset`,
@@ -489,8 +512,10 @@ async function createGoldenset() {
     }
     goldensetReport.value = await res.json()
     showGoldensetReport.value = true
+    finishTask(taskId, { status: 'success', message: '골든셋 작성이 완료되었습니다.' })
   } catch (err) {
     goldensetError.value = '골든셋 작성 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: goldensetError.value })
   } finally {
     isGeneratingGoldenset.value = false
   }
@@ -587,6 +612,7 @@ async function runDomainConvergence() {
   isConverging.value = true
   convergeError.value = ''
   convergeMessage.value = ''
+  const taskId = startTask(`도메인 스키마 수렴 — ${domain}`)
   try {
     const res = await apiFetch(`/api/ontology/domain-schema/${encodeURIComponent(domain)}/converge`, {
       method: 'POST',
@@ -607,8 +633,10 @@ async function runDomainConvergence() {
     selectedCalibrationFiles.value = new Set()
     await loadDomains()
     await loadDomainSchema(domain)
+    finishTask(taskId, { status: 'success', message: convergeMessage.value })
   } catch (err) {
     convergeError.value = '수렴 실행 실패: ' + err.message
+    finishTask(taskId, { status: 'error', message: convergeError.value })
   } finally {
     isConverging.value = false
   }

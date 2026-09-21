@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ChatView from './components/ChatView.vue'
 import FileExplorerView from './components/FileExplorerView.vue'
 import LoginScreen from './components/LoginScreen.vue'
@@ -7,7 +7,11 @@ import NavSidebar from './components/NavSidebar.vue'
 import OntologyWorkflowView from './components/OntologyWorkflowView.vue'
 import PreviewView from './components/PreviewView.vue'
 import SettingsView from './components/SettingsView.vue'
+import TaskNotifications from './components/TaskNotifications.vue'
 import { apiFetch, authState } from './utils/api'
+import { taskState } from './utils/taskStatus.js'
+
+const runningTaskCount = computed(() => taskState.tasks.filter((t) => t.status === 'running').length)
 
 const authRequired = ref(false)
 const configLoaded = ref(false)
@@ -105,7 +109,13 @@ function onToggleType({ kind, type }) {
           {{ parsedFile?.filename ?? '선택된 문서 없음' }}
         </span>
       </div>
+      <div v-if="runningTaskCount > 0" class="ml-auto flex flex-shrink-0 items-center gap-1.5 text-xs text-ink-muted">
+        <span class="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-accent"></span>
+        작업 진행 중 ({{ runningTaskCount }})
+      </div>
     </header>
+
+    <TaskNotifications />
 
     <div class="flex min-h-0 flex-1">
       <NavSidebar :active-view="activeView" @nav-select="activeView = $event" />
