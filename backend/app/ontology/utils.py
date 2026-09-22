@@ -35,7 +35,7 @@ MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS", 1_000_000))
 # consecutive chunks (map, via group_chunks_by_budget below), then folds every
 # group's result into one unified set (reduce) -- see each function's own
 # docstring for what exactly gets consolidated/merged and how.
-MAX_CHUNK_GROUP_CHARS = int(os.environ.get("MAX_CHUNK_GROUP_CHARS", 1_000))
+MAX_CHUNK_GROUP_CHARS = int(os.environ.get("MAX_CHUNK_GROUP_CHARS", 12_000))
 
 
 def _check_document_length(document_text: str, max_chars: int | None = None) -> None:
