@@ -60,6 +60,9 @@ def _extract_text_block(content: list) -> str:
     raise ValueError(f"no text block found in response content: {content!r}")
 
 
+_JSON_DECODER = json.JSONDecoder()
+
+
 def parse_json_response(content: str | list) -> dict:
     """Parses a chat model's JSON response. `content` is usually already a
     plain string (langchain's normal `response.content` shape), but once
@@ -68,14 +71,25 @@ def parse_json_response(content: str | list) -> dict:
     Responses API instead of the classic Chat Completions API, which returns
     a LIST of content blocks (one 'reasoning' block, one 'text' block, in
     either order) rather than a string -- _extract_text_block above pulls
-    the actual answer out of that shape first when needed."""
+    the actual answer out of that shape first when needed.
+
+    Parses via json.JSONDecoder.raw_decode rather than json.loads, so
+    trailing garbage *after* an otherwise-complete, valid JSON value doesn't
+    fail the whole parse -- observed live: a model can still tack on a
+    leftover markdown code-fence closer (just "``", not even a full "```")
+    after a response_format=json_object-mode reply that was never fenced to
+    begin with, old habit from before that mode existed. raw_decode finds
+    and returns the first complete JSON value in the string and ignores
+    anything after it, which json.loads (whole-string-must-be-one-value)
+    would reject outright as "Extra data"."""
     text = content if isinstance(content, str) else _extract_text_block(content)
     stripped = text.strip()
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
     if fenced:
         stripped = fenced.group(1)
     try:
-        return json.loads(stripped)
+        obj, _end = _JSON_DECODER.raw_decode(stripped)
+        return obj
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 

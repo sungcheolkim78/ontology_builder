@@ -182,3 +182,23 @@ def test_parse_json_response_finds_text_block_regardless_of_order():
 def test_parse_json_response_raises_when_no_text_block_present():
     with pytest.raises(ValueError):
         parse_json_response([{"type": "reasoning", "content": []}])
+
+
+def test_parse_json_response_ignores_trailing_garbage_after_valid_json():
+    # Regression: observed live -- a response_format=json_object reply is
+    # never itself markdown-fenced, but a model can still tack on a leftover
+    # fence-closer habit afterward (here, just "``", not even a full "```"),
+    # which used to fail the whole parse with "Extra data" even though a
+    # complete, valid JSON value came first.
+    content = '{"node_types": [], "edge_types": []}\n``'
+
+    assert parse_json_response(content) == {"node_types": [], "edge_types": []}
+
+
+def test_parse_json_response_ignores_trailing_garbage_in_a_content_list():
+    content = [
+        {"type": "reasoning", "content": []},
+        {"type": "text", "text": '{"ok": true}\n```'},
+    ]
+
+    assert parse_json_response(content) == {"ok": True}
