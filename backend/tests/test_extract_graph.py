@@ -43,6 +43,29 @@ class SequencedChatModel:
         return type("FakeResponse", (), {"content": content})()
 
 
+def _prompt_text(prompt):
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
+
+
+class KeyedChatModel:
+    """Returns a response based on matching a substring in the prompt --
+    used for the resume tests below, so a test can fail loudly (invalid
+    content, breaking json parsing) if a group that should have been
+    resumed from cache is incorrectly regenerated instead."""
+
+    def __init__(self, responses_by_marker):
+        self.responses_by_marker = responses_by_marker
+
+    def invoke(self, prompt):
+        text = _prompt_text(prompt)
+        for marker, content in self.responses_by_marker.items():
+            if marker in text:
+                return type("FakeResponse", (), {"content": content})()
+        raise AssertionError(f"no matching response for prompt: {prompt!r}")
+
+
 @pytest.fixture(autouse=True)
 def clean_data_dir():
     if DATA_DIR.exists():
@@ -344,6 +367,75 @@ def test_extract_graph_from_chunks_clears_stale_progress_files_from_previous_run
 
     assert not (progress_dir / "node_proc_5.json").exists()
     assert json.loads((progress_dir / "node_proc_1.json").read_text()) == graph["nodes"]
+
+
+def test_extract_graph_from_chunks_resumes_from_cached_group_results(monkeypatch):
+    # Regression: a retried extract_graph_from_chunks call used to redo
+    # every group's LLM call from scratch, even ones a prior (e.g. partially
+    # failed) attempt had already completed successfully.
+    schema = {
+        "node_types": [{"name": "Person", "description": "a person"}, {"name": "Org", "description": "an org"}],
+        "edge_types": [{"name": "WORKS_AT", "description": "works at", "source": "Person", "target": "Org"}],
+    }
+    write_document()
+    stem = "doc_raw"
+    progress_dir = document_dir_for(stem) / "extraction_progress"
+    progress_dir.mkdir(parents=True)
+    graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    # Both endpoints of the edge must belong to group 2's own node list --
+    # extract_graph's own contract is that a node id is only ever unique
+    # *within* the group that produced it, so an edge can't reference
+    # another group's raw id (cross-group linking happens by (type, label)
+    # match in _merge_group_graphs, not by id).
+    graph2 = {
+        "nodes": [{"id": "n2", "label": "Acme", "type": "Org"}, {"id": "n3", "label": "Bob", "type": "Person"}],
+        "edges": [{"source": "n3", "target": "n2", "type": "WORKS_AT"}],
+    }
+    (progress_dir / "node_proc_1.json").write_text(json.dumps(graph1["nodes"]))
+    (progress_dir / "edge_proc_1.json").write_text(json.dumps(graph1["edges"]))
+    (progress_dir / "node_proc_2.json").write_text(json.dumps(graph2["nodes"]))
+    (progress_dir / "edge_proc_2.json").write_text(json.dumps(graph2["edges"]))
+    model = KeyedChatModel({})  # no group should call the model at all
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    result = extract_graph_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        schema,
+        max_group_chars=30,
+        stem=stem,
+    )
+
+    labels = {(n["type"], n["label"]) for n in result["nodes"]}
+    assert labels == {("Person", "Alice"), ("Org", "Acme"), ("Person", "Bob")}
+    assert len(result["edges"]) == 1
+
+
+def test_extract_graph_from_chunks_only_regenerates_missing_groups(monkeypatch):
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    write_document()
+    stem = "doc_raw"
+    progress_dir = document_dir_for(stem) / "extraction_progress"
+    progress_dir.mkdir(parents=True)
+    graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    (progress_dir / "node_proc_1.json").write_text(json.dumps(graph1["nodes"]))
+    (progress_dir / "edge_proc_1.json").write_text(json.dumps(graph1["edges"]))
+    # Group 2 has no cache -- must actually be generated; "a" * 30 (group 1's
+    # text) has no matching marker at all, so the test fails loudly if group 1
+    # is incorrectly regenerated instead of resumed from the cache above.
+    graph2 = {"nodes": [{"id": "n2", "label": "Bob", "type": "Person"}], "edges": []}
+    model = KeyedChatModel({"b" * 30: json.dumps(graph2)})
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    result = extract_graph_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        schema,
+        max_group_chars=30,
+        stem=stem,
+    )
+
+    labels = {(n["type"], n["label"]) for n in result["nodes"]}
+    assert labels == {("Person", "Alice"), ("Person", "Bob")}
+    assert json.loads((progress_dir / "node_proc_2.json").read_text()) == graph2["nodes"]
 
 
 def test_extract_graph_from_chunks_without_stem_writes_no_progress_files(monkeypatch):

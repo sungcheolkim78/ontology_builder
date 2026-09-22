@@ -127,6 +127,7 @@ from .extract_graph import (
     _clear_extraction_progress,
     _extraction_progress_dir,
     _find_evidence_span,
+    _load_extraction_progress,
     _merge_group_graphs,
     _normalize_extracted_item,
     _normalize_extracted_properties,

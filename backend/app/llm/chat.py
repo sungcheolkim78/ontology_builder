@@ -109,10 +109,21 @@ _JSON_OPERATIONS = frozenset(
 # staying under the smallest cataloged model's own ceiling (65_536, google/
 # gemini-3.7-flash) so get_model_max_tokens's "smaller of the two" logic
 # doesn't quietly reintroduce a lower cap for that one model.
+#
+# extract_graph got the same 40_000 bump for the same reason, just without
+# a separate operation key -- unlike consolidation, every chunk group's own
+# extract_graph() call needs it, not just one reduce step. Reproduced live
+# against a real 24-node-type/63-edge-type schema (the same document as
+# consolidate_schema's numbers above, after that fix let it actually
+# converge to a schema this rich): 8 of 12 real chunk groups failed at
+# 16_000 with the same mid-string cutoff, needing 10,300-21,200 output
+# tokens once given the room -- a richer schema means more declared types
+# an extraction pass can match against, hence more nodes/edges to emit
+# regardless of chunk-group size.
 OPERATION_MAX_TOKENS = {
     "discover_ontology": 16_000,
     "generate_schema": 8_000,
-    "extract_graph": 16_000,
+    "extract_graph": 40_000,
     "validate_ontology": 8_000,
     "propose_evolution": 8_000,
     "consolidate_discovery": 40_000,

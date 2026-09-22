@@ -78,7 +78,7 @@ def test_get_model_max_tokens_returns_none_when_neither_cap_applies(monkeypatch)
 def test_get_chat_model_max_tokens_matches_get_model_max_tokens():
     model = get_chat_model("extract_graph")
 
-    assert model.max_tokens == get_model_max_tokens("extract_graph") == 16_000
+    assert model.max_tokens == get_model_max_tokens("extract_graph") == 40_000
 
 
 def test_model_catalog_caps_are_all_above_every_operation_cap():

@@ -223,10 +223,26 @@ def _extraction_progress_dir(stem: str) -> Path:
     return document_dir_for(stem) / "extraction_progress"
 
 
-def _clear_extraction_progress(stem: str) -> None:
+def _clear_extraction_progress(stem: str, keep_through: int = 0) -> None:
+    """Removes extraction_progress/ files for groups beyond `keep_through`
+    only -- leftovers from an earlier, larger-group-count run -- rather
+    than wiping the whole directory (the default `keep_through=0` still
+    means "clear everything," for extract_for_document's whole-document
+    branch, which has no groups to resume). Files at or below that index
+    are left alone so a retried extract_graph_from_chunks call can resume
+    from them via _load_extraction_progress instead of re-running every
+    group's LLM call -- the same reasoning as .utils.ChunkProgress's sibling
+    (app.ontology.generate_schema's _clear_stale_group_candidates)."""
     progress_dir = _extraction_progress_dir(stem)
-    if progress_dir.is_dir():
-        shutil.rmtree(progress_dir)
+    if not progress_dir.is_dir():
+        return
+    for path in progress_dir.glob("*_proc_*.json"):
+        try:
+            index = int(path.stem.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        if index > keep_through:
+            path.unlink()
 
 
 def _write_extraction_progress(stem: str, group_number: int, graph: dict) -> None:
@@ -238,6 +254,23 @@ def _write_extraction_progress(stem: str, group_number: int, graph: dict) -> Non
     (progress_dir / f"edge_proc_{group_number}.json").write_text(
         json.dumps(graph["edges"], ensure_ascii=False)
     )
+
+
+def _load_extraction_progress(stem: str | None, group_number: int) -> dict | None:
+    """Returns a group's already-persisted {"nodes", "edges"} if a prior
+    attempt already wrote both files for it (see _write_extraction_progress)
+    -- None if either is missing, meaning this group still needs its LLM
+    call. Lets a retried extract_graph_from_chunks resume from wherever an
+    earlier attempt left off (e.g. after one group's call failed) instead of
+    re-running every group from scratch."""
+    if stem is None:
+        return None
+    progress_dir = _extraction_progress_dir(stem)
+    node_path = progress_dir / f"node_proc_{group_number}.json"
+    edge_path = progress_dir / f"edge_proc_{group_number}.json"
+    if not node_path.is_file() or not edge_path.is_file():
+        return None
+    return {"nodes": json.loads(node_path.read_text()), "edges": json.loads(edge_path.read_text())}
 
 
 def extract_graph_from_chunks(
@@ -275,28 +308,36 @@ def extract_graph_from_chunks(
     discover_ontology_from_chunks/generate_schema_from_chunks
     (generate_schema.py). That file is the summary a browser polls; the
     extraction_progress/ dump above stays the detailed, un-merged per-group
-    data for manual inspection."""
+    data for manual inspection -- and, doubling as a resume cache: if a
+    prior attempt already wrote a group's node_proc/edge_proc files (e.g. it
+    failed partway through, after some groups had already succeeded), that
+    group's extract_graph() call is skipped and its saved result reused
+    instead of being redone."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to extract graph from")
 
-    if stem is not None:
-        _clear_extraction_progress(stem)
-
     total = len(groups)
+    if stem is not None:
+        _clear_extraction_progress(stem, keep_through=total)
+
     total_nodes = 0
     total_edges = 0
     with start_progress(stem, "extract", total) as progress:
         group_graphs = []
         for group_number, group in enumerate(groups, start=1):
-            logger.info(
-                "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
-                group_number, total, len(group), len(_group_document_text(group)),
-            )
-            graph = extract_graph(_group_document_text(group), schema)
+            cached = _load_extraction_progress(stem, group_number)
+            if cached is not None:
+                graph = cached
+            else:
+                logger.info(
+                    "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
+                    group_number, total, len(group), len(_group_document_text(group)),
+                )
+                graph = extract_graph(_group_document_text(group), schema)
+                if stem is not None:
+                    _write_extraction_progress(stem, group_number, graph)
             group_graphs.append(graph)
-            if stem is not None:
-                _write_extraction_progress(stem, group_number, graph)
             total_nodes += len(graph["nodes"])
             total_edges += len(graph["edges"])
             progress.advance(nodes=total_nodes, edges=total_edges)
