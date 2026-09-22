@@ -1,9 +1,11 @@
 import json
 import shutil
+import threading
 
 import pytest
 
 from app.ontology.generate_schema import (
+    _map_concurrently,
     discover_for_document,
     discover_ontology,
     discover_ontology_from_chunks,
@@ -44,15 +46,21 @@ class RecordingChatModel:
 class SequencedChatModel:
     """Returns each response in order, one per invoke() call -- needed for
     the *_from_chunks consolidation tests, which make one LLM call per
-    group plus one more for the consolidation pass."""
+    group plus one more for the consolidation pass. The map step of
+    generate_schema_from_chunks/measure_schema_stability now calls invoke()
+    concurrently from multiple threads, so the read-index-then-increment
+    below is lock-protected -- otherwise two threads could race and read the
+    same index (or skip one)."""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self._lock = threading.Lock()
 
     def invoke(self, messages):
-        content = self.responses[self.calls]
-        self.calls += 1
+        with self._lock:
+            content = self.responses[self.calls]
+            self.calls += 1
         return type("FakeResponse", (), {"content": content})()
 
 
@@ -120,6 +128,37 @@ def _discovery_report(domain="d", classes=None, relationships=None, competency_q
         "competency_questions": competency_questions or [],
         "warnings": [],
     }
+
+
+# --- _map_concurrently -------------------------------------------------------
+
+
+def test_map_concurrently_preserves_order_and_overlaps_calls():
+    import time
+
+    def slow_double(x):
+        time.sleep(0.2)
+        return x * 2
+
+    start = time.monotonic()
+    result = _map_concurrently(slow_double, [1, 2, 3, 4, 5])
+    elapsed = time.monotonic() - start
+
+    assert result == [2, 4, 6, 8, 10]  # order preserved despite concurrent execution
+    assert elapsed < 0.2 * 5  # overlapped, not run one after another
+
+
+def test_map_concurrently_single_item_skips_thread_pool():
+    calls = []
+
+    def record_and_return(x):
+        calls.append(threading.current_thread())
+        return x
+
+    result = _map_concurrently(record_and_return, ["only"])
+
+    assert result == ["only"]
+    assert calls == [threading.current_thread()]  # ran inline, no worker thread
 
 
 # --- discover_ontology ------------------------------------------------------

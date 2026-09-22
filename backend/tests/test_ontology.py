@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1804,15 +1805,21 @@ class SequencedChatModel:
     because converge_domain_schema makes multiple sequential LLM calls
     (extract/validate/propose_evolution, per document) within one function
     call, unlike the single-call tests above that get away with a fixed
-    FakeChatModel response."""
+    FakeChatModel response. Also used by the generate_schema_from_chunks/
+    measure_schema_stability tests below, whose map step now calls invoke()
+    concurrently from multiple threads -- the read-index-then-increment is
+    lock-protected so two threads can't race and read the same index (or
+    skip one)."""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self._lock = threading.Lock()
 
     def invoke(self, messages):
-        content = self.responses[self.calls]
-        self.calls += 1
+        with self._lock:
+            content = self.responses[self.calls]
+            self.calls += 1
         return type("FakeResponse", (), {"content": content})()
 
 

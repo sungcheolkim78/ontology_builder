@@ -10,8 +10,11 @@ live here too, since they all operate on a document/schema level, before any
 node/edge instances exist -- see extract_graph.py for that stage and
 evolve_graph.py for validating/evolving what extract_graph produces."""
 
+import contextvars
 import json
 import math
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 from app import ontology
 from app.llm.prompts import (
@@ -33,7 +36,43 @@ from .utils import (
     parse_json_response,
 )
 
+# generate_schema_from_chunks()/measure_schema_stability() below each make
+# several independent generate_schema() calls whose results are only
+# combined afterwards -- nothing forces them onto one call after another, so
+# _map_concurrently() below overlaps them in a small thread pool instead of
+# looping. OpenRouter (like most LLM providers) rate-limits by concurrent
+# in-flight requests, so this caps how many run at once rather than firing
+# one thread per item unconditionally.
+MAX_CONCURRENT_LLM_CALLS = int(os.environ.get("MAX_CONCURRENT_LLM_CALLS", 5))
 
+
+def _map_concurrently(fn, items: list) -> list:
+    """Runs fn(item) for every item in a small thread pool instead of one
+    after another, returning results in the same order as `items` (matching
+    the sequential list comprehension this replaces). LLM calls are
+    I/O-bound (a blocking network round-trip), so overlapping them turns N
+    sequential round-trips into roughly ceil(N / MAX_CONCURRENT_LLM_CALLS)
+    round-trips' worth of wall-clock time. A single item skips the thread
+    pool entirely -- the common case (a document that fits in one chunk
+    group) pays no threading overhead at all.
+
+    contextvars.copy_context() is taken once per item, right before
+    submitting it, and used to run that item's call -- ThreadPoolExecutor
+    does not propagate the calling thread's context on its own, and without
+    this every concurrent invoke_with_telemetry call would show up as its
+    own orphaned trace instead of nesting under the request's trace() span
+    (see app.llm.telemetry.trace's own docstring). Each item gets its own
+    fresh copy rather than one shared Context, since a Context object
+    cannot be entered by more than one thread at a time."""
+    if len(items) == 1:
+        return [fn(items[0])]
+    with ThreadPoolExecutor(max_workers=min(len(items), MAX_CONCURRENT_LLM_CALLS)) as executor:
+        futures = [executor.submit(contextvars.copy_context().run, fn, item) for item in items]
+        return [future.result() for future in futures]
+
+
+# [독립 함수] 문서 전체를 요약하는 가벼운 LLM 호출. JSON이 아닌 순수 텍스트를 반환하며,
+# 이 파일의 discover/generate 파이프라인과는 호출 관계가 없다.
 def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
     model = ontology.get_chat_model()
@@ -46,6 +85,9 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     return summary
 
 
+# [발견 파이프라인의 leaf 함수] 문서 전체를 한 번의 LLM 호출로 보내 후보
+# 클래스/관계 등을 발견한다. discover_ontology_from_chunks가 청크 그룹마다
+# 이 함수를 호출한다(map 단계).
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     model = ontology.get_chat_model("discover_ontology")
@@ -58,6 +100,9 @@ def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     return report
 
 
+# [discover_ontology_from_chunks 전용 보조 함수] 그룹별 discover_ontology
+# 결과에서 classes/relationships만 추려 LLM에게 하나로 통합해 달라고 요청한다
+# (reduce 단계 -- 서로 다른 그룹에서 같은 개념이 다른 이름으로 발견된 경우를 병합).
 def _consolidate_types(group_reports: list[dict]) -> dict:
     payload = [
         {
@@ -84,6 +129,9 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
     return consolidated
 
 
+# [discover_ontology_from_chunks 전용 보조 함수] 그룹별 domain_model을 LLM 호출
+# 없이 코드로만 병합한다(_dedupe_by_key로 중복 제거) -- _consolidate_types와 달리
+# 이름 충돌을 판단할 필요가 없는 단순 리스트 필드들이라 LLM이 필요 없다.
 def _merge_domain_models(domain_models: list[dict]) -> dict:
     domain = next((d.get("domain") for d in domain_models if d.get("domain")), "")
     merged = {"domain": domain}
@@ -94,6 +142,10 @@ def _merge_domain_models(domain_models: list[dict]) -> dict:
     return merged
 
 
+# [발견 파이프라인의 오케스트레이터] 청크 단위 map-reduce의 map+reduce를 모두
+# 담당: 그룹별로 discover_ontology를 병렬 호출한 뒤(map, _map_concurrently 사용),
+# 그룹이 2개 이상이면 _consolidate_types/_merge_domain_models로 통합한다(reduce).
+# discover_for_document가 chunks.json이 있는 문서에 대해 이 함수를 호출한다.
 def discover_ontology_from_chunks(
     chunk_items: list[dict], max_group_chars: int | None = None
 ) -> dict:
@@ -104,12 +156,18 @@ def discover_ontology_from_chunks(
     discover_ontology's own MAX_DOCUMENT_CHARS in a single call; a document
     small enough to fit in one group skips consolidation entirely and
     returns that single group's report untouched, so the common case pays
-    for exactly one LLM call, same as discover_ontology()."""
+    for exactly one LLM call, same as discover_ontology(). The map step
+    (one discover_ontology() call per group) runs concurrently via
+    _map_concurrently -- groups are independent by design (see the module
+    comment in .utils), so nothing is gained by waiting for group N's LLM
+    call to finish before starting group N+1's."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to discover ontology from")
 
-    group_reports = [discover_ontology(_group_document_text(group)) for group in groups]
+    group_reports = _map_concurrently(
+        lambda group: discover_ontology(_group_document_text(group)), groups
+    )
     if len(group_reports) == 1:
         return group_reports[0]
 
@@ -141,6 +199,11 @@ def discover_ontology_from_chunks(
     }
 
 
+# [스키마 생성 파이프라인의 leaf 함수이자 이 파일에서 가장 많이 재사용되는 핵심 함수]
+# 문서(또는 그룹 텍스트) 전체를 한 번의 LLM 호출로 보내 node_types/edge_types 스키마를
+# 만든다. generate_schema_from_chunks(그룹마다), measure_schema_stability(반복 호출),
+# schema_for_document(청크가 없을 때)가 이 함수를 호출하고, app.ontology.domain_schema의
+# 도메인 스키마 시딩에서도 그대로 재사용된다.
 def generate_schema(
     document_text: str,
     document_type: str = "general",
@@ -176,6 +239,8 @@ def generate_schema(
     return schema
 
 
+# [generate_schema_from_chunks 전용 보조 함수] 그룹별 스키마의 node_types/edge_types를
+# LLM에게 통합해 달라고 요청한다(reduce 단계 -- _consolidate_types의 스키마 버전).
 def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
     payload = [
         {
@@ -196,6 +261,10 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
     return consolidated
 
 
+# [스키마 생성 파이프라인의 오케스트레이터] discover_ontology_from_chunks와 동일한
+# map-reduce 구조: 그룹별로 generate_schema를 호출한 뒤(map), 그룹이 2개 이상이면
+# _consolidate_schema_types로 통합한다(reduce). schema_for_document가 chunks.json이
+# 있는 문서에 대해 이 함수를 호출한다.
 def generate_schema_from_chunks(
     chunk_items: list[dict],
     document_type: str = "general",
@@ -211,21 +280,30 @@ def generate_schema_from_chunks(
     common case still costs exactly one LLM call. `discovery`, if given, is
     passed through to every group's generate_schema() call unchanged (it's
     already a document-level hint, not something that needs re-deriving per
-    group)."""
+    group). The map step (one generate_schema() call per group) runs
+    concurrently via _map_concurrently -- groups are independent by design
+    (see the module comment in .utils), so nothing is gained by waiting for
+    group N's LLM call to finish before starting group N+1's."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to generate schema from")
 
-    group_schemas = [
-        generate_schema(_group_document_text(group), document_type=document_type, discovery=discovery)
-        for group in groups
-    ]
+    group_schemas = _map_concurrently(
+        lambda group: generate_schema(
+            _group_document_text(group), document_type=document_type, discovery=discovery
+        ),
+        groups,
+    )
     if len(group_schemas) == 1:
         return group_schemas[0]
 
     return _consolidate_schema_types(group_schemas)
 
 
+# [외부 진입점] main.py의 /discover 라우트가 호출하는 seam. 문서 존재 여부를 확인한
+# 뒤 chunks.json 유무에 따라 discover_ontology_from_chunks 또는 discover_ontology로
+# 라우팅한다 -- 이 파일 밖에서는 이 함수(그리고 schema_for_document)만 호출되는 것이
+# 정상적인 사용 방식이다.
 def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     """One seam for main.py's /discover route: owns the document-existence
     check and the chunks.json-vs-whole-document routing that route used to
@@ -238,6 +316,9 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     return discover_ontology(document_text, max_chars=max_chars)
 
 
+# [외부 진입점] main.py의 /schema 라우트가 호출하는 seam. discover_for_document와
+# 동일한 패턴으로, 문서 존재 여부를 확인한 뒤 chunks.json 유무에 따라
+# generate_schema_from_chunks 또는 generate_schema로 라우팅한다.
 def schema_for_document(
     stem: str,
     document_type: str = "general",
@@ -256,6 +337,8 @@ def schema_for_document(
     return generate_schema(document_text, document_type=document_type, max_chars=max_chars, discovery=discovery)
 
 
+# [find_redundant_type_pairs 전용 보조 함수] 두 임베딩 벡터 사이의 코사인 유사도를
+# 계산하는 순수 수학 함수. 외부 의존성 없음.
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
@@ -265,6 +348,9 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+# [독립 기능: 스키마 품질 점검] discover/generate 파이프라인과는 별개로 동작하며,
+# 이미 만들어진 스키마 하나를 대상으로 타입 이름+설명을 임베딩해 서로 너무 비슷한
+# node_type/edge_type 쌍(_cosine_similarity 사용)을 찾아낸다.
 def find_redundant_type_pairs(schema: dict, threshold: float = 0.9) -> list[dict]:
     """Flags node_type/edge_type pairs whose name+description embed to
     near-identical vectors (cosine similarity >= threshold) -- a domain
@@ -294,6 +380,10 @@ def find_redundant_type_pairs(schema: dict, threshold: float = 0.9) -> list[dict
     return pairs
 
 
+# [독립 기능: 스키마 품질 점검] discover/generate 파이프라인과는 별개로 동작하며,
+# 동일한 문서로 generate_schema를 여러 번 반복 호출해 매번 다른 타입 집합이
+# 나오는지(Jaccard 유사도)를 측정한다 -- 낮은 안정성은 스키마가 아니라 문서/프롬프트가
+# 모호하다는 신호.
 def measure_schema_stability(
     document_text: str,
     document_type: str = "general",
@@ -305,14 +395,20 @@ def measure_schema_stability(
     similarity of type-name sets. Low stability signals the *document/prompt*
     is underspecified for schema generation, not that any one generated
     schema is wrong -- see docs/ontology/domain_schema_convergence.md
-    section 3."""
+    section 3. The `runs` calls run concurrently via _map_concurrently --
+    each is an independent regeneration of the same document/schema, so
+    nothing depends on an earlier run's result the way propose_evolution's
+    iterative convergence does."""
     if runs < 2:
         raise ValueError("runs must be at least 2 to compare schemas")
-    type_name_sets = []
-    for _ in range(runs):
-        schema = generate_schema(document_text, document_type=document_type, max_chars=max_chars)
-        names = {t["name"] for t in schema["node_types"]} | {t["name"] for t in schema["edge_types"]}
-        type_name_sets.append(names)
+    schemas = _map_concurrently(
+        lambda _: generate_schema(document_text, document_type=document_type, max_chars=max_chars),
+        list(range(runs)),
+    )
+    type_name_sets = [
+        {t["name"] for t in schema["node_types"]} | {t["name"] for t in schema["edge_types"]}
+        for schema in schemas
+    ]
 
     similarities = []
     for i in range(len(type_name_sets)):
