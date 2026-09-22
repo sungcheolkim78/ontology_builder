@@ -445,11 +445,28 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     reports progress for the whole-document (no chunks.json) branch itself
     -- discover_ontology_from_chunks reports its own when there are
     chunks -- so a poller always finds a progress record no matter which
-    path this document takes."""
+    path this document takes.
+
+    `max_chars` is passed through to discover_ontology() for the
+    whole-document branch only -- it deliberately is NOT forwarded as
+    discover_ontology_from_chunks's own `max_group_chars`, even though
+    they're both "how much text is safe to send in one call" in spirit.
+    They're different budgets in practice: `max_chars` is this route's own
+    request field, sized for "how big a document can this whole-document
+    call handle" (frontend default 1,000,000, effectively "no limit" for
+    real documents); `max_group_chars` controls how finely
+    group_chunks_by_budget splits an *already-chunked* document, and
+    defaults to MAX_CHUNK_GROUP_CHARS (.utils) precisely so an operator can
+    tune chunk-group size via that env var alone. Passing the former
+    through as the latter used to silently defeat MAX_CHUNK_GROUP_CHARS
+    entirely for any document, real or test, since the frontend always
+    sends a non-None max_chars far larger than any sane group budget --
+    group_chunks_by_budget only falls back to MAX_CHUNK_GROUP_CHARS when
+    its own max_group_chars argument is None."""
     document_text = _require_document_text(stem)
     chunk_items = _load_chunk_items(stem)
     if chunk_items is not None:
-        return discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars, stem=stem)
+        return discover_ontology_from_chunks(chunk_items, stem=stem)
     with start_progress(stem, "discover", 1) as progress:
         result = discover_ontology(document_text, max_chars=max_chars)
         progress.advance()
@@ -470,12 +487,19 @@ def schema_for_document(
     including reporting progress for the whole-document branch itself, so a
     poller always finds a progress record no matter which path this
     document takes. Raises FileNotFoundError if the document hasn't been
-    parsed yet."""
+    parsed yet.
+
+    `max_chars` is NOT forwarded as generate_schema_from_chunks's own
+    `max_group_chars` -- see discover_for_document's own docstring for why
+    those are different budgets that happen to look alike, and what doing
+    so used to silently break (MAX_CHUNK_GROUP_CHARS having no effect,
+    since the frontend always sends a non-None max_chars far larger than
+    any sane group budget)."""
     document_text = _require_document_text(stem)
     chunk_items = _load_chunk_items(stem)
     if chunk_items is not None:
         return generate_schema_from_chunks(
-            chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery, stem=stem
+            chunk_items, document_type=document_type, discovery=discovery, stem=stem
         )
     with start_progress(stem, "schema", 1) as progress:
         result = generate_schema(

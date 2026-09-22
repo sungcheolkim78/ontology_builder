@@ -357,6 +357,29 @@ def test_discover_for_document_uses_chunks_when_present(monkeypatch):
     assert len(fake_model.prompts) == 1  # single chunk group -> no consolidation call
 
 
+def test_discover_for_document_ignores_max_chars_for_group_budget(monkeypatch):
+    """Regression: discover_for_document used to forward its own `max_chars`
+    (the frontend's "최대 문자수" field, which defaults to 1,000,000) as
+    discover_ontology_from_chunks's `max_group_chars`, silently overriding
+    MAX_CHUNK_GROUP_CHARS for every real request, since group_chunks_by_budget
+    only falls back to that env-configured default when max_group_chars is
+    None -- see discover_for_document's own docstring. A large `max_chars`
+    must not collapse chunking into a single group."""
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    monkeypatch.setattr("app.ontology.utils.MAX_CHUNK_GROUP_CHARS", 30)
+    group1 = _discovery_report(classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    consolidated = {"classes": group1["classes"] + group2["classes"], "relationships": []}
+    model = KeyedChatModel({"a" * 30: json.dumps(group1), "b" * 30: json.dumps(group2)}, default=json.dumps(consolidated))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    discover_for_document("doc_raw", max_chars=1_000_000)  # the frontend's real-world default
+
+    progress = _read_progress("doc_raw", "discover")
+    assert progress["total"] == 2  # two groups, not one -- max_chars did not collapse them
+
+
 def test_schema_for_document_raises_file_not_found_when_document_missing():
     with pytest.raises(FileNotFoundError):
         schema_for_document("missing_raw")
@@ -381,6 +404,25 @@ def test_schema_for_document_uses_chunks_when_present(monkeypatch):
     result = schema_for_document("doc_raw")
 
     assert result["node_types"] == schema["node_types"]
+
+
+def test_schema_for_document_ignores_max_chars_for_group_budget(monkeypatch):
+    """Regression: same bug as discover_for_document's -- schema_for_document
+    used to forward `max_chars` as generate_schema_from_chunks's own
+    `max_group_chars`, silently defeating MAX_CHUNK_GROUP_CHARS."""
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    monkeypatch.setattr("app.ontology.utils.MAX_CHUNK_GROUP_CHARS", 30)
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
+    consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
+    model = KeyedChatModel({"a" * 30: json.dumps(schema1), "b" * 30: json.dumps(schema2)}, default=json.dumps(consolidated))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    schema_for_document("doc_raw", max_chars=1_000_000)  # the frontend's real-world default
+
+    progress = _read_progress("doc_raw", "schema")
+    assert progress["total"] == 2  # two groups, not one -- max_chars did not collapse them
 
 
 # --- summarize_document --------------------------------------------------
