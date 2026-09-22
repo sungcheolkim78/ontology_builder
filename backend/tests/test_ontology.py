@@ -224,6 +224,16 @@ class RecordingChatModel:
         return type("FakeResponse", (), {"content": self.content})()
 
 
+def _prompt_text(prompt):
+    """Flattens a captured prompt (now usually a [SystemMessage, HumanMessage]
+    list, since app.ontology's LLM call sites build messages instead of one
+    formatted string -- see prompts.py's own module comment) into a single
+    string for substring assertions, regardless of which shape it is."""
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
+
+
 def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
@@ -236,7 +246,7 @@ def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "defined terms" in fake_model.prompts[0]
+    assert "defined terms" in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
@@ -483,7 +493,7 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
 
     client.post("/api/ontology/doc_raw.md/schema")
 
-    assert "Reference --" not in fake_model.prompts[0]
+    assert "Reference --" not in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
@@ -498,8 +508,8 @@ def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
 
     assert response.status_code == 200
-    assert "Reference --" in fake_model.prompts[0]
-    assert "Policy" in fake_model.prompts[0]
+    assert "Reference --" in _prompt_text(fake_model.prompts[0])
+    assert "Policy" in _prompt_text(fake_model.prompts[0])
 
 
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):

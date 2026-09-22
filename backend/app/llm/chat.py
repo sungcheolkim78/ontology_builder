@@ -35,6 +35,41 @@ MODEL_CATALOG = [
 # evolution proposals, ...) which all share the "default" bucket below.
 OPERATION_KEYS = ("discover_ontology", "generate_schema", "extract_graph", "validate_ontology")
 
+# Operations whose prompt always asks for a JSON object back (every
+# app.ontology.generate_schema/extract_graph/evolve_graph call site, plus
+# their reduce-step consolidation calls, which reuse "discover_ontology"/
+# "generate_schema" as their own operation key) -- get_chat_model below adds
+# response_format for exactly these, an allowlist rather than "everything
+# except a known-prose set" specifically because several call sites the ONLY
+# way to know is prose (main.py's /api/chat, app.graph.graphrag's
+# analyze_question/answer_question, app.preprocess.goldenset's question/answer
+# generation) all call get_chat_model() with operation=None too -- an
+# allowlist keyed on these five exact strings can never accidentally catch
+# one of those.
+_JSON_OPERATIONS = frozenset(
+    {"discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution"}
+)
+
+# Hard ceilings well below each model's own max_completion_tokens
+# (MODEL_CATALOG above) for the ontology-pipeline operations whose prompts
+# (app/llm/prompts.py) describe a realistically bounded output shape (a
+# schema's own "~5-12 node_types" guidance, a validation report's handful of
+# issues, ...) -- requesting a model's full ceiling on every call risks
+# runaway generation on a malformed/looping response going undetected for as
+# long as possible, for no benefit on the normal case (a well-formed
+# response stops at its own natural end regardless of how high the ceiling
+# is). Sized generously, as a safety ceiling rather than a token budget the
+# model is expected to actually hit; get_model_max_tokens below takes
+# whichever of this and the model's own cap is smaller, so this only ever
+# tightens, never loosens, what a model would otherwise allow.
+OPERATION_MAX_TOKENS = {
+    "discover_ontology": 16_000,
+    "generate_schema": 8_000,
+    "extract_graph": 16_000,
+    "validate_ontology": 8_000,
+    "propose_evolution": 8_000,
+}
+
 # Models picked at runtime from the settings UI, keyed by operation (see
 # OPERATION_KEYS) plus "default" for every operation not listed there.
 # In-memory only, same as the single-model global this replaced -- a
@@ -59,10 +94,16 @@ def set_model_name(model: str | None, operation: str | None = None) -> None:
 
 def get_model_max_tokens(operation: str | None = None) -> int | None:
     """Output-token cap for the active model, or None when uncataloged
-    (custom OPENROUTER_MODEL) -- sending no cap there matches the provider
-    default instead of guessing a limit that may be rejected."""
+    (custom OPENROUTER_MODEL) and `operation` has no entry in
+    OPERATION_MAX_TOKENS either -- sending no cap there matches the provider
+    default instead of guessing a limit that may be rejected. When both a
+    model cap and an operation cap apply, the smaller of the two wins -- an
+    operation's own cap is a tighter safety ceiling *within* whatever the
+    model already allows, never an excuse to exceed it."""
     catalog = {m["id"]: m["max_tokens"] for m in MODEL_CATALOG}
-    return catalog.get(get_model_name(operation))
+    caps = [catalog.get(get_model_name(operation)), OPERATION_MAX_TOKENS.get(operation)]
+    caps = [c for c in caps if c is not None]
+    return min(caps) if caps else None
 
 
 def get_chat_model(operation: str | None = None):
@@ -70,6 +111,8 @@ def get_chat_model(operation: str | None = None):
     max_tokens = get_model_max_tokens(operation)
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if operation in _JSON_OPERATIONS:
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
     return ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],

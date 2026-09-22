@@ -16,6 +16,8 @@ import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app import ontology
 from app.utils.paths import document_dir_for
 from app.llm.prompts import (
@@ -136,7 +138,14 @@ def _write_group_candidates(stem: str | None, operation: str, index: int, **fiel
 # 이 파일의 discover/generate 파이프라인과는 호출 관계가 없다.
 def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
-    model = ontology.get_chat_model()
+    # Explicit "summarize_document" operation (not the bare, model-selection-
+    # only default every other prose-output call in the app also uses) is
+    # what lets app.llm.chat.get_chat_model tell this call apart from a
+    # JSON-expecting one and skip adding response_format -- see that
+    # module's _JSON_OPERATIONS comment. Model *selection* is unaffected:
+    # "summarize_document" isn't in OPERATION_KEYS either, so it still falls
+    # through to the same "default" bucket as before.
+    model = ontology.get_chat_model("summarize_document")
     response = invoke_with_telemetry(
         "summarize-document", model, SUMMARY_PROMPT.format(document=document_text)
     )
@@ -152,9 +161,8 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     model = ontology.get_chat_model("discover_ontology")
-    response = invoke_with_telemetry(
-        "discover-ontology", model, DISCOVERY_PROMPT.format(document=document_text)
-    )
+    messages = [SystemMessage(content=DISCOVERY_PROMPT), HumanMessage(content=f"Document:\n{document_text}")]
+    response = invoke_with_telemetry("discover-ontology", model, messages)
     report = parse_json_response(response.content)
     if not isinstance(report.get("classes"), list):
         raise ValueError("discovery JSON missing classes list")
@@ -180,8 +188,13 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
         for i, report in enumerate(group_reports)
     ]
     model = ontology.get_chat_model("discover_ontology")
-    prompt = CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
-    response = invoke_with_telemetry("consolidate-discovery-types", model, prompt)
+    messages = [
+        SystemMessage(content=CONSOLIDATION_PROMPT),
+        HumanMessage(
+            content=f"Candidate classes and relationships by group:\n{json.dumps(payload, ensure_ascii=False)}"
+        ),
+    ]
+    response = invoke_with_telemetry("consolidate-discovery-types", model, messages)
     consolidated = parse_json_response(response.content)
     if not isinstance(consolidated.get("classes"), list) or not isinstance(
         consolidated.get("relationships"), list
@@ -298,26 +311,29 @@ def generate_schema(
     discovery: dict | None = None,
 ) -> dict:
     _check_document_length(document_text, max_chars)
-    prompt_template = SCHEMA_PROMPTS.get(document_type)
-    if prompt_template is None:
+    system_prompt = SCHEMA_PROMPTS.get(document_type)
+    if system_prompt is None:
         raise ValueError(f"unknown document_type: {document_type!r}")
     model = ontology.get_chat_model("generate_schema")
-    prompt = prompt_template.format(document=document_text)
     if discovery:
-        # Prepended, not merged into the template's own "Document:" section --
-        # keeps SCHEMA_PROMPT/LEGAL_SCHEMA_PROMPT completely unchanged when
-        # discovery is None (the default), which is the entire point: this is
-        # an optional hint layered on top of the existing prompt, not a
-        # replacement for it.
-        prompt = (
-            "Reference -- a prior ontology-discovery pass over this document already "
+        # Appended, not merged into SCHEMA_PROMPT/LEGAL_SCHEMA_PROMPT's own
+        # text -- keeps those constants completely unchanged when discovery
+        # is None (the default), which is the entire point: this is an
+        # optional hint layered on top of the existing prompt, not a
+        # replacement for it. Still lands in the system message (not the
+        # human message alongside the document) since it's identical across
+        # every chunk group of one generate_schema_from_chunks call, just
+        # like the base prompt itself -- see prompts.py's module comment.
+        system_prompt = system_prompt + (
+            "\n\nReference -- a prior ontology-discovery pass over this document already "
             "proposed these candidate classes/relationships/terminology. Use them only "
             "as a starting hint; the schema you propose must still be independently "
             "grounded in the document text below, and you may diverge from this "
             "reference where the document doesn't actually support it.\n"
-            f"{json.dumps(discovery)}\n\n"
-        ) + prompt
-    response = invoke_with_telemetry("generate-schema", model, prompt)
+            f"{json.dumps(discovery)}"
+        )
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
+    response = invoke_with_telemetry("generate-schema", model, messages)
     schema = parse_json_response(response.content)
     if not isinstance(schema.get("node_types"), list) or not isinstance(
         schema.get("edge_types"), list
@@ -338,8 +354,13 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         for i, schema in enumerate(group_schemas)
     ]
     model = ontology.get_chat_model("generate_schema")
-    prompt = SCHEMA_CONSOLIDATION_PROMPT.format(groups=json.dumps(payload, ensure_ascii=False))
-    response = invoke_with_telemetry("consolidate-schema-types", model, prompt)
+    messages = [
+        SystemMessage(content=SCHEMA_CONSOLIDATION_PROMPT),
+        HumanMessage(
+            content=f"Candidate node_types and edge_types by group:\n{json.dumps(payload, ensure_ascii=False)}"
+        ),
+    ]
+    response = invoke_with_telemetry("consolidate-schema-types", model, messages)
     consolidated = parse_json_response(response.content)
     if not isinstance(consolidated.get("node_types"), list) or not isinstance(
         consolidated.get("edge_types"), list

@@ -11,6 +11,8 @@ import json
 import statistics
 from collections import Counter
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app import ontology
 from app.graph import graphdb
 from app.llm.prompts import EVOLUTION_PROMPT, VALIDATION_PROMPT
@@ -31,10 +33,17 @@ from .utils import _check_document_length, parse_json_response
 def validate_ontology(document_text: str, schema: dict, graph: dict, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     model = ontology.get_chat_model("validate_ontology")
-    prompt = VALIDATION_PROMPT.format(
-        schema=json.dumps(schema), graph=json.dumps(graph), document=document_text
-    )
-    response = invoke_with_telemetry("validate-ontology", model, prompt)
+    messages = [
+        SystemMessage(content=VALIDATION_PROMPT),
+        HumanMessage(
+            content=(
+                f"Ontology schema:\n{json.dumps(schema)}\n\n"
+                f"Extracted graph (nodes and edges):\n{json.dumps(graph)}\n\n"
+                f"Document:\n{document_text}"
+            )
+        ),
+    ]
+    response = invoke_with_telemetry("validate-ontology", model, messages)
     report = parse_json_response(response.content)
     if not isinstance(report.get("validation_summary"), dict) or not isinstance(
         report.get("issues"), list
@@ -51,14 +60,26 @@ def propose_evolution(
     max_chars: int | None = None,
 ) -> dict:
     _check_document_length(document_text, max_chars)
-    model = ontology.get_chat_model()
-    prompt = EVOLUTION_PROMPT.format(
-        schema=json.dumps(schema),
-        graph=json.dumps(graph),
-        validation_report=json.dumps(validation_report),
-        document=document_text,
-    )
-    response = invoke_with_telemetry("propose-evolution", model, prompt)
+    # Explicit "propose_evolution" operation (rather than the bare call every
+    # other non-ontology prose/JSON caller across the app also makes) is what
+    # lets app.llm.chat.get_chat_model recognize this as JSON-expecting (see
+    # its _JSON_OPERATIONS) and apply a realistic max_tokens ceiling (see its
+    # OPERATION_MAX_TOKENS) -- model *selection* is unaffected, since
+    # "propose_evolution" isn't in OPERATION_KEYS either and still falls
+    # through to the same "default" bucket as before.
+    model = ontology.get_chat_model("propose_evolution")
+    messages = [
+        SystemMessage(content=EVOLUTION_PROMPT),
+        HumanMessage(
+            content=(
+                f"Current ontology schema:\n{json.dumps(schema)}\n\n"
+                f"Current extracted graph (nodes and edges):\n{json.dumps(graph)}\n\n"
+                f"Validation report:\n{json.dumps(validation_report)}\n\n"
+                f"Document:\n{document_text}"
+            )
+        ),
+    ]
+    response = invoke_with_telemetry("propose-evolution", model, messages)
     proposal = parse_json_response(response.content)
     if not isinstance(proposal.get("changes"), list):
         raise ValueError("evolution JSON missing changes list")

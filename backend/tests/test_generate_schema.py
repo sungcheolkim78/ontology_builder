@@ -43,6 +43,15 @@ class RecordingChatModel:
         return type("FakeResponse", (), {"content": self.content})()
 
 
+def _prompt_text(prompt):
+    """Flattens a captured prompt (now usually a [SystemMessage, HumanMessage]
+    list -- see generate_schema.py's own SystemMessage/HumanMessage calls)
+    into one string for substring assertions, regardless of which shape it is."""
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
+
+
 class SequencedChatModel:
     """Returns each response in order, one per invoke() call -- needed for
     the *_from_chunks consolidation tests, which make one LLM call per
@@ -79,8 +88,9 @@ class KeyedChatModel:
         self.default = default
 
     def invoke(self, prompt):
+        text = _prompt_text(prompt)
         for marker, content in self.responses_by_marker.items():
-            if marker in prompt:
+            if marker in text:
                 return type("FakeResponse", (), {"content": content})()
         if self.default is not None:
             return type("FakeResponse", (), {"content": self.default})()
@@ -276,8 +286,8 @@ def test_generate_schema_includes_discovery_hint_when_given(monkeypatch):
 
     generate_schema("some document text", discovery={"classes": [{"name": "Policy"}]})
 
-    assert "Reference --" in fake_model.prompts[0]
-    assert "Policy" in fake_model.prompts[0]
+    assert "Reference --" in _prompt_text(fake_model.prompts[0])
+    assert "Policy" in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_ignores_discovery_by_default(monkeypatch):
@@ -287,7 +297,7 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
 
     generate_schema("some document text")
 
-    assert "Reference --" not in fake_model.prompts[0]
+    assert "Reference --" not in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_from_chunks_single_group_skips_consolidation(monkeypatch):

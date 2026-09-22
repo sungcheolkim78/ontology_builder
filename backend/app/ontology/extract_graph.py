@@ -11,6 +11,8 @@ import re
 import shutil
 from pathlib import Path
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app import ontology
 from app.llm.prompts import EXTRACT_PROMPT
 from app.llm.telemetry import invoke_with_telemetry
@@ -133,10 +135,14 @@ def _normalize_extracted_item(
 def extract_graph(document_text: str, schema: dict) -> dict:
     model = ontology.get_chat_model("extract_graph")
     normalized_schema = normalize_schema(schema)
-    prompt = EXTRACT_PROMPT.format(
-        schema=json.dumps(normalized_schema), document=document_text
-    )
-    response = invoke_with_telemetry("extract-graph", model, prompt)
+    # The schema, not just the instructions, goes into the system message --
+    # it's identical across every group of one extract_graph_from_chunks
+    # call (unlike the group's own document text), so folding it in here
+    # keeps that whole message byte-identical across the call's groups (see
+    # EXTRACT_PROMPT's own comment in prompts.py).
+    system_prompt = EXTRACT_PROMPT.format(schema=json.dumps(normalized_schema))
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
+    response = invoke_with_telemetry("extract-graph", model, messages)
     graph = parse_json_response(response.content)
     if not isinstance(graph.get("nodes"), list) or not isinstance(
         graph.get("edges"), list
