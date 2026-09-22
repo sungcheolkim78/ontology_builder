@@ -64,6 +64,29 @@ class SequencedChatModel:
         return type("FakeResponse", (), {"content": content})()
 
 
+class KeyedChatModel:
+    """Returns a response based on matching a substring in the prompt,
+    instead of call order -- needed for the group-candidate-file tests
+    below, since the map step now calls invoke() concurrently and a plain
+    call-order fake (like SequencedChatModel) can't guarantee which group's
+    call gets which canned response. `default`, if given, is used for any
+    prompt that matches no marker (the reduce/consolidation call, which
+    always happens after every group call, so it has no such ordering
+    problem)."""
+
+    def __init__(self, responses_by_marker, default=None):
+        self.responses_by_marker = responses_by_marker
+        self.default = default
+
+    def invoke(self, prompt):
+        for marker, content in self.responses_by_marker.items():
+            if marker in prompt:
+                return type("FakeResponse", (), {"content": content})()
+        if self.default is not None:
+            return type("FakeResponse", (), {"content": self.default})()
+        raise AssertionError(f"no matching response for prompt: {prompt!r}")
+
+
 class FakeEmbeddingModel:
     def embed_documents(self, texts):
         return [[0.0] * EMBEDDING_DIM for _ in texts]
@@ -457,6 +480,41 @@ def test_discover_ontology_from_chunks_reports_progress_when_stem_given(monkeypa
     assert state["completed"] == 2
 
 
+def test_discover_ontology_from_chunks_writes_group_candidate_files(monkeypatch):
+    write_document()
+    group1 = _discovery_report(classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    consolidated = {"classes": group1["classes"] + group2["classes"], "relationships": []}
+    model = KeyedChatModel({"a" * 30: json.dumps(group1), "b" * 30: json.dumps(group2)}, default=json.dumps(consolidated))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    discover_ontology_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    assert json.loads((progress_dir / "discover_classes_1.json").read_text()) == group1["classes"]
+    assert json.loads((progress_dir / "discover_relationships_1.json").read_text()) == group1["relationships"]
+    assert json.loads((progress_dir / "discover_classes_2.json").read_text()) == group2["classes"]
+    assert json.loads((progress_dir / "discover_relationships_2.json").read_text()) == group2["relationships"]
+
+
+def test_discover_ontology_from_chunks_clears_stale_candidate_files_from_previous_run(monkeypatch):
+    write_document()
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    progress_dir.mkdir(parents=True)
+    (progress_dir / "discover_classes_5.json").write_text("[]")
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000, stem="doc_raw")
+
+    assert not (progress_dir / "discover_classes_5.json").exists()
+    assert json.loads((progress_dir / "discover_classes_1.json").read_text()) == report["classes"]
+
+
 def test_discover_ontology_from_chunks_writes_no_progress_without_stem(monkeypatch):
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
     monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
@@ -484,6 +542,41 @@ def test_generate_schema_from_chunks_reports_progress_when_stem_given(monkeypatc
     assert state["status"] == "done"
     assert state["total"] == 2
     assert state["completed"] == 2
+
+
+def test_generate_schema_from_chunks_writes_group_candidate_files(monkeypatch):
+    write_document()
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
+    consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
+    model = KeyedChatModel({"a" * 30: json.dumps(schema1), "b" * 30: json.dumps(schema2)}, default=json.dumps(consolidated))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    generate_schema_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    assert json.loads((progress_dir / "schema_node_types_1.json").read_text()) == schema1["node_types"]
+    assert json.loads((progress_dir / "schema_edge_types_1.json").read_text()) == schema1["edge_types"]
+    assert json.loads((progress_dir / "schema_node_types_2.json").read_text()) == schema2["node_types"]
+    assert json.loads((progress_dir / "schema_edge_types_2.json").read_text()) == schema2["edge_types"]
+
+
+def test_generate_schema_from_chunks_clears_stale_candidate_files_from_previous_run(monkeypatch):
+    write_document()
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    progress_dir.mkdir(parents=True)
+    (progress_dir / "schema_node_types_5.json").write_text("[]")
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    generate_schema_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000, stem="doc_raw")
+
+    assert not (progress_dir / "schema_node_types_5.json").exists()
+    assert json.loads((progress_dir / "schema_node_types_1.json").read_text()) == schema["node_types"]
 
 
 def test_discover_for_document_reports_progress_for_whole_document(monkeypatch):

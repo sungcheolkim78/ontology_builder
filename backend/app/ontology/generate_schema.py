@@ -17,6 +17,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 from app import ontology
+from app.utils.paths import document_dir_for
 from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
@@ -83,6 +84,52 @@ def _map_concurrently(fn, items: list, on_item_done=None) -> list:
     with ThreadPoolExecutor(max_workers=min(len(items), MAX_CONCURRENT_LLM_CALLS)) as executor:
         futures = [executor.submit(contextvars.copy_context().run, call, item) for item in items]
         return [future.result() for future in futures]
+
+
+# Per-chunk-group candidate dump ---------------------------------------------
+#
+# discover_ontology_from_chunks/generate_schema_from_chunks below write each
+# group's own raw candidate output (classes/relationships, or
+# node_types/edge_types -- before any cross-group consolidation) to
+# documents/{stem}/progress/ as soon as that group's LLM call returns. Same
+# "dump what a specific group actually produced, not just the final merged
+# result" idea as extract_graph.py's own extraction_progress/{node,edge}_proc_{N}.json,
+# just alongside the summary ChunkProgress file (progress/{operation}.json)
+# in the same directory rather than a separate one.
+#
+# The map step runs concurrently (_map_concurrently above), so groups finish
+# in whatever order their LLM calls happen to return in -- the file name
+# still has to identify *which* group produced it, unambiguously and without
+# collisions between concurrent writers. A shared "next available number"
+# counter would need its own lock and still wouldn't say which group actually
+# ran; instead, each group's index is fixed *before* the concurrent map even
+# starts (its position in group_chunks_by_budget's output list), so threads
+# only ever write to their own, already-unique filename -- no locking needed
+# for this part, unlike ChunkProgress's shared summary state.
+# [discover_ontology_from_chunks/generate_schema_from_chunks 공용 보조 함수]
+# 이전 실행에서 남은 그룹별 후보 파일(예: discover_classes_5.json)을 지운다 --
+# 요약 파일(progress/{operation}.json)은 건드리지 않도록 파일명 패턴으로만 선택.
+def _clear_group_candidates(stem: str, operation: str) -> None:
+    progress_dir = document_dir_for(stem) / "progress"
+    if not progress_dir.is_dir():
+        return
+    for path in progress_dir.glob(f"{operation}_*.json"):
+        path.unlink()
+
+
+# [discover_ontology_from_chunks/generate_schema_from_chunks 공용 보조 함수]
+# 한 그룹이 만들어낸 원시 후보(classes/relationships 또는 node_types/edge_types)를
+# progress/{operation}_{필드명}_{index}.json으로 저장한다. index는 병렬 실행 시작
+# 전에 미리 정해진 그룹의 고정 위치라서, 완료 순서와 무관하게 충돌 없이 안전하다.
+def _write_group_candidates(stem: str | None, operation: str, index: int, **fields) -> None:
+    if stem is None:
+        return
+    progress_dir = document_dir_for(stem) / "progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    for field_name, value in fields.items():
+        (progress_dir / f"{operation}_{field_name}_{index}.json").write_text(
+            json.dumps(value, ensure_ascii=False)
+        )
 
 
 # [독립 함수] 문서 전체를 요약하는 가벼운 LLM 호출. JSON이 아닌 순수 텍스트를 반환하며,
@@ -179,17 +226,32 @@ def discover_ontology_from_chunks(
     `stem`, if given (main.py's /discover route always has it), reports
     per-group progress to documents/{stem}/progress/discover.json via
     .utils.start_progress, so a GET route can be polled from the browser
-    while this call is still running -- see that module's own comment for
-    why this is a summary file, separate from extract_graph.py's
-    extraction_progress dump of the actual per-group data."""
+    while this call is still running, and dumps each group's own raw
+    classes/relationships to progress/discover_classes_{N}.json /
+    progress/discover_relationships_{N}.json as soon as that group finishes
+    (see the module comment above _write_group_candidates) -- `N` is the
+    group's fixed position in `groups`, not a completion-order counter."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to discover ontology from")
 
+    if stem is not None:
+        _clear_group_candidates(stem, "discover")
+
+    def discover_group(item):
+        index, group = item
+        report = discover_ontology(_group_document_text(group))
+        _write_group_candidates(
+            stem, "discover", index,
+            classes=report.get("classes", []),
+            relationships=report.get("relationships", []),
+        )
+        return report
+
     with start_progress(stem, "discover", len(groups)) as progress:
         group_reports = _map_concurrently(
-            lambda group: discover_ontology(_group_document_text(group)),
-            groups,
+            discover_group,
+            list(enumerate(groups, start=1)),
             on_item_done=progress.advance,
         )
         if len(group_reports) == 1:
@@ -312,18 +374,35 @@ def generate_schema_from_chunks(
     group N's LLM call to finish before starting group N+1's.
 
     `stem`, if given (main.py's /schema route always has it), reports
-    per-group progress to documents/{stem}/progress/schema.json -- see
-    discover_ontology_from_chunks's own docstring for the same mechanism."""
+    per-group progress to documents/{stem}/progress/schema.json, and dumps
+    each group's own raw node_types/edge_types to
+    progress/schema_node_types_{N}.json / progress/schema_edge_types_{N}.json
+    as soon as that group finishes -- see discover_ontology_from_chunks's
+    own docstring for the same mechanism (`N` is the group's fixed position
+    in `groups`, not a completion-order counter)."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to generate schema from")
 
+    if stem is not None:
+        _clear_group_candidates(stem, "schema")
+
+    def generate_group_schema(item):
+        index, group = item
+        schema = generate_schema(
+            _group_document_text(group), document_type=document_type, discovery=discovery
+        )
+        _write_group_candidates(
+            stem, "schema", index,
+            node_types=schema.get("node_types", []),
+            edge_types=schema.get("edge_types", []),
+        )
+        return schema
+
     with start_progress(stem, "schema", len(groups)) as progress:
         group_schemas = _map_concurrently(
-            lambda group: generate_schema(
-                _group_document_text(group), document_type=document_type, discovery=discovery
-            ),
-            groups,
+            generate_group_schema,
+            list(enumerate(groups, start=1)),
             on_item_done=progress.advance,
         )
         if len(group_schemas) == 1:
