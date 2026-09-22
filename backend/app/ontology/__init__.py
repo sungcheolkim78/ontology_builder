@@ -102,10 +102,13 @@ from .utils import (
     start_progress,
 )
 from .generate_schema import (
-    _clear_group_candidates,
+    _DISCOVER_GROUP_FIELDS,
+    _clear_stale_group_candidates,
     _consolidate_schema_types,
     _consolidate_types,
     _cosine_similarity,
+    _discover_field_default,
+    _load_group_candidates,
     _merge_domain_models,
     _write_group_candidates,
     discover_for_document,

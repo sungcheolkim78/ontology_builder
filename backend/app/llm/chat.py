@@ -35,17 +35,33 @@ MODEL_CATALOG = [
 # evolution proposals, ...) which all share the "default" bucket below.
 OPERATION_KEYS = ("discover_ontology", "generate_schema", "extract_graph", "validate_ontology")
 
+# Consolidation calls (generate_schema.py's _consolidate_types/
+# _consolidate_schema_types, the reduce step of discover_ontology_from_chunks/
+# generate_schema_from_chunks) used to reuse "discover_ontology"/
+# "generate_schema" as their own operation key outright. They now get their
+# own key each, purely so OPERATION_MAX_TOKENS can give them a much larger
+# ceiling than a single group's own call needs (see that dict's own
+# comment) -- _MODEL_SELECTION_ALIAS below is what keeps this from also
+# silently changing *which model* a consolidation call uses: without it, an
+# operation key nobody ever explicitly selects a model for in the settings
+# UI would just fall through to the unrelated "default" bucket instead of
+# following whatever a person picked for "discover_ontology"/
+# "generate_schema" -- the behavior before this split existed.
+_MODEL_SELECTION_ALIAS = {
+    "consolidate_discovery": "discover_ontology",
+    "consolidate_schema": "generate_schema",
+}
+
 # Operations whose prompt always asks for a JSON object back (every
 # app.ontology.generate_schema/extract_graph/evolve_graph call site, plus
-# their reduce-step consolidation calls, which reuse "discover_ontology"/
-# "generate_schema" as their own operation key) -- get_chat_model below adds
+# their reduce-step consolidation calls above) -- get_chat_model below adds
 # response_format for exactly these, an allowlist rather than "everything
 # except a known-prose set" specifically because several call sites the ONLY
 # way to know is prose (main.py's /api/chat, app.graph.graphrag's
 # analyze_question/answer_question, app.preprocess.goldenset's question/answer
 # generation) all call get_chat_model() with operation=None too -- an
-# allowlist keyed on these five exact strings can never accidentally catch
-# one of those.
+# allowlist keyed on these exact strings can never accidentally catch one of
+# those.
 #
 # get_chat_model also asks for low reasoning effort on exactly these
 # operations -- verified live against every model in MODEL_CATALOG plus two
@@ -64,7 +80,10 @@ OPERATION_KEYS = ("discover_ontology", "generate_schema", "extract_graph", "vali
 # parameter without erroring even when it has little effect, so this is
 # applied unconditionally rather than per-model.
 _JSON_OPERATIONS = frozenset(
-    {"discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution"}
+    {
+        "discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution",
+        "consolidate_discovery", "consolidate_schema",
+    }
 )
 
 # Hard ceilings well below each model's own max_completion_tokens
@@ -79,12 +98,25 @@ _JSON_OPERATIONS = frozenset(
 # model is expected to actually hit; get_model_max_tokens below takes
 # whichever of this and the model's own cap is smaller, so this only ever
 # tightens, never loosens, what a model would otherwise allow.
+#
+# consolidate_discovery/consolidate_schema get a much bigger share than a
+# single group's own generate_schema/discover_ontology call (8_000/16_000)
+# -- reproduced live, merging a real 12-group document's 274 candidate
+# types (118 node_types + 156 edge_types) needed ~16,700 output tokens, of
+# which ~6,700-8,000 were reasoning alone; 8_000 and even 16_000 both cut
+# the response off mid-string before it produced any/complete JSON. 40_000
+# leaves comfortable headroom above the ~16,700 actually observed, while
+# staying under the smallest cataloged model's own ceiling (65_536, google/
+# gemini-3.7-flash) so get_model_max_tokens's "smaller of the two" logic
+# doesn't quietly reintroduce a lower cap for that one model.
 OPERATION_MAX_TOKENS = {
     "discover_ontology": 16_000,
     "generate_schema": 8_000,
     "extract_graph": 16_000,
     "validate_ontology": 8_000,
     "propose_evolution": 8_000,
+    "consolidate_discovery": 40_000,
+    "consolidate_schema": 40_000,
 }
 
 # Models picked at runtime from the settings UI, keyed by operation (see
@@ -96,6 +128,7 @@ _selected_models: dict[str, str] = {}
 
 
 def get_model_name(operation: str | None = None) -> str:
+    operation = _MODEL_SELECTION_ALIAS.get(operation, operation)
     if operation and operation in _selected_models:
         return _selected_models[operation]
     return _selected_models.get("default") or os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)

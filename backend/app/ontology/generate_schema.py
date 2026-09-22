@@ -109,18 +109,29 @@ def _map_concurrently(fn, items: list, on_item_done=None) -> list:
 # only ever write to their own, already-unique filename -- no locking needed
 # for this part, unlike ChunkProgress's shared summary state.
 # [discover_ontology_from_chunks/generate_schema_from_chunks 공용 보조 함수]
-# 이전 실행에서 남은 그룹별 후보 파일(예: discover_classes_5.json)을 지운다 --
-# 요약 파일(progress/{operation}.json)은 건드리지 않도록 파일명 패턴으로만 선택.
-def _clear_group_candidates(stem: str, operation: str) -> None:
+# 이전 실행이 남긴 그룹별 후보 파일 중, 이번 실행의 그룹 수를 넘어서는(=더 컸던
+# 이전 실행에서 남은) 것만 지운다. 그룹 수 이내의 파일은 일부러 그대로 둔다 --
+# _load_group_candidates가 재사용해서, 실패했던 실행을 재시도할 때 이미 성공한
+# 그룹은 LLM을 다시 호출하지 않고 이어서 진행할 수 있게 하기 위함이다. 요약 파일
+# (progress/{operation}.json)은 건드리지 않도록 파일명 패턴으로만 선택한다.
+def _clear_stale_group_candidates(stem: str, operation: str, keep_through: int) -> None:
     progress_dir = document_dir_for(stem) / "progress"
     if not progress_dir.is_dir():
         return
     for path in progress_dir.glob(f"{operation}_*.json"):
-        path.unlink()
+        # Filenames are {operation}_{field_name}_{index}.json -- field_name
+        # itself can contain underscores (e.g. "competency_questions"), so
+        # split on the *last* underscore to isolate the trailing index.
+        try:
+            index = int(path.stem.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        if index > keep_through:
+            path.unlink()
 
 
 # [discover_ontology_from_chunks/generate_schema_from_chunks 공용 보조 함수]
-# 한 그룹이 만들어낸 원시 후보(classes/relationships 또는 node_types/edge_types)를
+# 한 그룹이 만들어낸 원시 후보(예: node_types/edge_types)를
 # progress/{operation}_{필드명}_{index}.json으로 저장한다. index는 병렬 실행 시작
 # 전에 미리 정해진 그룹의 고정 위치라서, 완료 순서와 무관하게 충돌 없이 안전하다.
 def _write_group_candidates(stem: str | None, operation: str, index: int, **fields) -> None:
@@ -132,6 +143,26 @@ def _write_group_candidates(stem: str | None, operation: str, index: int, **fiel
         (progress_dir / f"{operation}_{field_name}_{index}.json").write_text(
             json.dumps(value, ensure_ascii=False)
         )
+
+
+# [discover_ontology_from_chunks/generate_schema_from_chunks 공용 보조 함수]
+# _write_group_candidates가 저장해둔 그룹의 결과를 다시 읽어온다 -- `fields`에
+# 나열된 파일이 전부 있을 때만 dict로 반환하고, 하나라도 없으면 None을 반환해
+# 그 그룹은 아직 (다시) LLM 호출이 필요하다는 뜻으로 쓰인다. 이걸 map 단계
+# 시작 전에 확인하는 것이 "이어서 진행" 기능의 핵심이다: 예를 들어 12개 그룹 중
+# 11개가 성공하고 1개가 실패한 뒤 재시도하면, 이미 성공한 11개는 파일에서 즉시
+# 읽어오고 실패했던 1개만 실제로 다시 LLM을 호출한다.
+def _load_group_candidates(stem: str | None, operation: str, index: int, fields: list[str]) -> dict | None:
+    if stem is None:
+        return None
+    progress_dir = document_dir_for(stem) / "progress"
+    result = {}
+    for field_name in fields:
+        path = progress_dir / f"{operation}_{field_name}_{index}.json"
+        if not path.is_file():
+            return None
+        result[field_name] = json.loads(path.read_text())
+    return result
 
 
 # [독립 함수] 문서 전체를 요약하는 가벼운 LLM 호출. JSON이 아닌 순수 텍스트를 반환하며,
@@ -187,7 +218,12 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
         }
         for i, report in enumerate(group_reports)
     ]
-    model = ontology.get_chat_model("discover_ontology")
+    # A distinct operation key from discover_ontology()'s own "discover_ontology"
+    # -- purely so this call can have its own, much larger OPERATION_MAX_TOKENS
+    # ceiling (app/llm/chat.py) than a single group's own call needs, while
+    # _MODEL_SELECTION_ALIAS there still routes model *selection* back to
+    # whatever a person picked for "discover_ontology" in the settings UI.
+    model = ontology.get_chat_model("consolidate_discovery")
     messages = [
         SystemMessage(content=CONSOLIDATION_PROMPT),
         HumanMessage(
@@ -216,6 +252,22 @@ def _merge_domain_models(domain_models: list[dict]) -> dict:
     return merged
 
 
+# Every key discover_ontology() returns -- used to persist/reload a group's
+# *complete* result for discover_ontology_from_chunks's resume support
+# below, not just classes/relationships (which is all the reduce step
+# itself needs). Losing attributes/events/rules/terminology/
+# competency_questions/warnings/domain_model for a resumed group would
+# silently drop them from the final consolidated report.
+_DISCOVER_GROUP_FIELDS = (
+    "domain_model", "classes", "relationships", "attributes",
+    "events", "rules", "terminology", "competency_questions", "warnings",
+)
+
+
+def _discover_field_default(field: str):
+    return {} if field == "domain_model" else []
+
+
 # [발견 파이프라인의 오케스트레이터] 청크 단위 map-reduce의 map+reduce를 모두
 # 담당: 그룹별로 discover_ontology를 병렬 호출한 뒤(map, _map_concurrently 사용),
 # 그룹이 2개 이상이면 _consolidate_types/_merge_domain_models로 통합한다(reduce).
@@ -239,25 +291,33 @@ def discover_ontology_from_chunks(
     `stem`, if given (main.py's /discover route always has it), reports
     per-group progress to documents/{stem}/progress/discover.json via
     .utils.start_progress, so a GET route can be polled from the browser
-    while this call is still running, and dumps each group's own raw
-    classes/relationships to progress/discover_classes_{N}.json /
-    progress/discover_relationships_{N}.json as soon as that group finishes
-    (see the module comment above _write_group_candidates) -- `N` is the
-    group's fixed position in `groups`, not a completion-order counter."""
+    while this call is still running, and dumps each group's own full raw
+    report (every key discover_ontology() returns, not just classes/
+    relationships) to progress/discover_{field}_{N}.json as soon as that
+    group finishes (see the module comment above _write_group_candidates)
+    -- `N` is the group's fixed position in `groups`, not a completion-order
+    counter. If a prior call already wrote a complete set of these files for
+    a given index (e.g. a previous attempt that failed partway through,
+    after some groups had already succeeded), that group's LLM call is
+    skipped entirely and its saved result is reused instead -- a retry after
+    a failure only re-runs whatever didn't finish last time, not every
+    group from scratch."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to discover ontology from")
 
     if stem is not None:
-        _clear_group_candidates(stem, "discover")
+        _clear_stale_group_candidates(stem, "discover", len(groups))
 
     def discover_group(item):
         index, group = item
+        cached = _load_group_candidates(stem, "discover", index, _DISCOVER_GROUP_FIELDS)
+        if cached is not None:
+            return cached
         report = discover_ontology(_group_document_text(group))
         _write_group_candidates(
             stem, "discover", index,
-            classes=report.get("classes", []),
-            relationships=report.get("relationships", []),
+            **{field: report.get(field) or _discover_field_default(field) for field in _DISCOVER_GROUP_FIELDS},
         )
         return report
 
@@ -353,7 +413,11 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         }
         for i, schema in enumerate(group_schemas)
     ]
-    model = ontology.get_chat_model("generate_schema")
+    # Distinct operation key from generate_schema()'s own "generate_schema" --
+    # see _consolidate_types's identical comment for why (bigger
+    # OPERATION_MAX_TOKENS ceiling, same selected model via
+    # _MODEL_SELECTION_ALIAS).
+    model = ontology.get_chat_model("consolidate_schema")
     messages = [
         SystemMessage(content=SCHEMA_CONSOLIDATION_PROMPT),
         HumanMessage(
@@ -400,16 +464,23 @@ def generate_schema_from_chunks(
     progress/schema_node_types_{N}.json / progress/schema_edge_types_{N}.json
     as soon as that group finishes -- see discover_ontology_from_chunks's
     own docstring for the same mechanism (`N` is the group's fixed position
-    in `groups`, not a completion-order counter)."""
+    in `groups`, not a completion-order counter), including the resume
+    behavior: if a prior attempt already wrote both files for a given index
+    (e.g. it failed partway through, after some groups had already
+    succeeded), that group's generate_schema() call is skipped and its
+    saved result reused instead of being redone."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to generate schema from")
 
     if stem is not None:
-        _clear_group_candidates(stem, "schema")
+        _clear_stale_group_candidates(stem, "schema", len(groups))
 
     def generate_group_schema(item):
         index, group = item
+        cached = _load_group_candidates(stem, "schema", index, ["node_types", "edge_types"])
+        if cached is not None:
+            return cached
         schema = generate_schema(
             _group_document_text(group), document_type=document_type, discovery=discovery
         )

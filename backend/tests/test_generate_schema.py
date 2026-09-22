@@ -567,6 +567,52 @@ def test_discover_ontology_from_chunks_clears_stale_candidate_files_from_previou
     assert json.loads((progress_dir / "discover_classes_1.json").read_text()) == report["classes"]
 
 
+def test_discover_ontology_from_chunks_resumes_full_report_from_cache(monkeypatch):
+    # Regression: a prior implementation only cached classes/relationships
+    # per group, which would have silently dropped attributes/events/rules/
+    # terminology/competency_questions/warnings for any group resumed from
+    # cache instead of freshly generated.
+    write_document()
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    progress_dir.mkdir(parents=True)
+    group1_fields = {
+        "domain_model": {"domain": "insurance", "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
+        "classes": [{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
+        "relationships": [],
+        "attributes": [{"name": "amount", "defined_on": "Policy", "definition": "d", "datatype": "number", "unit": "", "required": True, "rationale": ""}],
+        "events": [{"name": "Claim", "definition": "d", "trigger": "t", "affected_entities": []}],
+        "rules": [{"name": "R1", "description": "d", "conditions": [], "consequences": [], "exceptions": []}],
+        "terminology": [{"canonical_term": "보험료", "synonyms": [], "abbreviations": [], "source_terms": []}],
+        "competency_questions": ["What is covered?"],
+        "warnings": ["ambiguous term"],
+    }
+    for field, value in group1_fields.items():
+        (progress_dir / f"discover_{field}_1.json").write_text(json.dumps(value, ensure_ascii=False))
+    # Group 2 has no cache -- must actually be generated; "a" * 30 (group 1's
+    # text) is mapped to garbage so the test fails loudly if group 1 is
+    # incorrectly regenerated instead of resumed from the cache above.
+    group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    consolidated = {"classes": group1_fields["classes"] + group2["classes"], "relationships": []}
+    model = KeyedChatModel(
+        {"a" * 30: "NOT_VALID_JSON -- group 1 should have been resumed from cache", "b" * 30: json.dumps(group2)},
+        default=json.dumps(consolidated),
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    result = discover_ontology_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    assert result["attributes"] == group1_fields["attributes"]
+    assert result["events"] == group1_fields["events"]
+    assert result["rules"] == group1_fields["rules"]
+    assert result["terminology"] == group1_fields["terminology"]
+    assert "What is covered?" in result["competency_questions"]
+    assert "ambiguous term" in result["warnings"]
+
+
 def test_discover_ontology_from_chunks_writes_no_progress_without_stem(monkeypatch):
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
     monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
@@ -615,6 +661,61 @@ def test_generate_schema_from_chunks_writes_group_candidate_files(monkeypatch):
     assert json.loads((progress_dir / "schema_edge_types_1.json").read_text()) == schema1["edge_types"]
     assert json.loads((progress_dir / "schema_node_types_2.json").read_text()) == schema2["node_types"]
     assert json.loads((progress_dir / "schema_edge_types_2.json").read_text()) == schema2["edge_types"]
+
+
+def test_generate_schema_from_chunks_resumes_from_cached_group_candidates(monkeypatch):
+    # Regression: a retried generate_schema_from_chunks call used to redo
+    # every group's LLM call from scratch, even ones a prior (e.g. partially
+    # failed) attempt had already completed successfully.
+    write_document()
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    progress_dir.mkdir(parents=True)
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
+    (progress_dir / "schema_node_types_1.json").write_text(json.dumps(schema1["node_types"]))
+    (progress_dir / "schema_edge_types_1.json").write_text(json.dumps(schema1["edge_types"]))
+    (progress_dir / "schema_node_types_2.json").write_text(json.dumps(schema2["node_types"]))
+    (progress_dir / "schema_edge_types_2.json").write_text(json.dumps(schema2["edge_types"]))
+    consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
+    fake_model = RecordingChatModel(json.dumps(consolidated))
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    result = generate_schema_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    assert result == consolidated
+    assert len(fake_model.prompts) == 1  # only the consolidation call -- both groups resumed from cache
+
+
+def test_generate_schema_from_chunks_only_regenerates_missing_groups(monkeypatch):
+    write_document()
+    progress_dir = document_dir_for("doc_raw") / "progress"
+    progress_dir.mkdir(parents=True)
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    (progress_dir / "schema_node_types_1.json").write_text(json.dumps(schema1["node_types"]))
+    (progress_dir / "schema_edge_types_1.json").write_text(json.dumps(schema1["edge_types"]))
+    # Group 2 has no cache -- must actually be generated; "a" * 30 (group 1's
+    # text) is mapped to garbage so the test fails loudly if group 1 is
+    # incorrectly regenerated instead of resumed from the cache above.
+    schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
+    consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
+    model = KeyedChatModel(
+        {"a" * 30: "NOT_VALID_JSON -- group 1 should have been resumed from cache", "b" * 30: json.dumps(schema2)},
+        default=json.dumps(consolidated),
+    )
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+
+    result = generate_schema_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    assert result == consolidated
+    assert json.loads((progress_dir / "schema_node_types_2.json").read_text()) == schema2["node_types"]
 
 
 def test_generate_schema_from_chunks_clears_stale_candidate_files_from_previous_run(monkeypatch):

@@ -4,6 +4,7 @@ from app.llm.chat import (
     MODEL_CATALOG,
     get_chat_model,
     get_model_max_tokens,
+    get_model_name,
     set_model_name,
 )
 
@@ -11,7 +12,10 @@ from app.llm.chat import (
 # Every operation whose prompts (app/llm/prompts.py) ask for a JSON object
 # back -- see app.llm.chat._JSON_OPERATIONS's own comment for why this is an
 # allowlist rather than "everything except a known-prose set".
-JSON_OPERATIONS = ("discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution")
+JSON_OPERATIONS = (
+    "discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution",
+    "consolidate_discovery", "consolidate_schema",
+)
 
 
 @pytest.mark.parametrize("operation", JSON_OPERATIONS)
@@ -86,3 +90,34 @@ def test_model_catalog_caps_are_all_above_every_operation_cap():
 
     smallest_model_cap = min(m["max_tokens"] for m in MODEL_CATALOG)
     assert all(cap <= smallest_model_cap for cap in OPERATION_MAX_TOKENS.values())
+
+
+def test_consolidation_operations_get_a_larger_cap_than_their_own_single_group_call():
+    # Reproduced live: merging a real 12-group document's 274 candidate
+    # types needed ~16,700 output tokens (~6,700-8,000 of it reasoning) --
+    # far more than a single group's own generate_schema()/discover_ontology()
+    # call ever needs. See OPERATION_MAX_TOKENS's own comment for the numbers.
+    assert get_model_max_tokens("consolidate_schema") > get_model_max_tokens("generate_schema")
+    assert get_model_max_tokens("consolidate_discovery") > get_model_max_tokens("discover_ontology")
+
+
+def test_consolidation_operations_follow_the_selected_model_of_their_single_group_counterpart():
+    # _MODEL_SELECTION_ALIAS: consolidate_schema/consolidate_discovery are
+    # their own operation keys (for OPERATION_MAX_TOKENS purposes only) --
+    # nobody ever explicitly picks a model for them in the settings UI, so
+    # without this alias they'd silently fall back to the unrelated
+    # "default" bucket instead of following whatever a person picked for
+    # "generate_schema"/"discover_ontology".
+    set_model_name("anthropic/claude-opus-5", operation="generate_schema")
+    set_model_name("z-ai/glm-5.2", operation="discover_ontology")
+    try:
+        assert get_model_name("consolidate_schema") == "anthropic/claude-opus-5"
+        assert get_model_name("consolidate_discovery") == "z-ai/glm-5.2"
+    finally:
+        set_model_name(None, "generate_schema")
+        set_model_name(None, "discover_ontology")
+
+
+def test_consolidation_operations_fall_back_to_default_like_their_counterpart_would():
+    assert get_model_name("consolidate_schema") == get_model_name("generate_schema")
+    assert get_model_name("consolidate_discovery") == get_model_name("discover_ontology")
