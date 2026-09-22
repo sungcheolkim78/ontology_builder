@@ -428,3 +428,90 @@ def test_measure_schema_stability_disagreement_lowers_similarity(monkeypatch):
 def test_measure_schema_stability_raises_for_fewer_than_two_runs():
     with pytest.raises(ValueError):
         measure_schema_stability("doc", runs=1)
+
+
+# --- progress reporting (stem given) -----------------------------------------
+
+
+def _read_progress(stem, operation):
+    return json.loads((document_dir_for(stem) / "progress" / f"{operation}.json").read_text())
+
+
+def test_discover_ontology_from_chunks_reports_progress_when_stem_given(monkeypatch):
+    write_document()
+    group1 = _discovery_report(classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    consolidated = {"classes": group1["classes"] + group2["classes"], "relationships": []}
+    fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    discover_ontology_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    state = _read_progress("doc_raw", "discover")
+    assert state["status"] == "done"
+    assert state["total"] == 2
+    assert state["completed"] == 2
+
+
+def test_discover_ontology_from_chunks_writes_no_progress_without_stem(monkeypatch):
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
+
+    assert not (DATA_DIR / "documents").exists()
+
+
+def test_generate_schema_from_chunks_reports_progress_when_stem_given(monkeypatch):
+    write_document()
+    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
+    schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
+    consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
+    fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+
+    generate_schema_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    state = _read_progress("doc_raw", "schema")
+    assert state["status"] == "done"
+    assert state["total"] == 2
+    assert state["completed"] == 2
+
+
+def test_discover_for_document_reports_progress_for_whole_document(monkeypatch):
+    write_document()
+    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    discover_for_document("doc_raw")
+
+    state = _read_progress("doc_raw", "discover")
+    assert state == {
+        "operation": "discover",
+        "status": "done",
+        "stage": "done",
+        "total": 1,
+        "completed": 1,
+        "error": None,
+    }
+
+
+def test_schema_for_document_reports_progress_for_whole_document(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    schema_for_document("doc_raw")
+
+    state = _read_progress("doc_raw", "schema")
+    assert state["status"] == "done"
+    assert state["total"] == 1
+    assert state["completed"] == 1

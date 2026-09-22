@@ -396,3 +396,64 @@ def test_extract_for_document_uses_chunks_when_present(monkeypatch):
     assert result_graph == graph
     assert version == 1
     assert len(fake_model.prompts) == 1  # single chunk group -> no merge needed
+
+
+# --- progress reporting (stem given) -----------------------------------------
+
+
+def _read_progress(stem, operation):
+    return json.loads((document_dir_for(stem) / "progress" / f"{operation}.json").read_text())
+
+
+def test_extract_graph_from_chunks_reports_progress_with_running_node_edge_counts(monkeypatch):
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    graph2 = {
+        "nodes": [{"id": "n2", "label": "Bob", "type": "Person"}, {"id": "n3", "label": "Carol", "type": "Person"}],
+        "edges": [],
+    }
+    fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
+    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    write_document()
+
+    extract_graph_from_chunks(
+        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
+        schema,
+        max_group_chars=30,
+        stem="doc_raw",
+    )
+
+    state = _read_progress("doc_raw", "extract")
+    assert state["status"] == "done"
+    assert state["total"] == 2
+    assert state["completed"] == 2
+    assert state["nodes"] == 3  # 1 from group1 + 2 from group2, running total
+
+
+def test_extract_graph_from_chunks_writes_no_progress_without_stem(monkeypatch):
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+
+    extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
+
+    assert not (DATA_DIR / "documents" / "doc_raw" / "progress").exists()
+
+
+def test_extract_for_document_reports_progress_for_whole_document(monkeypatch):
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}, {"id": "n2", "label": "Bob", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    extract_for_document("doc_raw")
+
+    state = _read_progress("doc_raw", "extract")
+    assert state["status"] == "done"
+    assert state["total"] == 1
+    assert state["completed"] == 1
+    assert state["nodes"] == 2
+    assert state["edges"] == 0

@@ -21,8 +21,10 @@ submodule's own docstring/comments for what it owns:
   Depends on extract_graph, persistence, and utils.
 - utils: dependency-light helpers shared by two or more of the three
   submodules above (MAX_DOCUMENT_CHARS/MAX_CHUNK_GROUP_CHARS,
-  parse_json_response, the chunk-grouping/document-loading helpers). A leaf,
-  independent of every other submodule here.
+  parse_json_response, the chunk-grouping/document-loading helpers, and
+  ChunkProgress/start_progress/load_progress -- the in-flight progress
+  tracker all three chunk-grouped operations report to, polled by main.py's
+  GET /progress route). A leaf, independent of every other submodule here.
 - legal_guards: this app's own legal-reification structural checks
   (flag_structural_catchall_nodes, validate_legal_edge_shapes) plus
   run_graph_validation, which combines them with app.ontology.schema_validation's
@@ -88,13 +90,16 @@ from .legal_guards import (
 from .utils import (
     MAX_CHUNK_GROUP_CHARS,
     MAX_DOCUMENT_CHARS,
+    ChunkProgress,
     _check_document_length,
     _dedupe_by_key,
     _group_document_text,
     _load_chunk_items,
     _require_document_text,
     group_chunks_by_budget,
+    load_progress,
     parse_json_response,
+    start_progress,
 )
 from .generate_schema import (
     _consolidate_schema_types,

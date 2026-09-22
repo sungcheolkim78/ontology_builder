@@ -165,17 +165,62 @@ function stopElapsedTimer() {
   elapsedTimer = null
 }
 
+// Polls GET /api/ontology/{filename}/progress?operation=... (backed by
+// app.ontology.utils.ChunkProgress -- see backend) while discover/schema/
+// extract are in flight, instead of only showing a locally-ticking clock.
+// 404 just means "nothing recorded yet" (the POST hasn't reached its first
+// group, or never wrote one for a whole-document call that's still
+// mid-flight) -- not a real failure, so it's swallowed rather than shown.
+const progressState = ref(null)
+let progressTimer = null
+
+function startProgressPolling(operation) {
+  stopProgressPolling()
+  progressState.value = null
+  const poll = async () => {
+    try {
+      const res = await apiFetch(
+        `/api/ontology/${encodeURIComponent(props.file.filename)}/progress?operation=${operation}`
+      )
+      progressState.value = res.ok ? await res.json() : null
+    } catch (err) {
+      // best-effort; a polling hiccup shouldn't interrupt the main request
+    }
+  }
+  poll()
+  progressTimer = setInterval(poll, 1200)
+}
+
+function stopProgressPolling() {
+  clearInterval(progressTimer)
+  progressTimer = null
+  progressState.value = null
+}
+
+const STAGE_LABELS = { reduce: ' · 통합 중', merge: ' · 병합 중' }
+
+function progressSuffix() {
+  const p = progressState.value
+  if (!p) return ''
+  const groupPart = p.total > 1 ? ` (그룹 ${p.completed}/${p.total}${STAGE_LABELS[p.stage] ?? ''})` : ''
+  const countsPart = p.nodes != null ? ` · 노드 ${p.nodes}개 · 엣지 ${p.edges ?? 0}개` : ''
+  return groupPart + countsPart
+}
+
 const workflowProgress = computed(() => {
-  if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중... ${elapsedSeconds.value}초`
-  if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중... ${elapsedSeconds.value}초`
+  if (isGeneratingSchema.value) return `문서를 읽어 스키마 생성 중...${progressSuffix()} ${elapsedSeconds.value}초`
+  if (isExtracting.value) return `문서를 읽고 주어진 스키마로 노드와 에지를 생성 중...${progressSuffix()} ${elapsedSeconds.value}초`
   if (isEmbedding.value) return `노드 임베딩 생성 중... ${elapsedSeconds.value}초`
   if (isValidating.value) return `문서와 스키마, 추출된 그래프를 검토하여 보고서 작성 중... ${elapsedSeconds.value}초`
   if (isProposingEvolution.value) return `검증 보고서를 바탕으로 개선안을 도출하는 중... ${elapsedSeconds.value}초`
-  if (isDiscovering.value) return `문서에서 후보 온톨로지(개념/관계/속성/이벤트/규칙)를 발견하는 중... ${elapsedSeconds.value}초`
+  if (isDiscovering.value) return `문서에서 후보 온톨로지(개념/관계/속성/이벤트/규칙)를 발견하는 중...${progressSuffix()} ${elapsedSeconds.value}초`
   return ''
 })
 
-onUnmounted(() => stopElapsedTimer())
+onUnmounted(() => {
+  stopElapsedTimer()
+  stopProgressPolling()
+})
 
 function onMaxSchemaCharsInput(event) {
   maxSchemaChars.value = Math.max(1, Number(event.target.value) || 1000000)
@@ -188,6 +233,7 @@ async function discoverOntology() {
   workflowMessage.value = ''
   discoveryError.value = ''
   startElapsedTimer()
+  startProgressPolling('discover')
   const taskId = startTask(`온톨로지 발견 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/discover`, {
@@ -209,6 +255,7 @@ async function discoverOntology() {
   } finally {
     isDiscovering.value = false
     stopElapsedTimer()
+    stopProgressPolling()
   }
 }
 
@@ -235,6 +282,7 @@ async function generateSchema() {
   workflowError.value = ''
   workflowMessage.value = ''
   startElapsedTimer()
+  startProgressPolling('schema')
   const taskId = startTask(`스키마 생성 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/schema`, {
@@ -260,6 +308,7 @@ async function generateSchema() {
   } finally {
     isGeneratingSchema.value = false
     stopElapsedTimer()
+    stopProgressPolling()
   }
 }
 
@@ -269,6 +318,7 @@ async function extractGraph() {
   workflowError.value = ''
   workflowMessage.value = ''
   startElapsedTimer()
+  startProgressPolling('extract')
   const taskId = startTask(`그래프 추출 — ${props.file.filename}`)
   try {
     const res = await apiFetch(`/api/ontology/${encodeURIComponent(props.file.filename)}/extract`, {
@@ -288,6 +338,7 @@ async function extractGraph() {
   } finally {
     isExtracting.value = false
     stopElapsedTimer()
+    stopProgressPolling()
   }
 }
 

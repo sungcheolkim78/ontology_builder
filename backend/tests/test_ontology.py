@@ -100,6 +100,58 @@ def test_extract_for_document_raises_file_not_found_when_document_missing():
         extract_for_document("missing_raw")
 
 
+def test_progress_endpoint_returns_404_when_nothing_recorded():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "schema"})
+
+    assert response.status_code == 404
+
+
+def test_progress_endpoint_returns_404_for_unknown_operation():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "bogus"})
+
+    assert response.status_code == 404
+
+
+def test_progress_endpoint_returns_state_after_schema_generation_completes(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema))
+    )
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "schema"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["total"] == 1
+    assert body["completed"] == 1
+
+
+def test_progress_endpoint_reports_running_totals_for_extract(monkeypatch):
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/extract")
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "extract"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["nodes"] == 1
+    assert body["edges"] == 0
+
+
 def test_extract_for_document_creates_default_schema_when_none_saved(monkeypatch):
     from app.ontology import extract_for_document
 

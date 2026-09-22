@@ -25,6 +25,7 @@ from .utils import (
     _require_document_text,
     group_chunks_by_budget,
     parse_json_response,
+    start_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -259,7 +260,16 @@ def extract_graph_from_chunks(
     soon as it completes, so a person can inspect progress mid-run instead
     of only after the whole extraction (and its own DB write) finishes.
     Cleared at the start of each run so a shorter rerun doesn't leave stale
-    higher-numbered files implying more progress than actually happened."""
+    higher-numbered files implying more progress than actually happened.
+
+    Separately, `stem` also drives a lightweight summary written via
+    .utils.start_progress to documents/{stem}/progress/extract.json --
+    group count plus a running node/edge total -- for main.py's GET
+    /progress route to poll, same mechanism as
+    discover_ontology_from_chunks/generate_schema_from_chunks
+    (generate_schema.py). That file is the summary a browser polls; the
+    extraction_progress/ dump above stays the detailed, un-merged per-group
+    data for manual inspection."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to extract graph from")
@@ -268,21 +278,28 @@ def extract_graph_from_chunks(
         _clear_extraction_progress(stem)
 
     total = len(groups)
-    group_graphs = []
-    for group_number, group in enumerate(groups, start=1):
-        logger.info(
-            "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
-            group_number, total, len(group), len(_group_document_text(group)),
-        )
-        graph = extract_graph(_group_document_text(group), schema)
-        group_graphs.append(graph)
-        if stem is not None:
-            _write_extraction_progress(stem, group_number, graph)
+    total_nodes = 0
+    total_edges = 0
+    with start_progress(stem, "extract", total) as progress:
+        group_graphs = []
+        for group_number, group in enumerate(groups, start=1):
+            logger.info(
+                "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
+                group_number, total, len(group), len(_group_document_text(group)),
+            )
+            graph = extract_graph(_group_document_text(group), schema)
+            group_graphs.append(graph)
+            if stem is not None:
+                _write_extraction_progress(stem, group_number, graph)
+            total_nodes += len(graph["nodes"])
+            total_edges += len(graph["edges"])
+            progress.advance(nodes=total_nodes, edges=total_edges)
 
-    if len(group_graphs) == 1:
-        return group_graphs[0]
+        if len(group_graphs) == 1:
+            return group_graphs[0]
 
-    return _merge_group_graphs(group_graphs)
+        progress.set_stage("merge")
+        return _merge_group_graphs(group_graphs)
 
 
 def extract_for_document(stem: str) -> tuple[dict, dict, int]:
@@ -292,7 +309,11 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     used to do inline. Returns (schema, graph, version); the caller is still
     responsible for persisting the graph (save_graph), since that's a
     separate concern (embeddings) from producing it. Raises
-    FileNotFoundError if the document hasn't been parsed yet."""
+    FileNotFoundError if the document hasn't been parsed yet. Also reports
+    progress for the whole-document (no chunks.json) branch itself --
+    extract_graph_from_chunks reports its own when there are chunks -- so a
+    poller always finds a progress record no matter which path this
+    document takes."""
     document_text = _require_document_text(stem)
     version = get_active_version(stem)
     if version is None:
@@ -302,5 +323,7 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     if chunk_items is not None:
         graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
     else:
-        graph = extract_graph(document_text, schema)
+        with start_progress(stem, "extract", 1) as progress:
+            graph = extract_graph(document_text, schema)
+            progress.advance(nodes=len(graph["nodes"]), edges=len(graph["edges"]))
     return schema, graph, version

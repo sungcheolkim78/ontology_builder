@@ -34,6 +34,7 @@ from .utils import (
     _require_document_text,
     group_chunks_by_budget,
     parse_json_response,
+    start_progress,
 )
 
 # generate_schema_from_chunks()/measure_schema_stability() below each make
@@ -46,7 +47,7 @@ from .utils import (
 MAX_CONCURRENT_LLM_CALLS = int(os.environ.get("MAX_CONCURRENT_LLM_CALLS", 5))
 
 
-def _map_concurrently(fn, items: list) -> list:
+def _map_concurrently(fn, items: list, on_item_done=None) -> list:
     """Runs fn(item) for every item in a small thread pool instead of one
     after another, returning results in the same order as `items` (matching
     the sequential list comprehension this replaces). LLM calls are
@@ -63,11 +64,24 @@ def _map_concurrently(fn, items: list) -> list:
     own orphaned trace instead of nesting under the request's trace() span
     (see app.llm.telemetry.trace's own docstring). Each item gets its own
     fresh copy rather than one shared Context, since a Context object
-    cannot be entered by more than one thread at a time."""
+    cannot be entered by more than one thread at a time.
+
+    `on_item_done`, if given, is called with each item's own result right
+    after that item's fn() call returns -- from whichever worker thread ran
+    it, in whatever order calls happen to finish. Callers use this to report
+    per-group progress (see .utils.ChunkProgress); it's the callback's own
+    job to be safe to call concurrently."""
+
+    def call(item):
+        result = fn(item)
+        if on_item_done is not None:
+            on_item_done(result)
+        return result
+
     if len(items) == 1:
-        return [fn(items[0])]
+        return [call(items[0])]
     with ThreadPoolExecutor(max_workers=min(len(items), MAX_CONCURRENT_LLM_CALLS)) as executor:
-        futures = [executor.submit(contextvars.copy_context().run, fn, item) for item in items]
+        futures = [executor.submit(contextvars.copy_context().run, call, item) for item in items]
         return [future.result() for future in futures]
 
 
@@ -147,7 +161,7 @@ def _merge_domain_models(domain_models: list[dict]) -> dict:
 # 그룹이 2개 이상이면 _consolidate_types/_merge_domain_models로 통합한다(reduce).
 # discover_for_document가 chunks.json이 있는 문서에 대해 이 함수를 호출한다.
 def discover_ontology_from_chunks(
-    chunk_items: list[dict], max_group_chars: int | None = None
+    chunk_items: list[dict], max_group_chars: int | None = None, stem: str | None = None
 ) -> dict:
     """Runs discover_ontology() once per token-budget-sized group of
     consecutive chunks (see group_chunks_by_budget), then consolidates
@@ -160,43 +174,54 @@ def discover_ontology_from_chunks(
     (one discover_ontology() call per group) runs concurrently via
     _map_concurrently -- groups are independent by design (see the module
     comment in .utils), so nothing is gained by waiting for group N's LLM
-    call to finish before starting group N+1's."""
+    call to finish before starting group N+1's.
+
+    `stem`, if given (main.py's /discover route always has it), reports
+    per-group progress to documents/{stem}/progress/discover.json via
+    .utils.start_progress, so a GET route can be polled from the browser
+    while this call is still running -- see that module's own comment for
+    why this is a summary file, separate from extract_graph.py's
+    extraction_progress dump of the actual per-group data."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to discover ontology from")
 
-    group_reports = _map_concurrently(
-        lambda group: discover_ontology(_group_document_text(group)), groups
-    )
-    if len(group_reports) == 1:
-        return group_reports[0]
+    with start_progress(stem, "discover", len(groups)) as progress:
+        group_reports = _map_concurrently(
+            lambda group: discover_ontology(_group_document_text(group)),
+            groups,
+            on_item_done=progress.advance,
+        )
+        if len(group_reports) == 1:
+            return group_reports[0]
 
-    consolidated_types = _consolidate_types(group_reports)
-    return {
-        "domain_model": _merge_domain_models([r.get("domain_model", {}) for r in group_reports]),
-        "classes": consolidated_types["classes"],
-        "relationships": consolidated_types["relationships"],
-        "attributes": _dedupe_by_key(
-            [a for r in group_reports for a in r.get("attributes", [])],
-            key=lambda a: (a.get("name"), a.get("defined_on")),
-        ),
-        "events": _dedupe_by_key(
-            [e for r in group_reports for e in r.get("events", [])], key=lambda e: e.get("name")
-        ),
-        "rules": _dedupe_by_key(
-            [ru for r in group_reports for ru in r.get("rules", [])], key=lambda ru: ru.get("name")
-        ),
-        "terminology": _dedupe_by_key(
-            [t for r in group_reports for t in r.get("terminology", [])],
-            key=lambda t: t.get("canonical_term"),
-        ),
-        "competency_questions": _dedupe_by_key(
-            [q for r in group_reports for q in r.get("competency_questions", [])], key=lambda q: q
-        ),
-        "warnings": _dedupe_by_key(
-            [w for r in group_reports for w in r.get("warnings", [])], key=lambda w: w
-        ),
-    }
+        progress.set_stage("reduce")
+        consolidated_types = _consolidate_types(group_reports)
+        return {
+            "domain_model": _merge_domain_models([r.get("domain_model", {}) for r in group_reports]),
+            "classes": consolidated_types["classes"],
+            "relationships": consolidated_types["relationships"],
+            "attributes": _dedupe_by_key(
+                [a for r in group_reports for a in r.get("attributes", [])],
+                key=lambda a: (a.get("name"), a.get("defined_on")),
+            ),
+            "events": _dedupe_by_key(
+                [e for r in group_reports for e in r.get("events", [])], key=lambda e: e.get("name")
+            ),
+            "rules": _dedupe_by_key(
+                [ru for r in group_reports for ru in r.get("rules", [])], key=lambda ru: ru.get("name")
+            ),
+            "terminology": _dedupe_by_key(
+                [t for r in group_reports for t in r.get("terminology", [])],
+                key=lambda t: t.get("canonical_term"),
+            ),
+            "competency_questions": _dedupe_by_key(
+                [q for r in group_reports for q in r.get("competency_questions", [])], key=lambda q: q
+            ),
+            "warnings": _dedupe_by_key(
+                [w for r in group_reports for w in r.get("warnings", [])], key=lambda w: w
+            ),
+        }
 
 
 # [스키마 생성 파이프라인의 leaf 함수이자 이 파일에서 가장 많이 재사용되는 핵심 함수]
@@ -270,6 +295,7 @@ def generate_schema_from_chunks(
     document_type: str = "general",
     max_group_chars: int | None = None,
     discovery: dict | None = None,
+    stem: str | None = None,
 ) -> dict:
     """Runs generate_schema() once per token-budget-sized group of
     consecutive chunks (see group_chunks_by_budget), then consolidates every
@@ -283,21 +309,28 @@ def generate_schema_from_chunks(
     group). The map step (one generate_schema() call per group) runs
     concurrently via _map_concurrently -- groups are independent by design
     (see the module comment in .utils), so nothing is gained by waiting for
-    group N's LLM call to finish before starting group N+1's."""
+    group N's LLM call to finish before starting group N+1's.
+
+    `stem`, if given (main.py's /schema route always has it), reports
+    per-group progress to documents/{stem}/progress/schema.json -- see
+    discover_ontology_from_chunks's own docstring for the same mechanism."""
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError("no chunks to generate schema from")
 
-    group_schemas = _map_concurrently(
-        lambda group: generate_schema(
-            _group_document_text(group), document_type=document_type, discovery=discovery
-        ),
-        groups,
-    )
-    if len(group_schemas) == 1:
-        return group_schemas[0]
+    with start_progress(stem, "schema", len(groups)) as progress:
+        group_schemas = _map_concurrently(
+            lambda group: generate_schema(
+                _group_document_text(group), document_type=document_type, discovery=discovery
+            ),
+            groups,
+            on_item_done=progress.advance,
+        )
+        if len(group_schemas) == 1:
+            return group_schemas[0]
 
-    return _consolidate_schema_types(group_schemas)
+        progress.set_stage("reduce")
+        return _consolidate_schema_types(group_schemas)
 
 
 # [외부 진입점] main.py의 /discover 라우트가 호출하는 seam. 문서 존재 여부를 확인한
@@ -308,12 +341,19 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     """One seam for main.py's /discover route: owns the document-existence
     check and the chunks.json-vs-whole-document routing that route used to
     duplicate inline (see discover_ontology_from_chunks/discover_ontology).
-    Raises FileNotFoundError if the document hasn't been parsed yet."""
+    Raises FileNotFoundError if the document hasn't been parsed yet. Also
+    reports progress for the whole-document (no chunks.json) branch itself
+    -- discover_ontology_from_chunks reports its own when there are
+    chunks -- so a poller always finds a progress record no matter which
+    path this document takes."""
     document_text = _require_document_text(stem)
     chunk_items = _load_chunk_items(stem)
     if chunk_items is not None:
-        return discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars)
-    return discover_ontology(document_text, max_chars=max_chars)
+        return discover_ontology_from_chunks(chunk_items, max_group_chars=max_chars, stem=stem)
+    with start_progress(stem, "discover", 1) as progress:
+        result = discover_ontology(document_text, max_chars=max_chars)
+        progress.advance()
+        return result
 
 
 # [외부 진입점] main.py의 /schema 라우트가 호출하는 seam. discover_for_document와
@@ -326,15 +366,23 @@ def schema_for_document(
     discovery: dict | None = None,
 ) -> dict:
     """One seam for main.py's /schema route: same shape as
-    discover_for_document, for generate_schema/generate_schema_from_chunks.
-    Raises FileNotFoundError if the document hasn't been parsed yet."""
+    discover_for_document, for generate_schema/generate_schema_from_chunks --
+    including reporting progress for the whole-document branch itself, so a
+    poller always finds a progress record no matter which path this
+    document takes. Raises FileNotFoundError if the document hasn't been
+    parsed yet."""
     document_text = _require_document_text(stem)
     chunk_items = _load_chunk_items(stem)
     if chunk_items is not None:
         return generate_schema_from_chunks(
-            chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery
+            chunk_items, document_type=document_type, max_group_chars=max_chars, discovery=discovery, stem=stem
         )
-    return generate_schema(document_text, document_type=document_type, max_chars=max_chars, discovery=discovery)
+    with start_progress(stem, "schema", 1) as progress:
+        result = generate_schema(
+            document_text, document_type=document_type, max_chars=max_chars, discovery=discovery
+        )
+        progress.advance()
+        return result
 
 
 # [find_redundant_type_pairs 전용 보조 함수] 두 임베딩 벡터 사이의 코사인 유사도를

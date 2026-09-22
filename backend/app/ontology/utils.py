@@ -6,6 +6,7 @@ submodule can import from" convention (see persistence.py, schema_validation.py)
 import json
 import os
 import re
+import threading
 
 from app.utils.paths import document_dir_for
 
@@ -116,3 +117,119 @@ def _require_document_text(stem: str) -> str:
     if not doc_path.is_file():
         raise FileNotFoundError(f"document not found: {stem}")
     return doc_path.read_text()
+
+
+# In-flight progress reporting -----------------------------------------------
+#
+# discover_for_document/schema_for_document/extract_for_document (and their
+# chunk-grouped inner functions) can each take anywhere from seconds to
+# 1000s of seconds for a large document, all inside one synchronous HTTP
+# request -- the frontend previously had no way to show anything better than
+# a locally-ticking "N초" counter while waiting. ChunkProgress below persists
+# a small JSON snapshot to documents/{stem}/progress/{operation}.json as the
+# operation goes, so a GET route (main.py's /progress) can be polled from the
+# browser while the POST request is still in flight -- the same
+# write-to-a-file-so-another-request-can-read-it-mid-run idea as
+# extract_graph.py's own extraction_progress/{node,edge}_proc_{N}.json, just
+# generalized to all three chunk-grouped operations and reduced to a summary
+# (counts/stage) rather than the raw per-group data.
+#
+# The three *_from_chunks functions run their map step concurrently (see
+# generate_schema.py's _map_concurrently), so groups finish in whatever order
+# their LLM calls happen to return in -- advance() is only ever called with
+# "one more group finished", never "group N finished", and is lock-protected
+# so concurrent callers don't corrupt `completed` or race on the file write.
+_PROGRESS_STATUSES = ("running", "done", "error")
+
+
+class ChunkProgress:
+    """Real, file-backed progress tracker for one document/operation pair.
+    Never constructed directly by pipeline code -- use start_progress()
+    below, which returns a _NoopProgress instead when `stem` is None (the
+    same has-a-real-backend-or-silently-does-nothing shape as
+    app.llm.telemetry's _NoopObservation, so callers never need an `if
+    progress:` guard)."""
+
+    def __init__(self, stem: str, operation: str, total: int):
+        self._lock = threading.Lock()
+        self._path = document_dir_for(stem) / "progress" / f"{operation}.json"
+        self._state = {
+            "operation": operation,
+            "status": "running",
+            "stage": "map",
+            "total": total,
+            "completed": 0,
+            "error": None,
+        }
+        self._write()
+
+    def _write(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._state, ensure_ascii=False))
+
+    def advance(self, *_args, **fields) -> None:
+        """Marks one more unit of work (one chunk group, or the single
+        whole-document call) done, optionally merging `fields` into the
+        persisted state (e.g. extract_graph_from_chunks's running node/edge
+        counts). Accepts and ignores a positional argument too, so it can be
+        passed straight as _map_concurrently's `on_item_done` callback,
+        which calls it with that item's own result."""
+        with self._lock:
+            self._state["completed"] += 1
+            self._state.update(fields)
+            self._write()
+
+    def set_stage(self, stage: str) -> None:
+        with self._lock:
+            self._state["stage"] = stage
+            self._write()
+
+    def __enter__(self) -> "ChunkProgress":
+        return self
+
+    def __exit__(self, exc_type, exc, _tb) -> bool:
+        with self._lock:
+            self._state["status"] = "error" if exc_type else "done"
+            self._state["stage"] = "done" if exc_type is None else self._state["stage"]
+            if exc is not None:
+                self._state["error"] = str(exc)
+            self._write()
+        return False  # never suppress the exception
+
+
+class _NoopProgress:
+    """Stand-in for ChunkProgress when no `stem` was given (e.g.
+    measure_schema_stability, or any other caller that isn't answering one
+    specific document's route) -- same shape, no filesystem I/O."""
+
+    def advance(self, *_args, **_kwargs) -> None:
+        pass
+
+    def set_stage(self, stage: str) -> None:
+        pass
+
+    def __enter__(self) -> "_NoopProgress":
+        return self
+
+    def __exit__(self, *_exc_info) -> bool:
+        return False
+
+
+def start_progress(stem: str | None, operation: str, total: int):
+    """The one entry point pipeline code should use to get a progress
+    tracker -- a real ChunkProgress when `stem` is given, a _NoopProgress
+    otherwise. Use as a context manager (`with start_progress(...) as
+    progress:`) so status flips to "done"/"error" automatically when the
+    `with` block exits, whether or not the wrapped code raises."""
+    return ChunkProgress(stem, operation, total) if stem else _NoopProgress()
+
+
+def load_progress(stem: str, operation: str) -> dict | None:
+    """Read side for main.py's GET /progress route -- returns None (not a
+    404-raising lookup) when nothing has ever run this operation for this
+    document, or a prior run's file was never written, so the route can
+    decide what an absent record means (e.g. "hasn't started yet")."""
+    path = document_dir_for(stem) / "progress" / f"{operation}.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
