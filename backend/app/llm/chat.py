@@ -46,6 +46,23 @@ OPERATION_KEYS = ("discover_ontology", "generate_schema", "extract_graph", "vali
 # generation) all call get_chat_model() with operation=None too -- an
 # allowlist keyed on these five exact strings can never accidentally catch
 # one of those.
+#
+# get_chat_model also asks for low reasoning effort on exactly these
+# operations -- verified live against every model in MODEL_CATALOG plus two
+# not-yet-cataloged ones (qwen/qwen3.8-flash, google/gemini-3.8-flash): a
+# generate_schema()-shaped call spends the overwhelming majority of its
+# response on hidden "reasoning" tokens before ever emitting the actual JSON
+# (e.g. 2812 of 3063 output tokens for z-ai/glm-5.3-flash on a *17-character*
+# document -- reasoning-token volume tracks how demanding the prompt's
+# instructions are, not input size), and that reasoning generation, being
+# sequential decoding, is the dominant cost of the 60s+ per-chunk-group
+# latency this was chasing down, not chunk size or network overhead. Effort
+# is NOT a uniform fix: it cut z-ai/glm-5.3-flash from ~60-90s to ~5-7s and
+# google/gemini-3.8-flash's reasoning to 0 entirely, but qwen/qwen3.8-flash
+# barely responds to it (137.9s -> 116.0s) -- some models' effort floor is
+# just high regardless of this hint. Every model tested still accepts the
+# parameter without erroring even when it has little effect, so this is
+# applied unconditionally rather than per-model.
 _JSON_OPERATIONS = frozenset(
     {"discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution"}
 )
@@ -113,6 +130,16 @@ def get_chat_model(operation: str | None = None):
         kwargs["max_tokens"] = max_tokens
     if operation in _JSON_OPERATIONS:
         kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+        # A first-class ChatOpenAI field (not another model_kwargs entry) --
+        # passing it through model_kwargs instead works but logs a
+        # "should be specified explicitly" warning on every call. Once this
+        # is set, langchain-openai routes the request through OpenAI's
+        # Responses API instead of Chat Completions, which returns
+        # `response.content` as a list of content blocks (reasoning + text,
+        # order not guaranteed) rather than a plain string -- see
+        # app.ontology.utils.parse_json_response's own comment for the
+        # normalization this requires downstream.
+        kwargs["reasoning"] = {"effort": "low"}
     return ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],

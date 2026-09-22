@@ -21,11 +21,28 @@ def test_get_chat_model_adds_json_response_format_for_json_operations(operation)
     assert model.model_kwargs == {"response_format": {"type": "json_object"}}
 
 
+@pytest.mark.parametrize("operation", JSON_OPERATIONS)
+def test_get_chat_model_asks_for_low_reasoning_effort_for_json_operations(operation):
+    # Verified live (see _JSON_OPERATIONS's own comment) that reasoning-token
+    # volume, not chunk/document size, is what actually drives per-call
+    # latency for these prompts -- this is the lever that cuts it.
+    model = get_chat_model(operation)
+
+    assert model.reasoning == {"effort": "low"}
+
+
 @pytest.mark.parametrize("operation", [None, "summarize_document", "some_other_operation"])
 def test_get_chat_model_omits_response_format_for_non_json_operations(operation):
     model = get_chat_model(operation)
 
     assert model.model_kwargs == {}
+
+
+@pytest.mark.parametrize("operation", [None, "summarize_document", "some_other_operation"])
+def test_get_chat_model_omits_reasoning_for_non_json_operations(operation):
+    model = get_chat_model(operation)
+
+    assert model.reasoning is None
 
 
 def test_get_model_max_tokens_uses_operation_cap_when_smaller_than_model_cap():

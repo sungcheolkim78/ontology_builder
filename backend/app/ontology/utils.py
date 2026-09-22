@@ -47,7 +47,29 @@ def _check_document_length(document_text: str, max_chars: int | None = None) -> 
         )
 
 
-def parse_json_response(text: str) -> dict:
+def _extract_text_block(content: list) -> str:
+    """Pulls the 'text' block's own text out of a Responses-API-shaped
+    content list -- see parse_json_response's own comment for why this
+    shape shows up at all. Searches by `type` rather than assuming a
+    position, since which block comes first is provider-dependent (verified
+    empirically to differ: e.g. Qwen returns [reasoning, text], Gemini
+    returns [text, reasoning] for the exact same request shape)."""
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            return block.get("text", "")
+    raise ValueError(f"no text block found in response content: {content!r}")
+
+
+def parse_json_response(content: str | list) -> dict:
+    """Parses a chat model's JSON response. `content` is usually already a
+    plain string (langchain's normal `response.content` shape), but once
+    `reasoning` is added to a call's model_kwargs (app.llm.chat.get_chat_model's
+    _JSON_OPERATIONS), langchain-openai routes the request through OpenAI's
+    Responses API instead of the classic Chat Completions API, which returns
+    a LIST of content blocks (one 'reasoning' block, one 'text' block, in
+    either order) rather than a string -- _extract_text_block above pulls
+    the actual answer out of that shape first when needed."""
+    text = content if isinstance(content, str) else _extract_text_block(content)
     stripped = text.strip()
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
     if fenced:
