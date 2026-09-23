@@ -1,4 +1,5 @@
 import functools
+import os
 import re
 import shutil
 import threading
@@ -9,6 +10,27 @@ from app.preprocess.embeddings import EMBEDDING_DIM
 from app.utils.paths import data_dir
 
 DB_PATH = data_dir() / "graph" / "graph.ladybugdb"
+
+# ladybug's Database() defaults buffer_pool_size to ~80% of *system* memory,
+# not of any container memory limit -- on this app's default podman-machine
+# VM sizing (2GiB total, shared with the frontend/explorer containers and
+# podman's own overhead), that default tries to reserve ~1.6GB the moment a
+# connection is opened, which alone can trigger the VM's OOM killer. Capping
+# it here is defense-in-depth, not the actual fix for that: reproduced live
+# that write_graph()'s COMMIT for a 667-node/656-edge legal document graph
+# (23 node types, 49 edge types -- a rich schema means many distinct node/rel
+# tables, each with its own baseline storage overhead) needs on the order of
+# ~1.1GB resident memory regardless of this cap, confirmed via the VM's own
+# kernel OOM-killer log entries (anon-rss ~1.0-1.2GB at every kill, same
+# order of magnitude with or without a 256MB buffer_pool_size). That's
+# genuine engine memory need for this data, not the runaway default -- the
+# actual fix was giving the podman machine enough total memory to satisfy it
+# (`podman machine set --memory 6144`, a local machine setting this repo
+# can't commit -- see CLAUDE.md's "Running the full stack" section). Once the
+# VM had headroom, the same write completed in 1.8s through the real API and
+# checkpointed cleanly (no leftover .wal). This cap just keeps the *default*
+# from grabbing 80% of whatever the VM has for a single connection.
+_GRAPH_BUFFER_POOL_SIZE = int(os.environ.get("LADYBUG_BUFFER_POOL_SIZE", 256 * 1024 * 1024))
 
 # Defensive upper bound on expand_hops' variable-length pattern match --
 # main.py already clamps the value it passes in, but this guards any other
@@ -56,7 +78,7 @@ def _get_connection() -> Connection:
     global _database, _connection
     if _connection is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _database = Database(str(DB_PATH))
+        _database = Database(str(DB_PATH), buffer_pool_size=_GRAPH_BUFFER_POOL_SIZE)
         _connection = Connection(_database)
         _connection.execute(
             "CREATE NODE TABLE IF NOT EXISTS _ExtractedDocument("

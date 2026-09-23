@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 import anydoc
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
@@ -47,6 +47,7 @@ from app.ontology import (
     load_domain_pending_review,
     load_domain_schema,
     load_graph,
+    load_progress,
     load_schema,
     measure_schema_stability,
     propose_evolution,
@@ -463,6 +464,28 @@ def list_schemas():
 def reset_database():
     graphdb.reset_database()
     return {"status": "ok"}
+
+
+_PROGRESS_OPERATIONS = ("discover", "schema", "extract")
+
+
+@app.get("/api/ontology/{filename}/progress")
+def get_ontology_progress(filename: str, operation: str = Query(...)):
+    """Polled from the browser while a POST /discover, /schema, or /extract
+    request for this same document is still in flight, to show progress
+    (group count, stage, and -- for extract -- a running node/edge total)
+    instead of just a ticking clock. Reads
+    documents/{stem}/progress/{operation}.json, written as that pipeline
+    stage runs (see app.ontology.utils.ChunkProgress). 404 covers both "this
+    operation hasn't been run for this document yet" and "no such
+    operation" -- there's nothing a caller can do differently for either, so
+    one status code is enough."""
+    if operation not in _PROGRESS_OPERATIONS:
+        raise HTTPException(status_code=404, detail=f"unknown operation: {operation!r}")
+    progress = load_progress(stem_for(filename), operation)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="no progress recorded yet")
+    return progress
 
 
 class DiscoverRequest(BaseModel):

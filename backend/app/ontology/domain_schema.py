@@ -5,12 +5,13 @@ from pathlib import Path
 from app.utils.paths import data_dir
 from .schema_validation import SCHEMA_CONTRACT_VERSION, summarize_validation_issues, validate_schema
 
-from .extraction import converge_domain_schema, generate_schema
+from .evolve_graph import converge_domain_schema
+from .generate_schema import generate_schema
 from .persistence import _apply_schema_type_changes, create_schema_version
 
 # Domain schema storage/reuse -----------------------------------------------
 #
-# converge_domain_schema() (app.ontology.extraction) is a pure function -- it
+# converge_domain_schema() (app.ontology.evolve_graph) is a pure function -- it
 # takes a schema in and returns one out, with no notion of "the schema for
 # domain X" persisting between calls. This module adds that persistence,
 # separate from the per-document schema_v{N}.json layout in

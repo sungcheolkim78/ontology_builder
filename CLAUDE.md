@@ -20,7 +20,17 @@ podman-compose up --build -d
 ```
 
 Requires a running `podman machine` and `backend/.env` with a real
-`OPENROUTER_API_KEY` (copy `backend/.env.example`). Frontend at
+`OPENROUTER_API_KEY` (copy `backend/.env.example`). Give the machine at
+least 4GB, ideally 6GB+ (`podman machine set --memory 6144`, machine must be
+stopped first) -- podman's own default (2GiB, shared across every
+container in this compose file plus podman's overhead) is not enough:
+`graphdb.py`'s embedded LadybugDB creates one table per distinct node/edge
+*type name* in a document's schema (see below), and committing a write
+across a rich schema's many tables needs real resident memory regardless of
+`graphdb.py`'s own `buffer_pool_size` cap -- confirmed via the VM's kernel
+OOM-killer log (`podman machine ssh -- journalctl -k | grep -i oom`)
+killing the backend process mid-COMMIT at ~1.1GB resident, for a document
+whose schema had 23 node types/49 edge types. Frontend at
 `localhost:5173`, backend at `localhost:8000`; the frontend dev server
 proxies `/api` and `/health` to the backend container. LLM tracing
 (`backend/.env`'s optional `LANGFUSE_*` vars) points at a separate,
@@ -35,7 +45,16 @@ write. Its image tag in `podman-compose.yml` must stay in sync with the
 the embedded library have to agree on storage format to open the same file.
 If graph queries in Explorer start failing oddly with both it and the
 backend running, that's the same WAL-corruption failure mode as "LadybugDB
-초기화" in the UI, not a new bug -- reset via that button.
+초기화" in the UI, not a new bug -- reset via that button. The most common
+cause of this specific failure mode is the podman machine memory gotcha just
+above: a write killed mid-COMMIT by the VM's OOM killer leaves the `.wal`
+non-empty and never checkpointed, and every read against the database then
+hangs forever (the module-level connection lock in `graphdb.py` is held by
+the thread stuck inside the native call, so it never releases) rather than
+erroring -- `/api/documents` (or any other route touching `graphdb.has_graph`)
+timing out with zero CPU/disk activity in `podman stats` is the tell. Give
+the machine more memory first and retry before reaching for the reset
+button, which discards every document's extracted graph.
 
 Explorer only reads the database file once, when its container starts --
 verified experimentally that it never picks up later writes, not on
@@ -156,8 +175,17 @@ Two more single-concern packages exist the same way: `app/graph/` holds
 and `app/llm/` holds `chat.py`, `prompts.py`, and `telemetry.py` (everything
 about talking to an LLM that isn't itself a pipeline stage). `ontology.py`
 is likewise a package, `app/ontology/`, split by concern into
-`persistence.py`, `extraction.py`, `legal_guards.py`, and `domain_schema.py`
-(see that package's own `__init__.py` docstring for the split and why
+`persistence.py`, `generate_schema.py`, `extract_graph.py`,
+`evolve_graph.py`, `utils.py`, `legal_guards.py`, and `domain_schema.py` --
+`generate_schema.py`/`extract_graph.py`/`evolve_graph.py` used to be one
+`extraction.py` module, split by pipeline stage once it grew large enough
+that the three concerns (propose a schema, extract instances against it,
+validate/evolve what was extracted) were easier to navigate as separate
+files; `utils.py` holds what's shared across two or more of them
+(`parse_json_response`, the chunk-grouping/document-loading helpers,
+`MAX_DOCUMENT_CHARS`/`MAX_CHUNK_GROUP_CHARS`) so each of the three stays
+scoped to its own stage
+(see that package's own `__init__.py` docstring for the full split and why
 `get_chat_model`/`get_embedding_model` are re-exported from there rather
 than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
 each submodule). `app.ontology.schema_validation` (normalization/validation

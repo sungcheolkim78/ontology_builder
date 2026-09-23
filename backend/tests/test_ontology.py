@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -99,6 +100,58 @@ def test_extract_for_document_raises_file_not_found_when_document_missing():
         extract_for_document("missing_raw")
 
 
+def test_progress_endpoint_returns_404_when_nothing_recorded():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "schema"})
+
+    assert response.status_code == 404
+
+
+def test_progress_endpoint_returns_404_for_unknown_operation():
+    client = TestClient(app)
+
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "bogus"})
+
+    assert response.status_code == 404
+
+
+def test_progress_endpoint_returns_state_after_schema_generation_completes(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema))
+    )
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/schema")
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "schema"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["total"] == 1
+    assert body["completed"] == 1
+
+
+def test_progress_endpoint_reports_running_totals_for_extract(monkeypatch):
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    monkeypatch.setattr(
+        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+    client = TestClient(app)
+
+    client.post("/api/ontology/doc_raw.md/extract")
+    response = client.get("/api/ontology/doc_raw.md/progress", params={"operation": "extract"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["nodes"] == 1
+    assert body["edges"] == 0
+
+
 def test_extract_for_document_creates_default_schema_when_none_saved(monkeypatch):
     from app.ontology import extract_for_document
 
@@ -171,6 +224,16 @@ class RecordingChatModel:
         return type("FakeResponse", (), {"content": self.content})()
 
 
+def _prompt_text(prompt):
+    """Flattens a captured prompt (now usually a [SystemMessage, HumanMessage]
+    list, since app.ontology's LLM call sites build messages instead of one
+    formatted string -- see prompts.py's own module comment) into a single
+    string for substring assertions, regardless of which shape it is."""
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
+
+
 def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
@@ -183,7 +246,7 @@ def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "defined terms" in fake_model.prompts[0]
+    assert "defined terms" in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
@@ -430,7 +493,7 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
 
     client.post("/api/ontology/doc_raw.md/schema")
 
-    assert "Reference --" not in fake_model.prompts[0]
+    assert "Reference --" not in _prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
@@ -445,8 +508,8 @@ def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
 
     assert response.status_code == 200
-    assert "Reference --" in fake_model.prompts[0]
-    assert "Policy" in fake_model.prompts[0]
+    assert "Reference --" in _prompt_text(fake_model.prompts[0])
+    assert "Policy" in _prompt_text(fake_model.prompts[0])
 
 
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
@@ -1804,15 +1867,21 @@ class SequencedChatModel:
     because converge_domain_schema makes multiple sequential LLM calls
     (extract/validate/propose_evolution, per document) within one function
     call, unlike the single-call tests above that get away with a fixed
-    FakeChatModel response."""
+    FakeChatModel response. Also used by the generate_schema_from_chunks/
+    measure_schema_stability tests below, whose map step now calls invoke()
+    concurrently from multiple threads -- the read-index-then-increment is
+    lock-protected so two threads can't race and read the same index (or
+    skip one)."""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self._lock = threading.Lock()
 
     def invoke(self, messages):
-        content = self.responses[self.calls]
-        self.calls += 1
+        with self._lock:
+            content = self.responses[self.calls]
+            self.calls += 1
         return type("FakeResponse", (), {"content": content})()
 
 
