@@ -34,6 +34,18 @@ const error = ref('')
 // after a successful extraction (which produces a graph worth showing again).
 const showSchemaPreview = ref(false)
 
+// Node/edge labels are the most expensive part of rendering a large graph
+// (v-network-graph draws a text element per visible label, recomputed every
+// force-simulation tick while the layout is still settling), so default them
+// off once a graph crosses this size -- the checkboxes below still let a user
+// turn them back on for a specific large graph if they want to. Declared
+// before the displayNodes/displayEdges watchers below, which set these refs'
+// initial value from each freshly loaded dataset's size.
+const LABEL_AUTO_HIDE_NODE_THRESHOLD = 150
+const LABEL_AUTO_HIDE_EDGE_THRESHOLD = 150
+const showNodeLabels = ref(true)
+const showEdgeLabels = ref(true)
+
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const displayMode = computed(() => {
@@ -198,6 +210,7 @@ watch(
   displayNodes,
   (list) => {
     emit('types-available', [...new Set(list.map((n) => n.type))].sort())
+    showNodeLabels.value = list.length <= LABEL_AUTO_HIDE_NODE_THRESHOLD
   },
   { immediate: true }
 )
@@ -206,6 +219,7 @@ watch(
   displayEdges,
   (list) => {
     emit('edge-types-available', [...new Set(list.map((e) => e.type))].sort())
+    showEdgeLabels.value = list.length <= LABEL_AUTO_HIDE_EDGE_THRESHOLD
   },
   { immediate: true }
 )
@@ -400,8 +414,6 @@ const configs = computed(() => ({
 
 const graphRef = ref(null)
 const zoomLevel = ref(1)
-const showNodeLabels = ref(true)
-const showEdgeLabels = ref(true)
 
 function resetView() {
   graphRef.value?.fitToContents()

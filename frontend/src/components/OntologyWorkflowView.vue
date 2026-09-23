@@ -762,6 +762,46 @@ onMounted(async () => {
   await loadDomains()
   await loadDomainFiles()
 })
+
+// --- resizable split between the "온톨로지 그래프" / "스키마·그래프DB" columns ---
+// Both used to be plain flex-1 siblings, which puts the divide wherever the
+// browser's flex algorithm lands rather than guaranteeing it starts at the
+// midpoint of whatever width is actually available for the row -- the left
+// filter sidebar and the floating node/edge inspector panel both eat into
+// that width first. splitPercent is the graph column's share of the row's
+// own width (not the viewport), so it always starts at a true 50/50 of
+// whatever's actually on screen, and dragging the bar changes that share
+// directly instead of fighting flex-basis auto-sizing from wide table
+// content in SchemaGraphPreview.
+const splitRow = ref(null)
+const splitPercent = ref(50)
+const isDraggingSplit = ref(false)
+const MIN_SPLIT_PERCENT = 20
+const MAX_SPLIT_PERCENT = 80
+
+function onSplitPointerDown() {
+  isDraggingSplit.value = true
+  window.addEventListener('pointermove', onSplitPointerMove)
+  window.addEventListener('pointerup', onSplitPointerUp)
+}
+
+function onSplitPointerMove(event) {
+  if (!splitRow.value) return
+  const rect = splitRow.value.getBoundingClientRect()
+  const percent = ((event.clientX - rect.left) / rect.width) * 100
+  splitPercent.value = Math.min(MAX_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, percent))
+}
+
+function onSplitPointerUp() {
+  isDraggingSplit.value = false
+  window.removeEventListener('pointermove', onSplitPointerMove)
+  window.removeEventListener('pointerup', onSplitPointerUp)
+}
+
+onUnmounted(() => {
+  window.removeEventListener('pointermove', onSplitPointerMove)
+  window.removeEventListener('pointerup', onSplitPointerUp)
+})
 </script>
 
 <template>
@@ -1123,9 +1163,14 @@ onMounted(async () => {
       </div>
     </aside>
 
-    <!-- Main area: 온톨로지 그래프 / 스키마·그래프DB side by side as two columns -->
-    <div class="flex min-h-0 flex-1">
-      <div class="relative flex min-h-0 min-w-0 flex-1">
+    <!-- Main area: 온톨로지 그래프 / 스키마·그래프DB side by side as two columns,
+         split by a draggable bar that defaults to the midpoint of this row's
+         own width (see splitPercent above) -- flex-1/flex-1 alone put the
+         divide wherever flex-basis auto-sizing landed, which a
+         SchemaGraphPreview table full of long descriptions could push past
+         the visible edge. -->
+    <div ref="splitRow" class="flex min-h-0 min-w-0 flex-1" :class="{ 'select-none': isDraggingSplit }">
+      <div class="relative flex min-h-0 min-w-0 flex-shrink-0" :style="{ width: splitPercent + '%' }">
         <div class="min-h-0 min-w-0 flex-1">
           <OntologyGraph
             :file="file"
@@ -1183,7 +1228,13 @@ onMounted(async () => {
           </dl>
         </div>
       </div>
-      <div class="min-h-0 min-w-0 flex-1 border-l border-border">
+      <div
+        class="w-1 flex-shrink-0 cursor-col-resize border-l border-border bg-transparent hover:bg-accent/40"
+        :class="{ 'bg-accent/60': isDraggingSplit }"
+        title="드래그하여 폭 조절"
+        @pointerdown="onSplitPointerDown"
+      ></div>
+      <div class="min-h-0 min-w-0 flex-1">
         <SchemaGraphPreview :file="file" :schema-version="schemaVersion" />
       </div>
     </div>
