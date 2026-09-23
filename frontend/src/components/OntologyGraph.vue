@@ -90,6 +90,14 @@ const visibleEdges = computed(() => {
   )
 })
 
+// Shared with the d3-force watcher below (skip per-tick rendering, faster
+// alphaDecay) and the edge config (straight instead of curved edges) -- the
+// same "this graph is expensive to lay out and draw" signal drives all
+// three, so it's one flag rather than three separately-tuned thresholds.
+const isLargeGraph = computed(
+  () => visibleNodes.value.length > LABEL_AUTO_HIDE_NODE_THRESHOLD || visibleEdges.value.length > LABEL_AUTO_HIDE_EDGE_THRESHOLD
+)
+
 // Memoized once per displayNodes/displayEdges change instead of being
 // recomputed from scratch on every colorFor/edgeColorFor call -- v-network-
 // graph calls these once per node/edge on every render (including every
@@ -239,6 +247,13 @@ const CHARGE_STRENGTH = -900
 // otherwise drift away under pure charge repulsion, without fighting the
 // clustering/linking of connected nodes.
 const GRAVITY_STRENGTH = 0.03
+// d3-force's own default (~0.0228) takes ~300 ticks to settle -- fine for a
+// small graph rendered once per tick, but for a large one (see isLargeGraph)
+// that's 300 renders of the whole SVG before anything useful shows. Only
+// applied on the large-graph path below, which also skips per-tick
+// rendering entirely, so a faster decay there just means fewer physics
+// iterations to run through before showing the one final result.
+const LARGE_GRAPH_ALPHA_DECAY = 0.05
 let simulation = null
 // Keyed by node id, same object instances as the live simulation's nodes --
 // used by the drag handlers below to pin/release a node's fixed position
@@ -318,6 +333,36 @@ watch(
         }
         fitSoon()
       })
+
+    // A graph settles over ~300 ticks by default, each one committing a full
+    // layouts.value replacement that re-renders every node/edge in the SVG --
+    // fine for a small graph, but for a large one (see isLargeGraph) that's
+    // ~300 full re-renders before the initial layout is even done. The
+    // 'tick' handler above is what a drag interaction needs live, but
+    // nobody's watching the *initial* settle animate in, so there's nothing
+    // lost by computing it synchronously up front and only touching
+    // layouts.value once at the end. stop() here halts the timer
+    // forceSimulation() just started (it hasn't fired anything yet -- d3-
+    // timer's first callback is scheduled via rAF, not synchronous), then
+    // tick(n) runs the physics directly without going through the
+    // 'tick'/'end' listeners at all (see d3-force's simulation.js: only the
+    // internal timer-driven step() dispatches those events; the public
+    // tick() method never does) -- a later drag's alphaTarget()/restart()
+    // still works normally afterward since the listeners stay attached and
+    // alpha is left wherever this loop's decay landed it, same as if the
+    // timer-driven path had settled on its own.
+    if (isLargeGraph.value) {
+      simulation.stop()
+      simulation.alphaDecay(LARGE_GRAPH_ALPHA_DECAY)
+      const ticksNeeded = Math.ceil(Math.log(simulation.alphaMin()) / Math.log(1 - simulation.alphaDecay()))
+      simulation.tick(ticksNeeded)
+      const positions = {}
+      simNodes.forEach((n) => {
+        positions[n.id] = { x: n.x, y: n.y }
+      })
+      layouts.value = { nodes: positions }
+      fitSoon()
+    }
   },
   { immediate: true }
 )
@@ -402,7 +447,11 @@ const configs = computed(() => ({
         height: 4,
       },
     },
-    type: 'curve',
+    // Curved edges cost more to compute/render per edge (bezier control
+    // points) than straight ones -- worth it visually for a typical graph's
+    // handful of edges, not for hundreds of them, so large graphs (see
+    // isLargeGraph) fall back to straight lines.
+    type: isLargeGraph.value ? 'straight' : 'curve',
     gap: 12,
     label: {
       fontSize: () => 11 / zoomLevel.value,
