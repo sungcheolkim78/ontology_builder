@@ -114,6 +114,7 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
         "original_filename": "report.docx",
         "converter": "anydoc",
         "summary": None,
+        "has_md": True,
         "has_chunks": False,
         "has_pdf": False,
         "has_goldenset": False,
@@ -160,6 +161,30 @@ def test_list_documents_reports_has_pdf_status():
     assert response.json()["documents"][0]["has_pdf"] is True
 
 
+def test_list_documents_reports_pdf_only_document_with_has_md_false():
+    from app.ontology import save_document_manifest
+
+    d = document_dir_for("terms_raw")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "source.pdf").write_bytes(b"%PDF-1.4 fake pdf bytes")
+    save_document_manifest("terms_raw", "terms.pdf", converter="table_aware")
+    client = TestClient(app)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    docs = response.json()["documents"]
+    assert len(docs) == 1
+    doc = docs[0]
+    assert doc["filename"] == "terms_raw.md"
+    assert doc["original_filename"] == "terms.pdf"
+    assert doc["has_md"] is False
+    assert doc["has_pdf"] is True
+    assert doc["has_chunks"] is False
+    assert doc["has_schema"] is False
+    assert doc["summary"] is None
+
+
 def test_list_documents_returns_empty_list_when_no_data_dir():
     client = TestClient(app)
 
@@ -186,6 +211,23 @@ def test_update_manifest_merges_fields():
         "original_filename": "renamed.docx",
         "converter": "anydoc",
     }
+
+
+def test_update_manifest_works_for_pdf_only_document():
+    from app.ontology import load_document_manifest, save_document_manifest
+
+    d = document_dir_for("terms_raw")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "source.pdf").write_bytes(b"%PDF-1.4")
+    save_document_manifest("terms_raw", "terms.pdf", converter="table_aware")
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/documents/terms_raw.md/manifest", json={"original_filename": "renamed.pdf"}
+    )
+
+    assert response.status_code == 200
+    assert load_document_manifest("terms_raw")["original_filename"] == "renamed.pdf"
 
 
 def test_update_manifest_returns_404_for_missing_document():
@@ -223,6 +265,21 @@ def test_delete_document_removes_files_and_graph():
     assert response.json() == {"status": "ok"}
     assert not d.exists()
     assert graphdb.has_graph("report_raw", version=1) is False
+
+
+def test_delete_document_works_for_pdf_only_document():
+    from app.ontology import save_document_manifest
+
+    d = document_dir_for("terms_raw")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "source.pdf").write_bytes(b"%PDF-1.4")
+    save_document_manifest("terms_raw", "terms.pdf", converter="table_aware")
+    client = TestClient(app)
+
+    response = client.delete("/api/documents/terms_raw.md")
+
+    assert response.status_code == 200
+    assert not d.exists()
 
 
 def test_delete_document_returns_404_for_missing_document():

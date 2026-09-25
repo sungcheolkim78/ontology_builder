@@ -63,6 +63,17 @@ def normalize_policy_headings(markdown: str) -> str:
     return "\n".join(normalized)
 
 
+def raw_stem_for(filename: str) -> str:
+    """The `{stem}_raw` document-folder stem that `parse_to_markdown_file`/
+    `convert_pdf_to_markdown_file` derive from an uploaded file's name.
+    Exposed so a caller that saves `source.pdf` *before* Markdown conversion
+    happens (deferring the actual conversion to a later, separate step --
+    e.g. the Samsung Life download-by-name route in app.main) can pick the
+    exact same document folder those functions will write `raw.md` into
+    once conversion does run."""
+    return f"{Path(os.path.basename(filename)).stem}_raw"
+
+
 def parse_to_markdown_file(filename: str, data: bytes) -> dict:
     safe_name = os.path.basename(filename)
     stem = Path(safe_name).stem

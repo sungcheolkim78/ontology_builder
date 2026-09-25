@@ -66,3 +66,27 @@ def document_raw_files() -> list[tuple[str, Path]]:
         if d.is_dir() and not d.name.startswith(".") and (d / "raw.md").is_file()
     ]
     return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)
+
+
+def pdf_only_document_dirs() -> list[tuple[str, Path]]:
+    """(stem, source.pdf path) for documents that have a PDF but no raw.md
+    yet -- a document whose Markdown conversion was deliberately deferred to
+    a separate on-demand step (POST /api/documents/{filename}/generate-md)
+    instead of happening inline with the PDF download, so a slow table-aware
+    conversion doesn't block the request that merely fetches the PDF (see
+    e.g. app.preprocess.samsunglife_utils's download route). Kept as a
+    sibling of document_raw_files() rather than folded into it, since that
+    function's own contract ("has raw.md") is still exactly what /api/files
+    needs -- /api/files only ever serves raw.md content, so a PDF-only
+    document has nothing for it to list yet."""
+    if not documents_dir().is_dir():
+        return []
+    entries = [
+        (d.name, d / "source.pdf")
+        for d in documents_dir().iterdir()
+        if d.is_dir()
+        and not d.name.startswith(".")
+        and not (d / "raw.md").is_file()
+        and (d / "source.pdf").is_file()
+    ]
+    return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)

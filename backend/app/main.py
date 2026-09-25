@@ -1,5 +1,7 @@
 import json
 import os
+import tempfile
+from dataclasses import asdict
 from pathlib import Path
 
 import anydoc
@@ -64,8 +66,10 @@ from app.ontology import (
 )
 from app.utils.paths import (
     chunk_path_for,
+    document_dir_for,
     document_path_for,
     document_raw_files,
+    pdf_only_document_dirs,
     pdf_path_for,
     stem_for,
 )
@@ -78,7 +82,17 @@ from app.preprocess.goldenset import (
     record_goldenset_answer,
     save_goldenset,
 )
-from app.preprocess.parser import convert_pdf_to_markdown_file, parse_to_markdown_file
+from app.preprocess.parser import (
+    convert_pdf_to_markdown_file,
+    parse_to_markdown_file,
+    raw_stem_for,
+)
+from app.preprocess.samsunglife_utils import (
+    DEFAULT_CATEGORIES,
+    SamsungLifeDownloadError,
+    download_term_by_name,
+    find_terms_by_name,
+)
 from app.llm.telemetry import configure_telemetry, invoke_with_telemetry, trace
 
 configure_telemetry()
@@ -246,6 +260,91 @@ async def parse(file: UploadFile = File(...), converter: str = Form("table_aware
     return result
 
 
+@app.get("/api/samsunglife/terms")
+def search_samsunglife_terms(q: str = Query(..., min_length=1)):
+    try:
+        terms = find_terms_by_name(q, DEFAULT_CATEGORIES)
+    except SamsungLifeDownloadError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"terms": [asdict(term) for term in terms]}
+
+
+class SamsungLifeDownloadRequest(BaseModel):
+    name: str
+    categories: list[str] | None = None
+
+
+@app.post("/api/samsunglife/terms/download")
+def download_samsunglife_term(request: SamsungLifeDownloadRequest):
+    categories = tuple(request.categories) if request.categories else DEFAULT_CATEGORIES
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            record = download_term_by_name(request.name, Path(tmp_dir), categories)
+        except SamsungLifeDownloadError as e:
+            message = str(e)
+            if message.startswith("no term found named"):
+                raise HTTPException(status_code=404, detail=message)
+            if "narrow" in message:
+                raise HTTPException(status_code=409, detail=message)
+            raise HTTPException(status_code=502, detail=message)
+        data = Path(record["local_file"]).read_bytes()
+
+    # The matched term's own name (not the caller's possibly differently-cased
+    # search string) becomes this document's original_filename, same as any
+    # other upload -- 약관 PDFs are exactly what convert_pdf_to_markdown_file's
+    # table-aware, 제N조-heading-aware path exists for (see CLAUDE.md).
+    #
+    # Markdown conversion is deliberately NOT run here -- table-aware
+    # pdfplumber conversion of a large policy PDF can take a minute or more,
+    # and doing it inline made this route look hung with no feedback. Only
+    # the PDF itself (a ~1s fetch) is saved; POST .../generate-md runs the
+    # actual conversion as a separate, on-demand step once the document is
+    # selected in the UI (see the pdf_only_document_dirs()-backed listing in
+    # list_documents() below for how a PDF-only document shows up meanwhile).
+    original_filename = f"{record['name']}_약관.pdf"
+    stem = raw_stem_for(original_filename)
+    save_document_manifest(stem, original_filename, converter="table_aware")
+    pdf_path = pdf_path_for(stem)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.write_bytes(data)
+    return {
+        "filename": f"{stem}.md",
+        "path": f"data/documents/{stem}/source.pdf",
+        "samsunglife_term": record,
+    }
+
+
+@app.post("/api/documents/{filename}/generate-md")
+def generate_md(filename: str):
+    """Run the deferred Markdown conversion for a document whose PDF was
+    saved without one -- see the download route above. A no-op-turned-error
+    if raw.md already exists (nothing to (re)generate; re-upload via
+    /api/parse for that) or if there's no source.pdf to convert at all."""
+    stem = stem_for(filename)
+    if document_path_for(filename).is_file():
+        raise HTTPException(status_code=400, detail="markdown already generated")
+    pdf_path = pdf_path_for(stem)
+    if not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="pdf not found")
+
+    try:
+        manifest = load_document_manifest(stem) or {}
+        original_filename = manifest.get("original_filename", f"{stem}.pdf")
+        data = pdf_path.read_bytes()
+        result = convert_pdf_to_markdown_file(original_filename, data)
+    except (anydoc.ConvertError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Anything unexpected here (a corrupt manifest.json, a filesystem
+        # error reading source.pdf, pdfplumber choking on a malformed PDF)
+        # would otherwise reach FastAPI's default handler, which returns a
+        # bare 500 with no body -- surfacing it as a 400 with the actual
+        # message is what lets the frontend's error text (and this route's
+        # own logs) say what actually went wrong instead of just "HTTP 500".
+        raise HTTPException(status_code=400, detail=f"MD 생성 실패: {e}")
+    return result
+
+
 @app.get("/api/files")
 def list_files():
     return {
@@ -276,6 +375,7 @@ def list_documents():
                 "size_bytes": stat.st_size,
                 "modified_at": stat.st_mtime,
                 "summary": load_document_summary(stem),
+                "has_md": True,
                 "has_chunks": chunk_path_for(stem).is_file(),
                 "has_pdf": pdf_path_for(stem).is_file(),
                 "has_goldenset": goldenset_path_for(stem).is_file(),
@@ -285,6 +385,30 @@ def list_documents():
                 "graphdb_name": graphdb.DB_PATH.name,
             }
         )
+    # PDF-only documents (source.pdf saved, Markdown conversion deferred --
+    # see POST .../generate-md) so the frontend can offer that button for
+    # them instead of the normal pipeline badges, which all assume raw.md.
+    for stem, pdf_path in pdf_only_document_dirs():
+        manifest = load_document_manifest(stem)
+        stat = pdf_path.stat()
+        documents.append(
+            {
+                "filename": f"{stem}.md",
+                "original_filename": (manifest or {}).get("original_filename", f"{stem}.md"),
+                "converter": (manifest or {}).get("converter", "table_aware"),
+                "size_bytes": stat.st_size,
+                "modified_at": stat.st_mtime,
+                "summary": None,
+                "has_md": False,
+                "has_chunks": False,
+                "has_pdf": True,
+                "has_goldenset": False,
+                "has_schema": False,
+                "has_graph": False,
+                "graphdb_name": graphdb.DB_PATH.name,
+            }
+        )
+    documents.sort(key=lambda doc: doc["modified_at"], reverse=True)
     return {"documents": documents}
 
 
@@ -295,14 +419,18 @@ class UpdateManifestRequest(BaseModel):
 
 @app.patch("/api/documents/{filename}/manifest")
 def update_manifest(filename: str, request: UpdateManifestRequest):
-    if not document_path_for(filename).is_file():
+    # Dir existence, not document_path_for(...).is_file() -- a PDF-only
+    # document (raw.md not generated yet, see .../generate-md) still has a
+    # manifest worth editing (e.g. fixing original_filename before
+    # conversion runs), it just has no raw.md yet.
+    if not document_dir_for(stem_for(filename)).is_dir():
         raise HTTPException(status_code=404, detail="document not found")
     return update_document_manifest(stem_for(filename), **request.model_dump(exclude_unset=True))
 
 
 @app.delete("/api/documents/{filename}")
 def delete_document_route(filename: str):
-    if not document_path_for(filename).is_file():
+    if not document_dir_for(stem_for(filename)).is_dir():
         raise HTTPException(status_code=404, detail="document not found")
     delete_document(stem_for(filename))
     return {"status": "ok"}

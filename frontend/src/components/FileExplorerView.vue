@@ -20,6 +20,8 @@ const schemaVersions = ref([])
 const versionActionError = ref('')
 const isChunking = ref(false)
 const chunkError = ref('')
+const isGeneratingMd = ref(false)
+const generateMdError = ref('')
 const isSummarizing = ref(false)
 const summaryError = ref('')
 const isEditingManifest = ref(false)
@@ -28,6 +30,13 @@ const isSavingManifest = ref(false)
 const manifestSaveError = ref('')
 const isDeletingDocument = ref(false)
 const deleteDocumentError = ref('')
+const samsunglifeQuery = ref('')
+const samsunglifeSearching = ref(false)
+const samsunglifeSearched = ref(false)
+const samsunglifeSearchError = ref('')
+const samsunglifeResults = ref([])
+const samsunglifeDownloadingName = ref('')
+const samsunglifeDownloadError = ref('')
 
 const currentFile = computed(() => files.value.find((f) => f.filename === props.file?.filename))
 
@@ -62,7 +71,7 @@ const converterLabel = (converter) => (converter === 'table_aware' ? 'Table-awar
 
 function fileStageBadges(f) {
   return [
-    { key: 'md', label: 'MD', done: true },
+    { key: 'md', label: 'MD', done: !!f.has_md },
     { key: 'pdf', label: 'PDF', done: !!f.has_pdf },
     { key: 'chunk', label: 'Chunk', done: !!f.has_chunks },
     { key: 'goldenset', label: 'Golden', done: !!f.has_goldenset },
@@ -72,6 +81,27 @@ function fileStageBadges(f) {
 }
 
 const pipelineStages = computed(() => (currentFile.value ? fileStageBadges(currentFile.value) : []))
+
+async function generateMd() {
+  if (!props.file?.filename) return
+  isGeneratingMd.value = true
+  generateMdError.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/documents/${encodeURIComponent(props.file.filename)}/generate-md`,
+      { method: 'POST' }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    await loadDocuments()
+  } catch (err) {
+    generateMdError.value = 'MD 생성 실패: ' + err.message
+  } finally {
+    isGeneratingMd.value = false
+  }
+}
 
 async function createChunks() {
   if (!props.file?.filename) return
@@ -317,10 +347,60 @@ async function handleFileChange(event) {
   }
 }
 
+async function searchSamsunglifeTerms() {
+  const query = samsunglifeQuery.value.trim()
+  if (!query) return
+
+  samsunglifeSearching.value = true
+  samsunglifeSearchError.value = ''
+  try {
+    const res = await apiFetch(`/api/samsunglife/terms?q=${encodeURIComponent(query)}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    samsunglifeResults.value = data.terms
+  } catch (err) {
+    samsunglifeSearchError.value = '검색 실패: ' + err.message
+  } finally {
+    samsunglifeSearching.value = false
+    samsunglifeSearched.value = true
+  }
+}
+
+async function downloadSamsunglifeTerm(term) {
+  samsunglifeDownloadingName.value = term.name
+  samsunglifeDownloadError.value = ''
+  try {
+    const res = await apiFetch('/api/samsunglife/terms/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: term.name, categories: [term.category] }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    await loadDocuments()
+    const doc = files.value.find((f) => f.filename === data.filename)
+    emit('file-selected', { ...data, has_pdf: !!doc?.has_pdf })
+    samsunglifeResults.value = []
+    samsunglifeSearched.value = false
+    samsunglifeQuery.value = ''
+  } catch (err) {
+    samsunglifeDownloadError.value = '다운로드 실패: ' + err.message
+  } finally {
+    samsunglifeDownloadingName.value = ''
+  }
+}
+
 watch(() => props.file?.filename, () => {
   isEditingManifest.value = false
   manifestSaveError.value = ''
   deleteDocumentError.value = ''
+  generateMdError.value = ''
 })
 watch(() => props.file?.filename, loadSchemaVersions)
 watch(() => props.schemaVersion, loadSchemaVersions)
@@ -376,6 +456,53 @@ onMounted(async () => {
         </p>
         <p v-if="isUploading" class="mt-1 text-[11px] text-ink-muted">업로드 중...</p>
         <p v-if="uploadError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ uploadError }}</p>
+
+        <div class="mt-4 border-t border-border pt-3">
+          <h3 class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">삼성생명 약관 다운로드</h3>
+          <form class="flex gap-1" @submit.prevent="searchSamsunglifeTerms">
+            <input
+              v-model="samsunglifeQuery"
+              type="text"
+              placeholder="상품명으로 검색"
+              class="field w-full text-xs"
+              :disabled="!!samsunglifeDownloadingName"
+            />
+            <button
+              type="submit"
+              class="btn flex-shrink-0 px-2 py-1 text-[11px]"
+              :disabled="samsunglifeSearching || !!samsunglifeDownloadingName"
+            >{{ samsunglifeSearching ? '검색 중...' : '검색' }}</button>
+          </form>
+          <p v-if="samsunglifeSearchError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ samsunglifeSearchError }}</p>
+          <ul v-if="samsunglifeResults.length" class="mt-2 space-y-1">
+            <li
+              v-for="term in samsunglifeResults"
+              :key="`${term.category}-${term.name}`"
+              class="flex items-center justify-between gap-1.5 rounded-md px-1.5 py-1 text-[11px] hover:bg-ink/5"
+            >
+              <div class="min-w-0">
+                <div class="break-all text-ink">{{ term.name }}</div>
+                <div class="text-[10px] text-ink-faint">
+                  {{ term.category }} · {{ term.currently_listed ? '판매중' : '판매종료' }}
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn flex-shrink-0 px-2 py-0.5 text-[11px]"
+                :disabled="!!samsunglifeDownloadingName"
+                @click="downloadSamsunglifeTerm(term)"
+              >{{ samsunglifeDownloadingName === term.name ? '다운로드 중...' : '다운로드' }}</button>
+            </li>
+          </ul>
+          <p
+            v-else-if="samsunglifeSearched && !samsunglifeSearching && !samsunglifeSearchError"
+            class="mt-1 text-[11px] text-ink-faint"
+          >검색 결과가 없습니다</p>
+          <p v-if="samsunglifeDownloadingName" class="mt-1 text-[11px] text-ink-muted">
+            "{{ samsunglifeDownloadingName }}" 다운로드 중...
+          </p>
+          <p v-if="samsunglifeDownloadError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ samsunglifeDownloadError }}</p>
+        </div>
       </div>
 
       <!-- Column 2: document list, searchable -->
@@ -485,7 +612,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="btn px-2 py-0.5 text-[11px]"
-                  :disabled="isSummarizing"
+                  :disabled="isSummarizing || !currentFile?.has_md"
                   @click="createSummary"
                 >{{ currentFile?.summary ? '재생성' : '요약 생성' }}</button>
               </div>
@@ -506,12 +633,23 @@ onMounted(async () => {
                   :title="stage.key === 'graph' && currentFile?.has_graph ? `그래프DB: ${currentFile.graphdb_name}` : ''"
                 >{{ stage.label }}</span>
                 <button
+                  v-if="!currentFile?.has_md"
                   type="button"
                   class="btn px-2 py-0.5 text-[11px]"
-                  :disabled="isChunking"
+                  :disabled="isGeneratingMd"
+                  @click="generateMd"
+                >{{ isGeneratingMd ? 'MD 생성 중...' : 'MD 생성' }}</button>
+                <button
+                  type="button"
+                  class="btn px-2 py-0.5 text-[11px]"
+                  :disabled="isChunking || !currentFile?.has_md"
                   @click="createChunks"
                 >{{ currentFile?.has_chunks ? '청크 재생성' : '청크 생성' }}</button>
               </div>
+              <p v-if="isGeneratingMd" class="mt-1 text-[11px] text-ink-muted">
+                PDF 표 인식 변환 중... 문서 분량에 따라 1분 이상 걸릴 수 있습니다.
+              </p>
+              <p v-if="generateMdError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ generateMdError }}</p>
               <p v-if="isChunking" class="mt-1 text-[11px] text-ink-muted">청크 생성 중...</p>
               <p v-if="chunkError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ chunkError }}</p>
             </div>
