@@ -46,6 +46,17 @@ const LABEL_AUTO_HIDE_EDGE_THRESHOLD = 150
 const showNodeLabels = ref(true)
 const showEdgeLabels = ref(true)
 
+// Past this many *nodes* (not edges -- isLargeGraph below also fires on edge
+// count alone, which doesn't blow up simulation cost the same way), even the
+// bulk-ticked isLargeGraph path stalls the main thread for a noticeable
+// moment: forceManyBody/forceCollide's per-tick cost scales with node count,
+// and LARGE_GRAPH_ALPHA_DECAY still needs ~130 ticks of it run synchronously
+// before anything is on screen. Past this threshold, skip d3-force entirely
+// (see the [visibleNodes, visibleEdges] watcher further down) and use
+// computeStaticClusteredLayout instead -- O(n log n) once, no ticking, so
+// cost stops scaling with graph size at all.
+const FORCE_SIMULATION_NODE_THRESHOLD = 150
+
 const EDGE_TYPE_COLORS = ['#8a6d3b', '#2f9e8f', '#a05195', '#d45087', '#665191', '#2c7fb8']
 
 const displayMode = computed(() => {
@@ -97,6 +108,8 @@ const visibleEdges = computed(() => {
 const isLargeGraph = computed(
   () => visibleNodes.value.length > LABEL_AUTO_HIDE_NODE_THRESHOLD || visibleEdges.value.length > LABEL_AUTO_HIDE_EDGE_THRESHOLD
 )
+
+const disableForceSimulation = computed(() => visibleNodes.value.length > FORCE_SIMULATION_NODE_THRESHOLD)
 
 // Memoized once per displayNodes/displayEdges change instead of being
 // recomputed from scratch on every colorFor/edgeColorFor call -- v-network-
@@ -298,9 +311,78 @@ function forceCluster(strength) {
   return force
 }
 
+// Non-iterative substitute for the d3-force layout below, used once a graph
+// crosses FORCE_SIMULATION_NODE_THRESHOLD and physics-based placement is no
+// longer affordable. Reproduces the one piece of that layout's effect that's
+// cheap to get without simulation -- same-type nodes grouped together, like
+// forceCluster above pulled them -- by giving each type its own grid cell and
+// arranging those cells in a grid. It does *not* reproduce the link force's
+// pull between connected nodes regardless of type; edges are still drawn
+// (see vngEdges/configs), so a relationship between two different-typed nodes
+// is still visible as a line, just not by the nodes sitting near each other.
+// Within a cell, nodes are ordered by descending edge count (both
+// directions) so a type's most-connected "hub" nodes land in the visually
+// central cells of their own block first.
+function computeStaticClusteredLayout(nodeList, edgeList) {
+  const degree = new Map()
+  for (const e of edgeList) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
+  }
+
+  const groups = new Map()
+  for (const n of nodeList) {
+    if (!groups.has(n.type)) groups.set(n.type, [])
+    groups.get(n.type).push(n)
+  }
+  for (const groupNodes of groups.values()) {
+    groupNodes.sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
+  }
+
+  const types = [...groups.keys()].sort()
+  const cellCols = Math.max(1, Math.ceil(Math.sqrt(types.length)))
+  const nodeSpacing = 44
+  // One uniform cell size (based on the largest type group) rather than a
+  // size per type -- keeps every cell the same footprint so adjacent cells
+  // never overlap regardless of which types end up next to each other.
+  const maxGroupSize = Math.max(1, ...[...groups.values()].map((g) => g.length))
+  const innerCols = Math.max(1, Math.ceil(Math.sqrt(maxGroupSize)))
+  const cellSpacing = innerCols * nodeSpacing + 80
+
+  const positions = {}
+  types.forEach((type, typeIndex) => {
+    const groupNodes = groups.get(type)
+    const cellCenterX = CENTER + (typeIndex % cellCols) * cellSpacing
+    const cellCenterY = CENTER + Math.floor(typeIndex / cellCols) * cellSpacing
+    const groupInnerCols = Math.max(1, Math.ceil(Math.sqrt(groupNodes.length)))
+    const groupRows = Math.ceil(groupNodes.length / groupInnerCols)
+
+    groupNodes.forEach((node, i) => {
+      const col = i % groupInnerCols
+      const row = Math.floor(i / groupInnerCols)
+      positions[node.id] = {
+        x: cellCenterX + (col - (groupInnerCols - 1) / 2) * nodeSpacing,
+        y: cellCenterY + (row - (groupRows - 1) / 2) * nodeSpacing,
+      }
+    })
+  })
+  return positions
+}
+
 watch(
   [visibleNodes, visibleEdges],
   ([nodeList, edgeList]) => {
+    simulation?.stop()
+    simulation = null
+    suppressNextSimulationEnd = false
+
+    if (disableForceSimulation.value) {
+      simNodesById = new Map()
+      layouts.value = { nodes: computeStaticClusteredLayout(nodeList, edgeList) }
+      fitSoon()
+      return
+    }
+
     const simNodes = nodeList.map((node) => {
       const existing = layouts.value.nodes[node.id]
       return existing
@@ -310,8 +392,6 @@ watch(
     const simLinks = edgeList.map((e) => ({ source: e.source, target: e.target }))
     simNodesById = new Map(simNodes.map((n) => [n.id, n]))
 
-    simulation?.stop()
-    suppressNextSimulationEnd = false
     simulation = forceSimulation(simNodes)
       .force('link', forceLink(simLinks).id((d) => d.id).distance(LINK_DISTANCE).strength(LINK_STRENGTH))
       .force('cluster', forceCluster(CLUSTER_STRENGTH))
@@ -371,9 +451,16 @@ watch(
 // fx/fy on a node overrides the simulation for that axis) and reheats the
 // simulation so the 'link'/'cluster'/'charge' forces above keep recomputing
 // every other node's position in real time -- this is what makes edge-linked
-// neighbors follow the dragged node instead of staying put.
+// neighbors follow the dragged node instead of staying put. With no live
+// simulation (disableForceSimulation's static layout, see
+// computeStaticClusteredLayout), there's no physics to reheat -- dragging
+// just repositions the node directly via onNodeDragMove, with no neighbor
+// follow, since nothing is pulling on those neighbors either way.
 function onNodeDragStart(positions) {
-  if (!simulation) return
+  if (!simulation) {
+    onNodeDragMove(positions)
+    return
+  }
   for (const [id, pos] of Object.entries(positions)) {
     const n = simNodesById.get(id)
     if (!n) continue
@@ -384,7 +471,14 @@ function onNodeDragStart(positions) {
 }
 
 function onNodeDragMove(positions) {
-  if (!simulation) return
+  if (!simulation) {
+    const updated = { ...layouts.value.nodes }
+    for (const [id, pos] of Object.entries(positions)) {
+      updated[id] = { x: pos.x, y: pos.y }
+    }
+    layouts.value = { nodes: updated }
+    return
+  }
   for (const [id, pos] of Object.entries(positions)) {
     const n = simNodesById.get(id)
     if (!n) continue
@@ -927,6 +1021,9 @@ watch(
             Edge Label
           </label>
         </div>
+        <p v-if="disableForceSimulation" class="flex-shrink-0 text-xs text-ink-faint">
+          노드가 {{ FORCE_SIMULATION_NODE_THRESHOLD }}개를 초과하여 force layout을 끄고 타입별 그리드 배치를 사용합니다
+        </p>
         <p v-if="exportError" class="flex-shrink-0 text-xs text-red-600 dark:text-red-400">{{ exportError }}</p>
         <p v-if="error" class="flex-shrink-0 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
         <p v-if="displayMode === 'none' && !error" class="flex-shrink-0 text-xs text-ink-faint">
