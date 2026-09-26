@@ -63,15 +63,16 @@
 
 ## 사전 준비물
 
-- [Podman](https://podman.io/) + `podman machine` (컨테이너 실행). **기본 메모리(2GB)로는 부족할 수 있으니 최소 4GB, 가급적 6GB 이상 할당하세요** (`podman machine set --memory 6144`, 머신을 먼저 정지한 뒤 실행). 스키마의 노드/엣지 타입 수가 많은 문서일수록 그래프DB에 쓰는 데 필요한 메모리가 늘어나는데, 메모리가 부족하면 쓰기 도중 강제 종료되면서 그래프DB 전체가 응답 불가 상태에 빠질 수 있습니다 — 자세한 내용은 [`CLAUDE.md`](CLAUDE.md) 참고
+- [Podman](https://podman.io/) + `podman machine` (컨테이너 실행). **기본 메모리(2GB)로는 부족할 수 있으니 최소 4GB, 가급적 8GB 이상 할당하세요** (`podman machine set --memory 8192`, 머신을 먼저 정지한 뒤 실행). 스키마의 노드/엣지 타입 수가 많은 문서일수록 그래프DB에 쓰는 데 필요한 메모리가 늘어나는데, 메모리가 부족하면 쓰기 도중 강제 종료되면서 그래프DB 전체가 응답 불가 상태에 빠질 수 있습니다. 별개로, **30MB 이상의 대용량 PDF**(수백~1000페이지대 문서)를 "MD 생성"으로 변환할 때도 메모리를 많이 씁니다 — 실측 기준 30MB/1,484페이지 문서 변환 중 podman VM이 몇 분간 응답 불가 상태에 빠졌다가(권장 메모리 미만이었을 때) 스스로 복구된 사례가 있습니다. 이런 대용량 문서를 자주 다룬다면 6GB보다 8GB 이상을 권장합니다. 자세한 내용은 [`CLAUDE.md`](CLAUDE.md) 참고
 - [podman-compose](https://github.com/containers/podman-compose)
 - [OpenRouter](https://openrouter.ai/) API 키
 
 ## 설치 및 실행
 
 ```bash
-# 1. podman machine이 없다면 생성 및 시작 (메모리는 최소 4GB, 권장 6GB)
-podman machine init --memory 6144
+# 1. podman machine이 없다면 생성 및 시작 (메모리는 최소 4GB, 30MB 이상의
+# 대용량 PDF를 다룰 계획이라면 8GB 권장)
+podman machine init --memory 8192
 podman machine start
 
 # 2. 백엔드 환경변수 설정

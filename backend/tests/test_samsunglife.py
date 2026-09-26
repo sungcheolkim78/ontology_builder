@@ -1,4 +1,5 @@
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from app.main import app
 from app.ontology import load_document_manifest
 from app.preprocess.parser import DATA_DIR
 from app.preprocess.samsunglife_utils import DEFAULT_CATEGORIES, SamsungLifeTerm
-from app.utils.paths import document_dir_for
+from app.utils.paths import data_dir, document_dir_for
 
 
 @pytest.fixture(autouse=True)
@@ -204,32 +205,80 @@ def _download_pdf_only(client, name="테스트보험"):
     return response.json()
 
 
+def _poll_generate_md(client, filename, timeout=15.0):
+    """generate-md now runs the real converter in a subprocess (see
+    app.preprocess.md_generation), so tests poll the GET status route
+    instead of reading a synchronous response body. The timeout is generous
+    since spawning a fresh worker process (re-importing this whole app) is
+    slower than an in-process call."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        status = client.get(f"/api/documents/{filename}/generate-md").json()
+        if status["status"] != "running":
+            return status
+        time.sleep(0.05)
+    raise AssertionError(f"generate-md for {filename} did not finish within {timeout}s")
+
+
+# Module-level (and therefore picklable) fakes for convert_pdf_to_markdown_file.
+# generate-md submits it to a ProcessPoolExecutor, so a replacement must be
+# picklable by reference -- a closure defined inside a test function is not,
+# and even if it were, a child process's mutations to a parent-process local
+# (e.g. a captured `calls` list) never propagate back. Verification instead
+# rides through the returned result dict (which really does cross the
+# process boundary, via the Future) or through real disk I/O under
+# data_dir() (shared with the parent test process).
+
+
+def _fake_convert_writes_raw_md(filename, data):
+    stem = "테스트보험_약관_raw"
+    d = document_dir_for(stem)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "raw.md").write_text("# 변환됨")
+    return {
+        "filename": f"{stem}.md",
+        "path": f"data/documents/{stem}/raw.md",
+        "received_filename": filename,
+        "received_size": len(data),
+    }
+
+
+def _fake_convert_raises_value_error(filename, data):
+    raise ValueError("not a valid pdf")
+
+
+def _fake_convert_counts_calls_slowly(filename, data):
+    marker = data_dir() / "convert_calls.txt"
+    with marker.open("a") as f:
+        f.write(filename + "\n")
+    time.sleep(1.0)
+    return {"filename": "x.md", "path": "data/documents/x/raw.md"}
+
+
 def test_generate_md_converts_saved_pdf(monkeypatch):
     monkeypatch.setattr("app.main.download_term_by_name", _fake_download_term_by_name)
     client = TestClient(app)
     body = _download_pdf_only(client)
     stem = "테스트보험_약관_raw"
 
-    captured = {}
+    monkeypatch.setattr(
+        "app.preprocess.md_generation.convert_pdf_to_markdown_file",
+        _fake_convert_writes_raw_md,
+    )
 
-    def fake_convert(filename, data):
-        captured["filename"] = filename
-        captured["data"] = data
-        d = document_dir_for(stem)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "raw.md").write_text("# 변환됨")
-        return {"filename": f"{stem}.md", "path": f"data/documents/{stem}/raw.md"}
+    start_response = client.post(f"/api/documents/{body['filename']}/generate-md")
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "running"
 
-    monkeypatch.setattr("app.main.convert_pdf_to_markdown_file", fake_convert)
+    status = _poll_generate_md(client, body["filename"])
 
-    response = client.post(f"/api/documents/{body['filename']}/generate-md")
-
-    assert response.status_code == 200
-    assert response.json() == {"filename": f"{stem}.md", "path": f"data/documents/{stem}/raw.md"}
+    assert status["status"] == "done"
+    assert status["result"]["filename"] == f"{stem}.md"
+    assert status["result"]["path"] == f"data/documents/{stem}/raw.md"
     # The original_filename recorded at download time (not some re-derived
     # name) is what generate-md must hand to the converter.
-    assert captured["filename"] == "테스트보험_약관.pdf"
-    assert captured["data"] == b"%PDF-1.4 fake pdf bytes"
+    assert status["result"]["received_filename"] == "테스트보험_약관.pdf"
+    assert status["result"]["received_size"] == len(b"%PDF-1.4 fake pdf bytes")
     assert (document_dir_for(stem) / "raw.md").read_text() == "# 변환됨"
 
 
@@ -255,16 +304,49 @@ def test_generate_md_returns_400_when_markdown_already_generated(monkeypatch):
     assert response.status_code == 400
 
 
-def test_generate_md_returns_400_when_conversion_fails(monkeypatch):
+def test_generate_md_reports_error_status_when_conversion_fails(monkeypatch):
     monkeypatch.setattr("app.main.download_term_by_name", _fake_download_term_by_name)
     client = TestClient(app)
     body = _download_pdf_only(client)
 
-    def raise_error(filename, data):
-        raise ValueError("not a valid pdf")
+    monkeypatch.setattr(
+        "app.preprocess.md_generation.convert_pdf_to_markdown_file",
+        _fake_convert_raises_value_error,
+    )
 
-    monkeypatch.setattr("app.main.convert_pdf_to_markdown_file", raise_error)
+    start_response = client.post(f"/api/documents/{body['filename']}/generate-md")
+    assert start_response.status_code == 200
 
-    response = client.post(f"/api/documents/{body['filename']}/generate-md")
+    status = _poll_generate_md(client, body["filename"])
 
-    assert response.status_code == 400
+    assert status["status"] == "error"
+    assert "not a valid pdf" in status["detail"]
+
+
+def test_generate_md_get_status_is_idle_when_never_started():
+    client = TestClient(app)
+
+    response = client.get("/api/documents/does_not_exist_raw.md/generate-md")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "idle", "detail": None, "result": None}
+
+
+def test_generate_md_second_post_does_not_start_a_duplicate_conversion(monkeypatch):
+    monkeypatch.setattr("app.main.download_term_by_name", _fake_download_term_by_name)
+    monkeypatch.setattr(
+        "app.preprocess.md_generation.convert_pdf_to_markdown_file",
+        _fake_convert_counts_calls_slowly,
+    )
+    client = TestClient(app)
+    body = _download_pdf_only(client)
+
+    first = client.post(f"/api/documents/{body['filename']}/generate-md")
+    second = client.post(f"/api/documents/{body['filename']}/generate-md")
+    assert first.json()["status"] == "running"
+    assert second.json()["status"] == "running"
+
+    _poll_generate_md(client, body["filename"])
+
+    marker = data_dir() / "convert_calls.txt"
+    assert marker.read_text().splitlines() == ["테스트보험_약관.pdf"]

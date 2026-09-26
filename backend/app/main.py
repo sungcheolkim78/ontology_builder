@@ -83,6 +83,7 @@ from app.preprocess.goldenset import (
     record_goldenset_answer,
     save_goldenset,
 )
+from app.preprocess.md_generation import get_generate_md_status, start_generate_md
 from app.preprocess.parser import (
     convert_pdf_to_markdown_file,
     parse_to_markdown_file,
@@ -350,10 +351,16 @@ def download_samsunglife_term(request: SamsungLifeDownloadRequest):
 
 @app.post("/api/documents/{filename}/generate-md")
 def generate_md(filename: str):
-    """Run the deferred Markdown conversion for a document whose PDF was
-    saved without one -- see the download route above. A no-op-turned-error
-    if raw.md already exists (nothing to (re)generate; re-upload via
-    /api/parse for that) or if there's no source.pdf to convert at all."""
+    """Start the deferred Markdown conversion for a document whose PDF was
+    saved without one -- see the download route above. Runs in a background
+    thread (app.preprocess.md_generation) rather than inline: a large policy
+    PDF's table-aware conversion can take several minutes and is CPU-bound
+    enough to make the whole process unresponsive meanwhile, so the request
+    itself must not sit open for that long (see that module's docstring for
+    the failure mode this replaces). Returns immediately; poll this same
+    path with GET for status. A no-op-turned-error if raw.md already exists
+    (nothing to (re)generate; re-upload via /api/parse for that) or if
+    there's no source.pdf to convert at all."""
     stem = stem_for(filename)
     if document_path_for(filename).is_file():
         raise HTTPException(status_code=400, detail="markdown already generated")
@@ -361,22 +368,28 @@ def generate_md(filename: str):
     if not pdf_path.is_file():
         raise HTTPException(status_code=404, detail="pdf not found")
 
+    status = get_generate_md_status(stem)
+    if status["status"] == "running":
+        return status
+
     try:
         manifest = load_document_manifest(stem) or {}
         original_filename = manifest.get("original_filename", f"{stem}.pdf")
         data = pdf_path.read_bytes()
-        result = convert_pdf_to_markdown_file(original_filename, data)
-    except (anydoc.ConvertError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Anything unexpected here (a corrupt manifest.json, a filesystem
-        # error reading source.pdf, pdfplumber choking on a malformed PDF)
-        # would otherwise reach FastAPI's default handler, which returns a
-        # bare 500 with no body -- surfacing it as a 400 with the actual
-        # message is what lets the frontend's error text (and this route's
-        # own logs) say what actually went wrong instead of just "HTTP 500".
-        raise HTTPException(status_code=400, detail=f"MD 생성 실패: {e}")
-    return result
+        raise HTTPException(status_code=400, detail=f"MD 생성 시작 실패: {e}")
+    start_generate_md(stem, original_filename, data)
+    return get_generate_md_status(stem)
+
+
+@app.get("/api/documents/{filename}/generate-md")
+def get_generate_md(filename: str):
+    """Poll the status of a conversion started via the POST above --
+    `{"status": "idle" | "running" | "done" | "error", "detail", "result"}`.
+    `idle` also covers "this process never saw a task for this document",
+    e.g. right after a backend restart interrupted one; the frontend
+    surfaces that as "generation was interrupted" rather than a hang."""
+    return get_generate_md_status(stem_for(filename))
 
 
 @app.get("/api/files")

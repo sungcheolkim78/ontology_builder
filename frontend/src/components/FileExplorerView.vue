@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
 
 const props = defineProps({
@@ -22,6 +22,9 @@ const isChunking = ref(false)
 const chunkError = ref('')
 const isGeneratingMd = ref(false)
 const generateMdError = ref('')
+const generateMdElapsed = ref(0)
+let generateMdPollTimer = null
+let generateMdElapsedTimer = null
 const isSummarizing = ref(false)
 const summaryError = ref('')
 const isEditingManifest = ref(false)
@@ -82,24 +85,93 @@ function fileStageBadges(f) {
 
 const pipelineStages = computed(() => (currentFile.value ? fileStageBadges(currentFile.value) : []))
 
-async function generateMd() {
-  if (!props.file?.filename) return
+function stopGenerateMdTimers() {
+  if (generateMdPollTimer) {
+    clearInterval(generateMdPollTimer)
+    generateMdPollTimer = null
+  }
+  if (generateMdElapsedTimer) {
+    clearInterval(generateMdElapsedTimer)
+    generateMdElapsedTimer = null
+  }
+}
+
+// A large policy PDF's table-aware conversion can take several minutes and
+// pegs the backend process (see the "MD 생성" hang investigation) -- running
+// it as a request the browser holds open for that long is exactly what made
+// it look frozen and vulnerable to a dropped connection. The backend now
+// runs it in a background thread and returns immediately; this polls for
+// completion instead, so a single missed poll is just a retry.
+async function pollGenerateMdStatus(filename) {
+  let status
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(filename)}/generate-md`)
+    if (!res.ok) return // transient poll failure -- try again next tick
+    status = await res.json()
+  } catch (err) {
+    return
+  }
+  if (status.status === 'running') return
+  stopGenerateMdTimers()
+  isGeneratingMd.value = false
+  if (status.status === 'error') {
+    generateMdError.value = status.detail || 'MD 생성 실패'
+  } else if (status.status === 'idle') {
+    // Only reachable if the backend process restarted mid-conversion and
+    // lost the in-memory task (see app.preprocess.md_generation) -- a plain
+    // "try again" is accurate, not a bug to chase further.
+    generateMdError.value = 'MD 생성이 중단되었습니다 (백엔드가 재시작된 것으로 보입니다). 다시 시도해주세요.'
+  } else {
+    await loadDocuments()
+  }
+}
+
+function startGenerateMdPolling(filename) {
+  stopGenerateMdTimers()
   isGeneratingMd.value = true
+  generateMdElapsed.value = 0
+  generateMdElapsedTimer = setInterval(() => {
+    generateMdElapsed.value += 1
+  }, 1000)
+  generateMdPollTimer = setInterval(() => pollGenerateMdStatus(filename), 3000)
+  pollGenerateMdStatus(filename)
+}
+
+async function generateMd() {
+  const filename = props.file?.filename
+  if (!filename) return
   generateMdError.value = ''
   try {
-    const res = await apiFetch(
-      `/api/documents/${encodeURIComponent(props.file.filename)}/generate-md`,
-      { method: 'POST' }
-    )
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(filename)}/generate-md`, {
+      method: 'POST',
+    })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `HTTP ${res.status}`)
     }
-    await loadDocuments()
+    // Re-check the current selection hasn't moved on to a different
+    // document while the POST above was in flight, so polling never tracks
+    // the wrong file's status.
+    if (props.file?.filename === filename) startGenerateMdPolling(filename)
   } catch (err) {
-    generateMdError.value = 'MD 생성 실패: ' + err.message
-  } finally {
-    isGeneratingMd.value = false
+    if (props.file?.filename === filename) generateMdError.value = 'MD 생성 실패: ' + err.message
+  }
+}
+
+// Resume watching an in-progress conversion after switching away and back
+// to the same document (the background task survives navigation even
+// though this component's own polling timers don't).
+async function resumeGenerateMdIfRunning(filename) {
+  stopGenerateMdTimers()
+  isGeneratingMd.value = false
+  if (!filename) return
+  try {
+    const res = await apiFetch(`/api/documents/${encodeURIComponent(filename)}/generate-md`)
+    if (!res.ok) return
+    const status = await res.json()
+    if (status.status === 'running') startGenerateMdPolling(filename)
+  } catch (err) {
+    // best-effort -- if this fails, the user can still click "MD 생성" again
   }
 }
 
@@ -403,6 +475,7 @@ watch(() => props.file?.filename, () => {
   generateMdError.value = ''
 })
 watch(() => props.file?.filename, loadSchemaVersions)
+watch(() => props.file?.filename, resumeGenerateMdIfRunning, { immediate: true })
 watch(() => props.schemaVersion, loadSchemaVersions)
 watch(() => props.schemaVersion, () => {
   loadSchemas()
@@ -413,6 +486,10 @@ onMounted(async () => {
   await loadDocuments()
   await loadSchemas()
   await loadSchemaVersions()
+})
+
+onBeforeUnmount(() => {
+  stopGenerateMdTimers()
 })
 </script>
 
@@ -647,7 +724,8 @@ onMounted(async () => {
                 >{{ currentFile?.has_chunks ? '청크 재생성' : '청크 생성' }}</button>
               </div>
               <p v-if="isGeneratingMd" class="mt-1 text-[11px] text-ink-muted">
-                PDF 표 인식 변환 중... 문서 분량에 따라 1분 이상 걸릴 수 있습니다.
+                PDF 표 인식 변환 중... ({{ generateMdElapsed }}초 경과) 분량이 많은 문서는
+                수 분 정도 걸릴 수 있습니다. 다른 화면으로 이동해도 백그라운드에서 계속 진행됩니다.
               </p>
               <p v-if="generateMdError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ generateMdError }}</p>
               <p v-if="isChunking" class="mt-1 text-[11px] text-ink-muted">청크 생성 중...</p>

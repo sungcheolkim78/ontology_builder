@@ -19,6 +19,7 @@ DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 # reject a requested max_tokens above this per-model cap.
 MODEL_CATALOG = [
     {"id": "google/gemini-3.7-flash", "max_tokens": 65_536},
+    {"id": "google/gemini-3.8-flash", "max_tokens": 65_536},
     {"id": "openai/gpt-5.5", "max_tokens": 128_000},
     {"id": "openai/gpt-5.4-mini", "max_tokens": 128_000},
     {"id": "anthropic/claude-opus-5", "max_tokens": 128_000},
