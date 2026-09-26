@@ -64,6 +64,7 @@ from app.ontology import (
     use_domain_schema,
     validate_ontology,
 )
+from app.utils.event_log import BOOT_ID, get_events, log_event
 from app.utils.paths import (
     chunk_path_for,
     document_dir_for,
@@ -136,6 +137,29 @@ async def require_auth(request, call_next):
     return await call_next(request)
 
 
+# Excluded so the Settings view's own polling of GET /api/events doesn't log
+# an event about itself every time it polls -- that would mean the log never
+# actually goes idle, defeating the frontend's backoff (see BackendLogPanel.vue).
+_EVENT_LOG_EXCLUDED_PATHS = {"/api/events", "/health"}
+
+
+@app.middleware("http")
+async def log_events_middleware(request, call_next):
+    path = request.url.path
+    if path in _EVENT_LOG_EXCLUDED_PATHS:
+        return await call_next(request)
+
+    log_event("command", f"{request.method} {path}")
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        log_event("error", f"{request.method} {path} -> {exc}")
+        raise
+    kind = "error" if response.status_code >= 400 else "result"
+    log_event(kind, f"{request.method} {path} -> HTTP {response.status_code}")
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -144,6 +168,16 @@ def health():
 @app.get("/api/hello")
 def hello():
     return {"message": "Hello from FastAPI"}
+
+
+@app.get("/api/events")
+def get_events_route(since: int = 0):
+    """Polled by the Settings view's backend activity log -- returns events
+    with id > since (0 returns the whole buffer, capped at
+    app.utils.event_log.MAX_EVENTS) so the frontend only ever fetches what
+    it hasn't already rendered. boot_id lets the frontend detect a backend
+    restart and reset its own since cursor instead of silently going quiet."""
+    return {"events": get_events(since), "boot_id": BOOT_ID}
 
 
 @app.get("/api/config")
