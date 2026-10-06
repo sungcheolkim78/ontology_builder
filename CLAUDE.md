@@ -175,16 +175,29 @@ Two more single-concern packages exist the same way: `app/graph/` holds
 and `app/llm/` holds `chat.py`, `prompts.py`, and `telemetry.py` (everything
 about talking to an LLM that isn't itself a pipeline stage). `ontology.py`
 is likewise a package, `app/ontology/`, split by concern into
-`persistence.py`, `generate_schema.py`, `extract_graph.py`,
+`persistence.py`, `chunk_groups.py`, `generate_schema.py`, `extract_graph.py`,
 `evolve_graph.py`, `utils.py`, `legal_guards.py`, and `domain_schema.py` --
 `generate_schema.py`/`extract_graph.py`/`evolve_graph.py` used to be one
 `extraction.py` module, split by pipeline stage once it grew large enough
 that the three concerns (propose a schema, extract instances against it,
 validate/evolve what was extracted) were easier to navigate as separate
 files; `utils.py` holds what's shared across two or more of them
-(`parse_json_response`, the chunk-grouping/document-loading helpers,
-`MAX_DOCUMENT_CHARS`/`MAX_CHUNK_GROUP_CHARS`) so each of the three stays
-scoped to its own stage
+(`parse_json_response`, the document-loading helpers, `MAX_DOCUMENT_CHARS`)
+so each of the three stays scoped to its own stage. `chunk_groups.py` is
+the one module behind which all three run their per-chunk-group map step:
+`run_chunk_groups(chunk_items, stage=, group_fn=, reduce_fn=, stem=,
+fingerprint_inputs=, reduce_stage=, summarize=)` owns grouping by
+`MAX_CHUNK_GROUP_CHARS`, concurrent execution (`map_concurrently`, capped by
+`MAX_CONCURRENT_LLM_CALLS`), the one-group shortcut that skips `reduce_fn`,
+the progress file the frontend polls (`ChunkProgress`/`load_progress`), and
+a *resume cache* at `documents/{stem}/resume_cache/{stage}_{N}.json` -- one
+group result per file, reused on a retry only when a fingerprint of the
+stage, the caller's `fingerprint_inputs` (schema, `document_type`,
+discovery hint, prompt text) and the group's own text still matches, so
+switching schema version or re-chunking can't silently reuse a previous
+run's output. Each stage supplies only its own `group_fn`/`reduce_fn`; see
+`CONTEXT.md` for the vocabulary (chunk group, group result, resume cache,
+reduce)
 (see that package's own `__init__.py` docstring for the full split and why
 `get_chat_model`/`get_embedding_model` are re-exported from there rather
 than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
@@ -534,3 +547,17 @@ toggle, `utils/chunkFormat.js`) has Vitest coverage — see "Frontend"
 above. Full-stack behavior (a change actually working end-to-end against
 the real backend) is still verified manually against the running
 podman-compose stack, not via an end-to-end test suite.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`sungcheolkim78/ontology_builder`, via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

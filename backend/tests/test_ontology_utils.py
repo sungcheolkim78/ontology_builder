@@ -4,7 +4,8 @@ import threading
 
 import pytest
 
-from app.ontology.utils import ChunkProgress, load_progress, parse_json_response, start_progress
+from app.ontology.chunk_groups import ChunkProgress, load_progress, start_progress
+from app.ontology.utils import parse_json_response
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 

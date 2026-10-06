@@ -8,26 +8,21 @@ evolve_graph.py for validating/evolving what this stage produces."""
 import json
 import logging
 import re
-import shutil
-from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app import ontology
 from app.llm.prompts import EXTRACT_PROMPT
 from app.llm.telemetry import invoke_with_telemetry
-from app.utils.paths import document_dir_for
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema
 from .schema_validation import normalize_schema
+from .chunk_groups import run_chunk_groups, start_progress
 from .utils import (
     _dedupe_by_key,
-    _group_document_text,
     _load_chunk_items,
     _require_document_text,
-    group_chunks_by_budget,
     parse_json_response,
-    start_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,134 +214,40 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
     return {"nodes": merged_nodes, "edges": merged_edges}
 
 
-def _extraction_progress_dir(stem: str) -> Path:
-    return document_dir_for(stem) / "extraction_progress"
-
-
-def _clear_extraction_progress(stem: str, keep_through: int = 0) -> None:
-    """Removes extraction_progress/ files for groups beyond `keep_through`
-    only -- leftovers from an earlier, larger-group-count run -- rather
-    than wiping the whole directory (the default `keep_through=0` still
-    means "clear everything," for extract_for_document's whole-document
-    branch, which has no groups to resume). Files at or below that index
-    are left alone so a retried extract_graph_from_chunks call can resume
-    from them via _load_extraction_progress instead of re-running every
-    group's LLM call -- the same reasoning as .utils.ChunkProgress's sibling
-    (app.ontology.generate_schema's _clear_stale_group_candidates)."""
-    progress_dir = _extraction_progress_dir(stem)
-    if not progress_dir.is_dir():
-        return
-    for path in progress_dir.glob("*_proc_*.json"):
-        try:
-            index = int(path.stem.rsplit("_", 1)[-1])
-        except ValueError:
-            continue
-        if index > keep_through:
-            path.unlink()
-
-
-def _write_extraction_progress(stem: str, group_number: int, graph: dict) -> None:
-    progress_dir = _extraction_progress_dir(stem)
-    progress_dir.mkdir(parents=True, exist_ok=True)
-    (progress_dir / f"node_proc_{group_number}.json").write_text(
-        json.dumps(graph["nodes"], ensure_ascii=False)
-    )
-    (progress_dir / f"edge_proc_{group_number}.json").write_text(
-        json.dumps(graph["edges"], ensure_ascii=False)
-    )
-
-
-def _load_extraction_progress(stem: str | None, group_number: int) -> dict | None:
-    """Returns a group's already-persisted {"nodes", "edges"} if a prior
-    attempt already wrote both files for it (see _write_extraction_progress)
-    -- None if either is missing, meaning this group still needs its LLM
-    call. Lets a retried extract_graph_from_chunks resume from wherever an
-    earlier attempt left off (e.g. after one group's call failed) instead of
-    re-running every group from scratch."""
-    if stem is None:
-        return None
-    progress_dir = _extraction_progress_dir(stem)
-    node_path = progress_dir / f"node_proc_{group_number}.json"
-    edge_path = progress_dir / f"edge_proc_{group_number}.json"
-    if not node_path.is_file() or not edge_path.is_file():
-        return None
-    return {"nodes": json.loads(node_path.read_text()), "edges": json.loads(edge_path.read_text())}
-
-
 def extract_graph_from_chunks(
     chunk_items: list[dict], schema: dict, max_group_chars: int | None = None, stem: str | None = None
 ) -> dict:
     """Runs extract_graph() once per token-budget-sized group of consecutive
-    chunks (see group_chunks_by_budget), then merges every group's nodes/
-    edges into one graph via _merge_group_graphs. Unlike
-    discover_ontology_from_chunks/generate_schema_from_chunks
-    (generate_schema.py), this never sends extracted instances back through
-    an LLM to merge -- a document's node/edge count scales with its length,
-    unlike a schema's small, fixed-size type list, so an LLM consolidation
-    pass here wouldn't fit the same budget it does for types; exact (type,
-    label) matching is used instead. A document small enough to fit in one
-    group skips namespacing/merging entirely and returns that single
-    group's graph untouched, so the common case still costs exactly one
-    LLM call.
+    chunks, then merges every group's nodes/edges into one graph via
+    _merge_group_graphs. Unlike discover_ontology_from_chunks/
+    generate_schema_from_chunks (generate_schema.py), this never sends
+    extracted instances back through an LLM to merge -- a document's
+    node/edge count scales with its length, unlike a schema's small,
+    fixed-size type list, so an LLM consolidation pass here wouldn't fit the
+    same budget it does for types; exact (type, label) matching is used
+    instead. A document small enough to fit in one group skips
+    namespacing/merging entirely and returns that single group's graph
+    untouched, so the common case still costs exactly one LLM call.
 
-    A large legal/insurance document can take 1000s of seconds across many
-    groups, all inside one synchronous HTTP request with no other visibility
-    into how far it's gotten. When `stem` is given (the normal case --
-    main.py's extract endpoint always has it), this logs which group out of
-    the total is being processed, and -- since each group's own LLM call is
-    the slow part, not the merge -- writes that group's own raw nodes/edges
-    to documents/{stem}/extraction_progress/{node,edge}_proc_{N}.json as
-    soon as it completes, so a person can inspect progress mid-run instead
-    of only after the whole extraction (and its own DB write) finishes.
-    Cleared at the start of each run so a shorter rerun doesn't leave stale
-    higher-numbered files implying more progress than actually happened.
-
-    Separately, `stem` also drives a lightweight summary written via
-    .utils.start_progress to documents/{stem}/progress/extract.json --
-    group count plus a running node/edge total -- for main.py's GET
-    /progress route to poll, same mechanism as
-    discover_ontology_from_chunks/generate_schema_from_chunks
-    (generate_schema.py). That file is the summary a browser polls; the
-    extraction_progress/ dump above stays the detailed, un-merged per-group
-    data for manual inspection -- and, doubling as a resume cache: if a
-    prior attempt already wrote a group's node_proc/edge_proc files (e.g. it
-    failed partway through, after some groups had already succeeded), that
-    group's extract_graph() call is skipped and its saved result reused
-    instead of being redone."""
-    groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
-    if not groups:
-        raise ValueError("no chunks to extract graph from")
-
-    total = len(groups)
-    if stem is not None:
-        _clear_extraction_progress(stem, keep_through=total)
-
-    total_nodes = 0
-    total_edges = 0
-    with start_progress(stem, "extract", total) as progress:
-        group_graphs = []
-        for group_number, group in enumerate(groups, start=1):
-            cached = _load_extraction_progress(stem, group_number)
-            if cached is not None:
-                graph = cached
-            else:
-                logger.info(
-                    "extract_graph_from_chunks: processing group %d/%d (%d chunks, %d chars)",
-                    group_number, total, len(group), len(_group_document_text(group)),
-                )
-                graph = extract_graph(_group_document_text(group), schema)
-                if stem is not None:
-                    _write_extraction_progress(stem, group_number, graph)
-            group_graphs.append(graph)
-            total_nodes += len(graph["nodes"])
-            total_edges += len(graph["edges"])
-            progress.advance(nodes=total_nodes, edges=total_edges)
-
-        if len(group_graphs) == 1:
-            return group_graphs[0]
-
-        progress.set_stage("merge")
-        return _merge_group_graphs(group_graphs)
+    Grouping, concurrency, per-group logging, progress and the resume cache
+    all live in .chunk_groups.run_chunk_groups. Progress
+    (documents/{stem}/progress/extract.json) carries running node/edge
+    totals, which is what main.py's GET /progress route and the frontend
+    poll. A group's cached graph is reused on a retry only if `schema`,
+    EXTRACT_PROMPT and the group's text are all unchanged -- so activating a
+    different schema version and re-extracting never picks up the previous
+    schema's output."""
+    return run_chunk_groups(
+        chunk_items,
+        stage="extract",
+        stem=stem,
+        max_group_chars=max_group_chars,
+        fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT},
+        group_fn=lambda group_text, index: extract_graph(group_text, schema),
+        reduce_fn=_merge_group_graphs,
+        reduce_stage="merge",
+        summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},
+    )
 
 
 def extract_for_document(stem: str) -> tuple[dict, dict, int]:

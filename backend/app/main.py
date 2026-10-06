@@ -651,7 +651,7 @@ def get_ontology_progress(filename: str, operation: str = Query(...)):
     (group count, stage, and -- for extract -- a running node/edge total)
     instead of just a ticking clock. Reads
     documents/{stem}/progress/{operation}.json, written as that pipeline
-    stage runs (see app.ontology.utils.ChunkProgress). 404 covers both "this
+    stage runs (see app.ontology.chunk_groups.ChunkProgress). 404 covers both "this
     operation hasn't been run for this document yet" and "no such
     operation" -- there's nothing a caller can do differently for either, so
     one status code is enough."""

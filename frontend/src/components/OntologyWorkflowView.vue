@@ -166,7 +166,7 @@ function stopElapsedTimer() {
 }
 
 // Polls GET /api/ontology/{filename}/progress?operation=... (backed by
-// app.ontology.utils.ChunkProgress -- see backend) while discover/schema/
+// app.ontology.chunk_groups.ChunkProgress -- see backend) while discover/schema/
 // extract are in flight, instead of only showing a locally-ticking clock.
 // 404 just means "nothing recorded yet" (the POST hasn't reached its first
 // group, or never wrote one for a whole-document call that's still
