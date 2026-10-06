@@ -258,9 +258,13 @@ def _load_cached_result(stem: str | None, stage: str, index: int, fingerprint: s
         stored = json.loads(path.read_text())
     except (OSError, ValueError):
         return False, None
-    if not isinstance(stored, dict) or stored.get("fingerprint") != fingerprint:
+    if (
+        not isinstance(stored, dict)
+        or stored.get("fingerprint") != fingerprint
+        or "result" not in stored
+    ):
         return False, None
-    return True, stored.get("result")
+    return True, stored["result"]
 
 
 def _store_result(stem: str | None, stage: str, index: int, fingerprint: str, result) -> None:
@@ -269,8 +273,11 @@ def _store_result(stem: str | None, stage: str, index: int, fingerprint: str, re
     path = _cache_path(stem, stage, index)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Written to a temp name then renamed, so a process killed mid-write
-    # leaves no half-written file for the next run to trip over.
-    tmp = path.with_suffix(".tmp")
+    # leaves no half-written file for the next run to trip over. The temp
+    # name is unique per process and thread, since two runs of the same stage
+    # for one document (e.g. a double-clicked Run button) write this same
+    # path at the same time and would otherwise rename each other's file away.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps({"fingerprint": fingerprint, "result": result}, ensure_ascii=False))
     os.replace(tmp, path)
 

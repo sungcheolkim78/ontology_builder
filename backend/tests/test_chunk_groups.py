@@ -348,3 +348,48 @@ def test_cached_groups_are_not_logged_as_processing(caplog):
         _run(_Recorder())
 
     assert "processing group" not in " ".join(r.getMessage() for r in caplog.records)
+
+
+# --- review findings ----------------------------------------------------------
+
+
+def test_a_cache_file_without_a_result_is_treated_as_a_miss():
+    _run(_Recorder())
+    for path in document_dir_for(STEM).rglob("*.json"):
+        stored = json.loads(path.read_text())
+        if "fingerprint" in stored:
+            path.write_text(json.dumps({"fingerprint": stored["fingerprint"]}))
+
+    second = _Recorder()
+    result = _run(second)
+
+    assert sorted(second.calls) == [1, 2, 3]
+    assert all(r is not None for r in result)
+
+
+def test_concurrent_runs_of_the_same_stage_do_not_collide_writing_the_cache():
+    # Two requests for the same document and stage (a double-clicked Run
+    # button, two tabs) write the same cache path at the same time.
+    errors = []
+
+    def worker(worker_id):
+        try:
+            for attempt in range(40):
+                run_chunk_groups(
+                    _chunks("only"),
+                    stage="schema",
+                    stem=STEM,
+                    fingerprint_inputs={"worker": worker_id, "attempt": attempt},
+                    group_fn=lambda text, index: {"ok": True},
+                    reduce_fn=lambda results: results,
+                )
+        except Exception as exc:  # noqa: BLE001 -- collected and asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []

@@ -55,7 +55,7 @@ def test_chunk_progress_advance_increments_completed_and_merges_fields():
 
 
 def test_chunk_progress_advance_ignores_a_positional_argument():
-    # _map_concurrently's on_item_done calls back with the item's own
+    # map_concurrently's on_item_done calls back with the item's own
     # result as a positional arg -- advance() must tolerate that.
     progress = ChunkProgress("doc_raw", "discover", total=1)
 
