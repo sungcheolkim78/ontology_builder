@@ -16,6 +16,7 @@ import math
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app import ontology
+from app.llm.json_call import call_json
 from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
@@ -31,20 +32,16 @@ from .utils import (
     _dedupe_by_key,
     _load_chunk_items,
     _require_document_text,
-    parse_json_response,
 )
 
 # [독립 함수] 문서 전체를 요약하는 가벼운 LLM 호출. JSON이 아닌 순수 텍스트를 반환하며,
 # 이 파일의 discover/generate 파이프라인과는 호출 관계가 없다.
 def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
-    # Explicit "summarize_document" operation (not the bare, model-selection-
-    # only default every other prose-output call in the app also uses) is
-    # what lets app.llm.chat.get_chat_model tell this call apart from a
-    # JSON-expecting one and skip adding response_format -- see that
-    # module's _JSON_OPERATIONS comment. Model *selection* is unaffected:
-    # "summarize_document" isn't in OPERATION_KEYS either, so it still falls
-    # through to the same "default" bucket as before.
+    # "summarize_document" is deliberately not registered in
+    # app.llm.operations: an unregistered operation gets no response_format or
+    # reasoning hint (this reply is prose, not JSON) and still falls through
+    # to the same "default" model bucket as every other prose call.
     model = ontology.get_chat_model("summarize_document")
     response = invoke_with_telemetry(
         "summarize-document", model, SUMMARY_PROMPT.format(document=document_text)
@@ -60,13 +57,8 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
 # 이 함수를 호출한다(map 단계).
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
-    model = ontology.get_chat_model("discover_ontology")
     messages = [SystemMessage(content=DISCOVERY_PROMPT), HumanMessage(content=f"Document:\n{document_text}")]
-    response = invoke_with_telemetry("discover-ontology", model, messages)
-    report = parse_json_response(response.content)
-    if not isinstance(report.get("classes"), list):
-        raise ValueError("discovery JSON missing classes list")
-    return report
+    return call_json("discover_ontology", messages)
 
 
 # [discover_ontology_from_chunks 전용 보조 함수] 그룹별 discover_ontology
@@ -87,25 +79,13 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
         }
         for i, report in enumerate(group_reports)
     ]
-    # A distinct operation key from discover_ontology()'s own "discover_ontology"
-    # -- purely so this call can have its own, much larger OPERATION_MAX_TOKENS
-    # ceiling (app/llm/chat.py) than a single group's own call needs, while
-    # _MODEL_SELECTION_ALIAS there still routes model *selection* back to
-    # whatever a person picked for "discover_ontology" in the settings UI.
-    model = ontology.get_chat_model("consolidate_discovery")
     messages = [
         SystemMessage(content=CONSOLIDATION_PROMPT),
         HumanMessage(
             content=f"Candidate classes and relationships by group:\n{json.dumps(payload, ensure_ascii=False)}"
         ),
     ]
-    response = invoke_with_telemetry("consolidate-discovery-types", model, messages)
-    consolidated = parse_json_response(response.content)
-    if not isinstance(consolidated.get("classes"), list) or not isinstance(
-        consolidated.get("relationships"), list
-    ):
-        raise ValueError("consolidation JSON missing classes/relationships lists")
-    return consolidated
+    return call_json("consolidate_discovery", messages)
 
 
 # [discover_ontology_from_chunks 전용 보조 함수] 그룹별 domain_model을 LLM 호출
@@ -197,7 +177,6 @@ def generate_schema(
     system_prompt = SCHEMA_PROMPTS.get(document_type)
     if system_prompt is None:
         raise ValueError(f"unknown document_type: {document_type!r}")
-    model = ontology.get_chat_model("generate_schema")
     if discovery:
         # Appended, not merged into SCHEMA_PROMPT/LEGAL_SCHEMA_PROMPT's own
         # text -- keeps those constants completely unchanged when discovery
@@ -216,13 +195,7 @@ def generate_schema(
             f"{json.dumps(discovery)}"
         )
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
-    response = invoke_with_telemetry("generate-schema", model, messages)
-    schema = parse_json_response(response.content)
-    if not isinstance(schema.get("node_types"), list) or not isinstance(
-        schema.get("edge_types"), list
-    ):
-        raise ValueError("schema JSON missing node_types/edge_types lists")
-    return schema
+    return call_json("generate_schema", messages)
 
 
 # [generate_schema_from_chunks 전용 보조 함수] 그룹별 스키마의 node_types/edge_types를
@@ -236,24 +209,13 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         }
         for i, schema in enumerate(group_schemas)
     ]
-    # Distinct operation key from generate_schema()'s own "generate_schema" --
-    # see _consolidate_types's identical comment for why (bigger
-    # OPERATION_MAX_TOKENS ceiling, same selected model via
-    # _MODEL_SELECTION_ALIAS).
-    model = ontology.get_chat_model("consolidate_schema")
     messages = [
         SystemMessage(content=SCHEMA_CONSOLIDATION_PROMPT),
         HumanMessage(
             content=f"Candidate node_types and edge_types by group:\n{json.dumps(payload, ensure_ascii=False)}"
         ),
     ]
-    response = invoke_with_telemetry("consolidate-schema-types", model, messages)
-    consolidated = parse_json_response(response.content)
-    if not isinstance(consolidated.get("node_types"), list) or not isinstance(
-        consolidated.get("edge_types"), list
-    ):
-        raise ValueError("schema consolidation JSON missing node_types/edge_types lists")
-    return consolidated
+    return call_json("consolidate_schema", messages)
 
 
 # [스키마 생성 파이프라인의 오케스트레이터] discover_ontology_from_chunks와 같은

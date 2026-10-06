@@ -5,7 +5,6 @@ import threading
 import pytest
 
 from app.ontology.chunk_groups import ChunkProgress, load_progress, start_progress
-from app.ontology.utils import parse_json_response
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 
@@ -138,68 +137,3 @@ def test_load_progress_returns_the_persisted_state():
 
     assert result["total"] == 5
     assert result["completed"] == 1
-
-
-# --- parse_json_response -----------------------------------------------
-
-
-def test_parse_json_response_parses_a_plain_string():
-    assert parse_json_response('{"node_types": []}') == {"node_types": []}
-
-
-def test_parse_json_response_strips_a_markdown_code_fence():
-    assert parse_json_response('```json\n{"ok": true}\n```') == {"ok": True}
-
-
-def test_parse_json_response_raises_on_invalid_json():
-    with pytest.raises(ValueError):
-        parse_json_response("not json at all")
-
-
-def test_parse_json_response_extracts_text_block_from_a_content_list():
-    # get_chat_model's reasoning=low kwarg (app/llm/chat.py) routes the
-    # request through OpenAI's Responses API, which returns `response.content`
-    # as a list of blocks instead of a plain string once that's set.
-    content = [
-        {"type": "reasoning", "content": [{"text": "thinking...", "type": "reasoning_text"}]},
-        {"type": "text", "text": '{"node_types": []}'},
-    ]
-
-    assert parse_json_response(content) == {"node_types": []}
-
-
-def test_parse_json_response_finds_text_block_regardless_of_order():
-    # Verified live that block order is provider-dependent -- Qwen returns
-    # [reasoning, text], Gemini returns [text, reasoning] for the same
-    # request shape.
-    content = [
-        {"type": "text", "text": '{"ok": true}'},
-        {"type": "reasoning", "content": []},
-    ]
-
-    assert parse_json_response(content) == {"ok": True}
-
-
-def test_parse_json_response_raises_when_no_text_block_present():
-    with pytest.raises(ValueError):
-        parse_json_response([{"type": "reasoning", "content": []}])
-
-
-def test_parse_json_response_ignores_trailing_garbage_after_valid_json():
-    # Regression: observed live -- a response_format=json_object reply is
-    # never itself markdown-fenced, but a model can still tack on a leftover
-    # fence-closer habit afterward (here, just "``", not even a full "```"),
-    # which used to fail the whole parse with "Extra data" even though a
-    # complete, valid JSON value came first.
-    content = '{"node_types": [], "edge_types": []}\n``'
-
-    assert parse_json_response(content) == {"node_types": [], "edge_types": []}
-
-
-def test_parse_json_response_ignores_trailing_garbage_in_a_content_list():
-    content = [
-        {"type": "reasoning", "content": []},
-        {"type": "text", "text": '{"ok": true}\n```'},
-    ]
-
-    assert parse_json_response(content) == {"ok": True}

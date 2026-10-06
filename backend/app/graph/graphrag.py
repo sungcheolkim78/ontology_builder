@@ -3,8 +3,8 @@ import os
 
 from app.graph import graphdb
 from app.llm.chat import get_chat_model, to_langchain_messages
+from app.llm.json_call import call_json
 from app.preprocess.embeddings import get_embedding_model
-from app.ontology import parse_json_response
 from app.ontology.schema_validation import normalize_schema
 from app.llm.telemetry import invoke_with_telemetry, embed_with_telemetry
 
@@ -81,17 +81,9 @@ def analyze_question(question: str, schema: dict) -> dict:
     node/edge types and, for each relevant node type, any keywords naming a
     specific instance of it (e.g. {"Person": ["Ada Lovelace"]}), so
     find_relevant_nodes can match each term only against its own type."""
-    model = get_chat_model()
-    response = invoke_with_telemetry(
-        "analyze-question",
-        model,
-        ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question),
+    result = call_json(
+        "analyze_question", ANALYSIS_PROMPT.format(schema=json.dumps(schema), question=question)
     )
-    result = parse_json_response(response.content)
-    if not isinstance(result.get("node_types"), list) or not isinstance(
-        result.get("edge_types"), list
-    ):
-        raise ValueError("question analysis did not return node_types/edge_types lists")
 
     valid_node_types = {nt["name"] for nt in schema.get("node_types", [])}
     valid_edge_types = {et["name"] for et in schema.get("edge_types", [])}

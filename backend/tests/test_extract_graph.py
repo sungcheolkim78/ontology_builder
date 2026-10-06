@@ -125,7 +125,7 @@ def test_extract_graph_preserves_minimal_shape_when_no_structured_metadata(monke
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("Alice works here.", schema)
@@ -135,7 +135,7 @@ def test_extract_graph_preserves_minimal_shape_when_no_structured_metadata(monke
 
 def test_extract_graph_raises_when_nodes_edges_missing(monkeypatch):
     schema = {"node_types": [], "edge_types": []}
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
 
     with pytest.raises(ValueError):
         extract_graph("some text", schema)
@@ -148,7 +148,7 @@ def test_extract_graph_drops_edges_with_unknown_node_ids(monkeypatch):
         "edges": [{"source": "n1", "target": "does_not_exist", "type": "KNOWS"}],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("Alice.", schema)
@@ -163,7 +163,7 @@ def test_extract_graph_verifies_evidence_against_document_text(monkeypatch):
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("Alice works at Acme.", schema)
@@ -187,7 +187,7 @@ def test_extract_graph_drops_evidence_offsets_for_hallucinated_quote(monkeypatch
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("Alice works at Acme.", schema)
@@ -218,7 +218,7 @@ def test_extract_graph_keeps_only_schema_declared_properties(monkeypatch):
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("document text", schema)
@@ -235,7 +235,7 @@ def test_extract_graph_ignores_malformed_property_map(monkeypatch):
     }
     graph = {"nodes": [{"id": "n1", "label": "x", "type": "Coverage", "properties": "not-a-dict"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("document text", schema)
@@ -253,7 +253,7 @@ def test_extract_graph_normalizes_confidence_and_drops_invalid_values(monkeypatc
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph("Alice and Bob.", schema)
@@ -273,7 +273,7 @@ def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(mo
         "edges": [],
     }
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph(document_text, schema)
@@ -288,7 +288,7 @@ def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(mo
 def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     fake_model = RecordingChatModel(json.dumps(graph))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
 
     result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
@@ -321,7 +321,7 @@ def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeyp
         ],
     }
     fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
     result = extract_graph_from_chunks(
         [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], schema, max_group_chars=30
@@ -337,7 +337,7 @@ def test_extract_graph_from_chunks_without_stem_writes_no_progress_files(monkeyp
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
@@ -358,7 +358,7 @@ def test_extract_for_document_creates_default_schema_when_none_saved(monkeypatch
     write_document()
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     schema, result_graph, version = extract_for_document("doc_raw")
@@ -375,7 +375,7 @@ def test_extract_for_document_uses_chunks_when_present(monkeypatch):
     write_chunks("doc_raw", ["Alice works at Acme."])
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
     fake_model = RecordingChatModel(json.dumps(graph))
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
     schema, result_graph, version = extract_for_document("doc_raw")
 
@@ -400,7 +400,7 @@ def test_extract_graph_from_chunks_reports_progress_with_running_node_edge_count
         "edges": [],
     }
     fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
     write_document()
 
     extract_graph_from_chunks(
@@ -420,7 +420,7 @@ def test_extract_graph_from_chunks_reports_progress_with_running_node_edge_count
 def test_extract_graph_from_chunks_writes_no_progress_without_stem(monkeypatch):
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
 
@@ -433,7 +433,7 @@ def test_extract_for_document_reports_progress_for_whole_document(monkeypatch):
     write_document()
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}, {"id": "n2", "label": "Bob", "type": "Entity"}], "edges": []}
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
     )
 
     extract_for_document("doc_raw")
@@ -485,7 +485,7 @@ def test_extract_graph_from_chunks_retry_reruns_only_the_failed_group(monkeypatc
     model = ScriptedChatModel(
         {"a" * 30: json.dumps(graph1), "b" * 30: json.dumps(graph2)}, fail_on={"b" * 30}
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
     with pytest.raises(RuntimeError):
         extract_graph_from_chunks(_TWO_GROUPS, _PERSON_SCHEMA, max_group_chars=30, stem="doc_raw")
@@ -505,7 +505,7 @@ def test_extract_graph_from_chunks_does_not_reuse_results_across_different_schem
     # reused the previous schema's nodes/edges for every group index.
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     model = ScriptedChatModel({"hello": json.dumps(graph)})
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
     chunks = [{"path": "p1", "text": "hello"}]
     other_schema = {
@@ -522,7 +522,7 @@ def test_extract_graph_from_chunks_does_not_reuse_results_across_different_schem
 def test_extract_graph_from_chunks_reuses_results_when_the_schema_is_unchanged(monkeypatch):
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     model = ScriptedChatModel({"hello": json.dumps(graph)})
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
     chunks = [{"path": "p1", "text": "hello"}]
 

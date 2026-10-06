@@ -97,6 +97,7 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
         ]
     )
     monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -142,6 +143,7 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -191,6 +193,7 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
         ]
     )
     monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
@@ -243,6 +246,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
         ]
     )
     monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 

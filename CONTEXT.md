@@ -16,6 +16,10 @@ _Avoid_: group candidates, extraction progress, partial result
 The stored group results that let a retried run skip chunk groups that already finished.
 _Avoid_: progress cache, checkpoint
 
+**Operation**:
+A named kind of LLM call with its own model choice, output limits, telemetry name and expected JSON shape. A pipeline stage can use several (`generate_schema` and `consolidate_schema` are both operations of the schema stage).
+_Avoid_: task, step
+
 **Reduce**:
 The step that folds every group result of a stage into that stage's single output.
 _Avoid_: merge step, consolidation (consolidation is one kind of reduce)

@@ -11,9 +11,8 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app import ontology
+from app.llm.json_call import call_json
 from app.llm.prompts import EXTRACT_PROMPT
-from app.llm.telemetry import invoke_with_telemetry
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema
 from .schema_validation import normalize_schema
@@ -22,7 +21,6 @@ from .utils import (
     _dedupe_by_key,
     _load_chunk_items,
     _require_document_text,
-    parse_json_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,7 +126,6 @@ def _normalize_extracted_item(
 
 
 def extract_graph(document_text: str, schema: dict) -> dict:
-    model = ontology.get_chat_model("extract_graph")
     normalized_schema = normalize_schema(schema)
     # The schema, not just the instructions, goes into the system message --
     # it's identical across every group of one extract_graph_from_chunks
@@ -137,12 +134,7 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     # EXTRACT_PROMPT's own comment in prompts.py).
     system_prompt = EXTRACT_PROMPT.format(schema=json.dumps(normalized_schema))
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
-    response = invoke_with_telemetry("extract-graph", model, messages)
-    graph = parse_json_response(response.content)
-    if not isinstance(graph.get("nodes"), list) or not isinstance(
-        graph.get("edges"), list
-    ):
-        raise ValueError("extraction JSON missing nodes/edges lists")
+    graph = call_json("extract_graph", messages)
 
     properties_by_type = _properties_by_type(normalized_schema)
     section_labels = _section_labels_in(document_text)

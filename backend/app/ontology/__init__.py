@@ -19,12 +19,14 @@ submodule's own docstring/comments for what it owns:
   convergence (a pipeline concern: it composes extract_graph/
   validate_ontology/propose_evolution across a sequence of documents).
   Depends on extract_graph, persistence, and utils.
-- utils: dependency-light helpers shared by two or more of the three
-  submodules above (MAX_DOCUMENT_CHARS/MAX_CHUNK_GROUP_CHARS,
-  parse_json_response, the chunk-grouping/document-loading helpers, and
-  ChunkProgress/start_progress/load_progress -- the in-flight progress
-  tracker all three chunk-grouped operations report to, polled by main.py's
-  GET /progress route). A leaf, independent of every other submodule here.
+- chunk_groups: the one module behind which discover, schema generation and
+  graph extraction run their per-chunk-group map step and reduce step
+  (run_chunk_groups), including grouping by MAX_CHUNK_GROUP_CHARS, concurrency,
+  the resume cache, and the progress tracker (ChunkProgress/start_progress/
+  load_progress) that main.py's GET /progress route polls. A leaf.
+- utils: dependency-light helpers shared by two or more of the stages above
+  (MAX_DOCUMENT_CHARS, the document-loading helpers). A leaf, independent of
+  every other submodule here.
 - legal_guards: this app's own legal-reification structural checks
   (flag_structural_catchall_nodes, validate_legal_edge_shapes) plus
   run_graph_validation, which combines them with app.ontology.schema_validation's
@@ -34,15 +36,15 @@ submodule's own docstring/comments for what it owns:
   evolve_graph (converge_domain_schema), generate_schema (generate_schema),
   and persistence (create_schema_version).
 
-get_chat_model/get_embedding_model are imported here, not directly from
-app.llm.chat/app.preprocess.embeddings in each submodule, and every submodule reaches them
-via `from app import ontology` + `ontology.get_chat_model(...)` at call
-time (never `from . import get_chat_model`, which would bind a private copy
-of the name at import time). This is what keeps every existing
-`monkeypatch.setattr("app.ontology.get_chat_model", fake)` in the test
-suite working unchanged after this split: it patches the attribute on this
-module object, and a live attribute lookup at call time sees the patch --
-a name bound once at import time would not."""
+get_chat_model/get_embedding_model are still imported here for the two
+callers that need a live, patchable lookup: summarize_document (a prose call,
+not a JSON operation) reaches get_chat_model via `from app import ontology` +
+`ontology.get_chat_model(...)` at call time, and embed_nodes/embed_query-style
+callers do the same for get_embedding_model (never `from . import
+get_chat_model`, which would bind a private copy of the name at import time).
+Every JSON-returning LLM call goes through app.llm.json_call.call_json
+instead, whose own `get_chat_model` is the one patch point tests use for it.
+"""
 
 from app.llm.chat import get_chat_model  # noqa: F401 -- re-exported; see module docstring
 from app.preprocess.embeddings import get_embedding_model, node_embedding_text  # noqa: F401
@@ -103,7 +105,6 @@ from .utils import (
     _dedupe_by_key,
     _load_chunk_items,
     _require_document_text,
-    parse_json_response,
 )
 from .generate_schema import (
     _consolidate_schema_types,

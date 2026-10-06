@@ -182,7 +182,7 @@ is likewise a package, `app/ontology/`, split by concern into
 that the three concerns (propose a schema, extract instances against it,
 validate/evolve what was extracted) were easier to navigate as separate
 files; `utils.py` holds what's shared across two or more of them
-(`parse_json_response`, the document-loading helpers, `MAX_DOCUMENT_CHARS`)
+(the document-loading helpers, `MAX_DOCUMENT_CHARS`)
 so each of the three stays scoped to its own stage. `chunk_groups.py` is
 the one module behind which all three run their per-chunk-group map step:
 `run_chunk_groups(chunk_items, stage=, group_fn=, reduce_fn=, stem=,
@@ -199,9 +199,9 @@ run's output. Each stage supplies only its own `group_fn`/`reduce_fn`; see
 `CONTEXT.md` for the vocabulary (chunk group, group result, resume cache,
 reduce)
 (see that package's own `__init__.py` docstring for the full split and why
-`get_chat_model`/`get_embedding_model` are re-exported from there rather
-than imported directly from `app.llm.chat`/`app.preprocess.embeddings` in
-each submodule). `app.ontology.schema_validation` (normalization/validation
+`get_chat_model`/`get_embedding_model` are still re-exported from there for
+`summarize_document` (a prose call) and the embedding call sites; every
+JSON-returning call goes through `app.llm.json_call.call_json` instead). `app.ontology.schema_validation` (normalization/validation
 of a schema's `node_types`/`edge_types` shape) lives inside this same
 package rather than as its own top-level module, since it's a leaf every
 other `app.ontology` submodule reaches for, not a pipeline stage of its
@@ -284,8 +284,23 @@ on-disk path doesn't have to reach into `main.py` for it.
   against a since-changed schema is no longer shown as "the" current answer,
   though it stays in the file for later inspection.
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
-  `{role, content}` dicts to langchain messages. Every other module that
-  needs an LLM call imports `get_chat_model` from here.
+  `{role, content}` dicts to langchain messages. Prose-returning LLM calls
+  (the chat answer, `summarize_document`) use `get_chat_model` from here.
+- `operations.py` + `json_call.py` (`app/llm/`) — every LLM call that must
+  return a JSON object goes through `call_json(operation, prompt)`, which
+  returns the parsed dict (`parse_json_response` lives here too: strips
+  markdown code fences, handles the Responses-API content-block shape,
+  raises `ValueError` on bad JSON) and raises `ValueError` if the reply
+  isn't an object or lacks a field the operation declares. An **operation**
+  (see `CONTEXT.md`) is one entry in `operations.py`'s registry, the single
+  place that holds its telemetry name, `max_tokens` ceiling, required
+  response fields, whether the settings UI offers a model picker for it
+  (`selectable`, which derives `OPERATION_KEYS`), and which other operation's
+  model selection it follows (`model_key`). Being registered is also what
+  makes `get_chat_model` add `response_format={"type": "json_object"}` and
+  low reasoning effort. Adding an LLM operation is adding one entry there.
+  Nothing is retried beyond `invoke_with_telemetry`'s connection-error retry,
+  so a truncated or malformed reply surfaces as a `ValueError`.
 - `embeddings.py` — builds the `OpenAIEmbeddings` client (also OpenRouter,
   `OPENROUTER_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`).
   `EMBEDDING_DIM` (1536, matching that model's output) is a hard constraint
@@ -339,9 +354,9 @@ on-disk path doesn't have to reach into `main.py` for it.
   conditions, exceptions, figures) that label/type alone would lose —
   added because label/type extraction is a lossy summary, and GraphRAG
   answers were otherwise capped at whatever a short label could convey.
-  Both steps parse LLM output via `parse_json_response` (strips markdown
-  code fences, raises `ValueError` on bad JSON — every LLM-JSON caller in
-  this codebase reuses this function rather than parsing independently).
+  Both steps call the model via `call_json` (see `operations.py`/`json_call.py`
+  above), which owns JSON parsing and shape-checking for every LLM-JSON caller
+  in this codebase.
   Only the schema is still a JSON file, at
   `backend/data/documents/{stem}/schema_v{N}.json` (one file per version,
   see `versions.json` in the same folder); nodes/edges are persisted in
@@ -499,17 +514,22 @@ on-disk path doesn't have to reach into `main.py` for it.
   `ontology.generate_schema`-style dotted names this module used before.
 
 **Testing LLM calls:** `get_chat_model`/`get_embedding_model` are imported
-into each module's own namespace, so tests patch them per-module
-(`app.ontology.get_chat_model`, `app.graph.graphrag.get_chat_model`,
-`app.main.get_chat_model`; `app.ontology.get_embedding_model`,
-`app.graph.graphrag.get_embedding_model`) rather than at their definitions in
-`app.llm.chat`/`app.preprocess.embeddings`. Every test file whose code path can reach
+into each module's own namespace, so tests patch them per-module rather than
+at their definitions in `app.llm.chat`/`app.preprocess.embeddings`. Every
+JSON operation (discover, schema, extract, validate, evolve, question
+analysis, goldenset) shares one patch point, `app.llm.json_call.get_chat_model`
+(its fake takes the operation name: `lambda operation=None: model`); only the
+prose calls keep their own (`app.ontology.get_chat_model` for
+`summarize_document`, `app.graph.graphrag.get_chat_model` for the GraphRAG
+answer, `app.main.get_chat_model` for plain chat), alongside
+`app.ontology.get_embedding_model`/`app.graph.graphrag.get_embedding_model`
+for embeddings. Every test file whose code path can reach
 `embed_nodes()`/`embed_query()` has an autouse fixture stubbing
 `get_embedding_model` with a fake `embed_documents()`, so no test run ever
 makes a real OpenRouter embeddings call even for tests that don't
 specifically exercise the embedding fallback. A single `/api/chat` request
-with `filename` set makes up to *three* chat LLM calls (type analysis,
-keyword extraction, then the answer) — see `SequencedChatModel` in
+with `filename` set makes up to *two* chat LLM calls (question analysis, then
+the answer; a test that needs both patches the same fake at both patch points) — see `SequencedChatModel` in
 `test_chat.py` for the fake used to test that (a list of canned responses,
 one per `invoke()` call in order, with calls recorded for inspection) —
 plus one embedding call if any determined node type's keyword match comes

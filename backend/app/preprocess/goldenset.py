@@ -25,11 +25,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from app.llm.chat import get_chat_model
-from app.ontology import parse_json_response
+from app.llm.json_call import call_json
 from app.utils.paths import document_dir_for
 from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
-from app.llm.telemetry import invoke_with_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -196,32 +194,29 @@ def generate_goldenset(
     if question_count < 1:
         raise ValueError("question_count must be at least 1")
 
-    model = get_chat_model()
     question_context = compact_document_for_questions(document_text, question_context_chars)
     answer_budget = question_context_chars if answer_context_chars is None else answer_context_chars
     answer_context = compact_document_for_questions(document_text, answer_budget)
 
-    question_response = invoke_with_telemetry(
-        "generate-goldenset-questions",
-        model,
-        QUESTION_PROMPT.format(
-            question_count=question_count, source_file=source_name, document=question_context
+    questions = _validate_questions(
+        call_json(
+            "generate_goldenset_questions",
+            QUESTION_PROMPT.format(
+                question_count=question_count, source_file=source_name, document=question_context
+            ),
         ),
+        question_count,
     )
-    questions = _validate_questions(parse_json_response(question_response.content), question_count)
 
-    answer_response = invoke_with_telemetry(
-        "generate-goldenset-answers",
-        model,
+    answers = call_json(
+        "generate_goldenset_answers",
         ANSWER_PROMPT.format(
             questions=json.dumps(questions, ensure_ascii=False, indent=2),
             source_file=source_name,
             document=answer_context,
         ),
     )
-    records, warnings = _merge_and_validate_answers(
-        questions, parse_json_response(answer_response.content), document_text
-    )
+    records, warnings = _merge_and_validate_answers(questions, answers, document_text)
 
     return {
         "source_file": source_name,

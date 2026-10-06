@@ -33,7 +33,7 @@ formatted string the way this module used to. This exists for two reasons:
   possible, it can't itself guarantee a hit.
 
 Every prompt below also now relies on get_chat_model's response_format=
-{"type": "json_object"} (app/llm/chat.py's _JSON_OPERATIONS) rather than
+{"type": "json_object"} (registered in app/llm/operations.py) rather than
 prose ("Respond with ONLY valid JSON, no other text") to guarantee
 syntactically valid JSON back -- the prose instruction still appears, in
 shortened form, because OpenAI-compatible json_object mode requires the

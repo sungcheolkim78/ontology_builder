@@ -106,7 +106,7 @@ def _iteration(
 
 def test_validate_ontology_returns_report_from_llm_json(monkeypatch):
     report = _minimal_validation_report(issue_count=2)
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
 
     result = validate_ontology("some document text", {"node_types": [], "edge_types": []}, {"nodes": [], "edges": []})
 
@@ -114,7 +114,7 @@ def test_validate_ontology_returns_report_from_llm_json(monkeypatch):
 
 
 def test_validate_ontology_raises_when_summary_or_issues_missing(monkeypatch):
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({"issues": []})))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({"issues": []})))
 
     with pytest.raises(ValueError):
         validate_ontology("doc", {"node_types": [], "edge_types": []}, {"nodes": [], "edges": []})
@@ -134,7 +134,7 @@ def test_propose_evolution_returns_proposal_from_llm_json(monkeypatch):
             }
         ]
     }
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(proposal)))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(proposal)))
 
     result = propose_evolution(
         "some document text",
@@ -147,7 +147,7 @@ def test_propose_evolution_returns_proposal_from_llm_json(monkeypatch):
 
 
 def test_propose_evolution_raises_when_changes_list_missing(monkeypatch):
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
 
     with pytest.raises(ValueError):
         propose_evolution(
@@ -157,7 +157,7 @@ def test_propose_evolution_raises_when_changes_list_missing(monkeypatch):
 
 def test_propose_evolution_raises_when_change_missing_required_keys(monkeypatch):
     proposal = {"changes": [{"decision": "ADD"}]}  # missing element_type/element
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(proposal)))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(proposal)))
 
     with pytest.raises(ValueError):
         propose_evolution(
@@ -295,7 +295,7 @@ def test_converge_domain_schema_applies_auto_decisions_and_queues_review(monkeyp
     fake_model = SequencedChatModel(
         [json.dumps(extract_response), json.dumps(validate_response), json.dumps(propose_response)]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
     result = converge_domain_schema([{"stem": "doc2_raw", "text": "Bob works at Acme."}], seed_schema)
 
@@ -344,7 +344,7 @@ def test_converge_domain_schema_folds_multiple_documents_in_order(monkeypatch):
             json.dumps(empty_graph), json.dumps(validate_response), json.dumps(add_edge),
         ]
     )
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
     result = converge_domain_schema(
         [{"stem": "doc2_raw", "text": "doc2"}, {"stem": "doc3_raw", "text": "doc3"}], seed_schema
