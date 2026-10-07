@@ -53,7 +53,7 @@ class FakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):

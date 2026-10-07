@@ -28,7 +28,7 @@ class FakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)
@@ -380,7 +380,7 @@ def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
             calls.append(texts)
             return [[float(i)] * EMBEDDING_DIM for i in range(len(texts))]
 
-    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
     nodes = [
         {"id": "n1", "label": "Ada Lovelace", "type": "Person", "detail": "Mathematician"},
         {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
@@ -398,7 +398,7 @@ def test_embed_nodes_empty_list_skips_the_embedding_call(monkeypatch):
     def fail():
         raise AssertionError("should not be called for an empty node list")
 
-    monkeypatch.setattr("app.ontology.get_embedding_model", fail)
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", fail)
 
     assert embed_nodes([]) == []
 
@@ -1410,7 +1410,7 @@ def test_redundant_types_endpoint(monkeypatch):
         def embed_documents(self, texts):
             return [[1.0, 0.0] for _ in texts]
 
-    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
     client = TestClient(app)
     schema = {
         "node_types": [

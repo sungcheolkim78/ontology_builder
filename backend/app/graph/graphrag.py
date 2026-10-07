@@ -3,10 +3,8 @@ import os
 
 from app.graph import graphdb
 from app.llm.chat import to_langchain_messages
-from app.llm.calls import call_json, call_text
-from app.preprocess.embeddings import get_embedding_model
+from app.llm.calls import call_json, call_text, embed
 from app.ontology.schema_validation import normalize_schema
-from app.llm.telemetry import embed_with_telemetry
 
 # How many of a type's own nodes to keep when keyword matching finds none
 # and search falls back to embedding similarity -- a ranked cutoff instead
@@ -69,9 +67,7 @@ Respond with ONLY valid JSON in this exact shape, no other text:
 
 
 def embed_query(question: str) -> list:
-    model = get_embedding_model()
-    vectors = embed_with_telemetry("embed-query", model, [question])
-    return vectors[0]
+    return embed("embed-query", [question])[0]
 
 
 def analyze_question(question: str, schema: dict) -> dict:

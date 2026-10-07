@@ -60,7 +60,7 @@ class FakeEmbeddingModel:
 
 @pytest.fixture(autouse=True)
 def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 class SequencedChatModel:
@@ -246,7 +246,7 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
         [json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
-    monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
 
     result = search_graph("who is Ada?", SCHEMA, STEM, hops=0)
 

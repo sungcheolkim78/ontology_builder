@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.llm.calls import call_json, call_text, parse_json_response
+from app.llm.calls import call_json, call_text, embed, parse_json_response
 
 
 class FakeChatModel:
@@ -230,3 +230,29 @@ def test_call_json_rejects_a_prose_operation(fake_model):
 
     with pytest.raises(ValueError, match="not a JSON operation"):
         call_json("answer_chat", "p")
+
+
+# --- embed: vectors for texts, through the same seam --------------------------
+
+
+class FakeEmbeddingModel:
+    def __init__(self):
+        self.texts = []
+
+    def embed_documents(self, texts):
+        self.texts.append(list(texts))
+        return [[float(len(text)), 1.0] for text in texts]
+
+
+@pytest.fixture
+def fake_embedding_model(monkeypatch):
+    model = FakeEmbeddingModel()
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: model)
+    return model
+
+
+def test_embed_returns_one_vector_per_text(fake_embedding_model):
+    vectors = embed("embed-query", ["ab", "cde"])
+
+    assert vectors == [[2.0, 1.0], [3.0, 1.0]]
+    assert fake_embedding_model.texts == [["ab", "cde"]]

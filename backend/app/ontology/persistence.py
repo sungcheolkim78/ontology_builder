@@ -4,10 +4,9 @@ from datetime import datetime
 from pathlib import Path
 
 from app.graph import graphdb
-from app import ontology
+from app.llm.calls import embed
 from app.preprocess.embeddings import node_embedding_text
 from app.utils.paths import document_dir_for, documents_dir
-from app.llm.telemetry import embed_with_telemetry
 
 DOCUMENTS_DIR = documents_dir()
 
@@ -222,9 +221,8 @@ def embed_nodes(nodes: list) -> list:
     new dicts rather than mutating the input."""
     if not nodes:
         return []
-    model = ontology.get_embedding_model()
     texts = [node_embedding_text(n) for n in nodes]
-    vectors = embed_with_telemetry("embed-nodes", model, texts)
+    vectors = embed("embed-nodes", texts)
     return [{**node, "embedding": vector} for node, vector in zip(nodes, vectors)]
 
 

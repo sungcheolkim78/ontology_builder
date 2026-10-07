@@ -203,10 +203,8 @@ text; it never changes how a chunked one is grouped. Each stage supplies
 only its own `group_fn(group_text)`/`reduce_fn`; see
 `CONTEXT.md` for the vocabulary (chunk group, group result, resume cache,
 reduce)
-(see that package's own `__init__.py` docstring for the full split and why
-`get_chat_model`/`get_embedding_model` are still re-exported from there for
-`summarize_document` (a prose call) and the embedding call sites; every
-JSON-returning call goes through `app.llm.calls.call_json` instead). `app.ontology.schema_validation` (normalization/validation
+(see that package's own `__init__.py` docstring for the full split; every
+model call, chat or embedding, goes through `app.llm.calls`). `app.ontology.schema_validation` (normalization/validation
 of a schema's `node_types`/`edge_types` shape) lives inside this same
 package rather than as its own top-level module, since it's a leaf every
 other `app.ontology` submodule reaches for, not a pipeline stage of its
@@ -289,23 +287,31 @@ on-disk path doesn't have to reach into `main.py` for it.
   against a since-changed schema is no longer shown as "the" current answer,
   though it stays in the file for later inspection.
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
-  `{role, content}` dicts to langchain messages. Prose-returning LLM calls
-  (the chat answer, `summarize_document`) use `get_chat_model` from here.
-- `operations.py` + `calls.py` (`app/llm/`) — every LLM call that must
-  return a JSON object goes through `call_json(operation, prompt)`, which
-  returns the parsed dict (`parse_json_response` lives here too: strips
+  `{role, content}` dicts to langchain messages; nothing outside
+  `app.llm.calls` builds or invokes a chat model directly.
+- `operations.py` + `calls.py` (`app/llm/`) — the one seam every model call
+  goes through, each wrapped in `invoke_with_telemetry`/`embed_with_telemetry`:
+  `call_json(operation, prompt)` for a reply that must be a JSON object
+  (returns the parsed dict; `parse_json_response` lives here too: strips
   markdown code fences, handles the Responses-API content-block shape,
-  raises `ValueError` on bad JSON) and raises `ValueError` if the reply
-  isn't an object or lacks a field the operation declares. An **operation**
-  (see `CONTEXT.md`) is one entry in `operations.py`'s registry, the single
-  place that holds its telemetry name, `max_tokens` ceiling, required
+  raises `ValueError` on bad JSON, and raises `ValueError` if the reply isn't
+  an object or lacks a field the operation declares),
+  `call_text(operation, prompt)` for a prose reply (returns the text), and
+  `embed(name, texts)` for embeddings (one vector per text; `name` is only the
+  telemetry observation name, since an embedding call has no model choice or
+  limit to register). An **operation** (see `CONTEXT.md`) is one entry in
+  `operations.py`'s registry, the single place that holds its telemetry name,
+  `max_tokens` ceiling (`None` = none beyond the model's own), required
   response fields, whether the settings UI offers a model picker for it
-  (`selectable`, which derives `OPERATION_KEYS`), and which other operation's
-  model selection it follows (`model_key`). Being registered is also what
-  makes `get_chat_model` add `response_format={"type": "json_object"}` and
-  low reasoning effort. Adding an LLM operation is adding one entry there.
-  Nothing is retried beyond `invoke_with_telemetry`'s connection-error retry,
-  so a truncated or malformed reply surfaces as a `ValueError`.
+  (`selectable`, which derives `OPERATION_KEYS`), which other operation's
+  model selection it follows (`model_key`), and `json`: a JSON operation
+  (the default) makes `get_chat_model` add `response_format=
+  {"type": "json_object"}` and low reasoning effort, a prose one
+  (`answer_chat`, `summarize_document`) does not -- `call_json` and
+  `call_text` each reject an operation of the other kind. Adding an LLM
+  operation is adding one entry there. Nothing is retried beyond
+  `invoke_with_telemetry`'s connection-error retry, so a truncated or
+  malformed reply surfaces as a `ValueError`.
 - `embeddings.py` — builds the `OpenAIEmbeddings` client (also OpenRouter,
   `OPENROUTER_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`).
   `EMBEDDING_DIM` (1536, matching that model's output) is a hard constraint
@@ -539,23 +545,17 @@ on-disk path doesn't have to reach into `main.py` for it.
   verb-first, dash-case strings per that guidance too, not the
   `ontology.generate_schema`-style dotted names this module used before.
 
-**Testing LLM calls:** `get_chat_model`/`get_embedding_model` are imported
-into each module's own namespace, so tests patch them per-module rather than
-at their definitions in `app.llm.chat`/`app.preprocess.embeddings`. Every
-JSON operation (discover, schema, extract, validate, evolve, question
-analysis, goldenset) shares one patch point, `app.llm.calls.get_chat_model`
-(its fake takes the operation name: `lambda operation=None: model`); only the
-prose calls keep their own (`app.ontology.get_chat_model` for
-`summarize_document`, `app.graph.graphrag.get_chat_model` for the GraphRAG
-answer, `app.main.get_chat_model` for plain chat), alongside
-`app.ontology.get_embedding_model`/`app.graph.graphrag.get_embedding_model`
-for embeddings. Every test file whose code path can reach
-`embed_nodes()`/`embed_query()` has an autouse fixture stubbing
-`get_embedding_model` with a fake `embed_documents()`, so no test run ever
-makes a real OpenRouter embeddings call even for tests that don't
-specifically exercise the embedding fallback. A single `/api/chat` request
+**Testing LLM calls:** `app.llm.calls` binds `get_chat_model` and
+`get_embedding_model` in its own namespace, so every test patches exactly two
+names, never per caller: `app.llm.calls.get_chat_model` (for every operation,
+JSON or prose -- its fake takes the operation name: `lambda operation=None:
+model`) and `app.llm.calls.get_embedding_model` (`lambda: model`). Every test
+file whose code path can reach `embed_nodes()`/`embed_query()` has an autouse
+fixture stubbing `get_embedding_model` with a fake `embed_documents()`, so no
+test run ever makes a real OpenRouter embeddings call even for tests that
+don't specifically exercise the embedding fallback. A single `/api/chat` request
 with `filename` set makes up to *two* chat LLM calls (question analysis, then
-the answer; a test that needs both patches the same fake at both patch points) — see `SequencedChatModel` in
+the answer; one fake at the one patch point serves both) — see `SequencedChatModel` in
 `test_chat.py` for the fake used to test that (a list of canned responses,
 one per `invoke()` call in order, with calls recorded for inspection) —
 plus one embedding call if any determined node type's keyword match comes

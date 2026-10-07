@@ -7,7 +7,8 @@ import re
 
 from app.llm.chat import get_chat_model
 from app.llm.operations import OPERATIONS
-from app.llm.telemetry import invoke_with_telemetry
+from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
+from app.preprocess.embeddings import get_embedding_model
 
 
 def _extract_text_block(content: list) -> str:
@@ -55,6 +56,15 @@ def parse_json_response(content: str | list) -> dict:
         return obj
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM did not return valid JSON: {e}")
+
+
+def embed(name: str, texts: list) -> list:
+    """Embeds `texts` with the app's embedding model and returns one vector per
+    text. `name` is the telemetry observation name (e.g. "embed-query"); unlike
+    a chat operation an embedding call has no model choice or output limit of
+    its own, so there is nothing to register beyond that name."""
+    model = get_embedding_model()
+    return embed_with_telemetry(name, model, texts)
 
 
 def call_text(operation: str, prompt) -> str:

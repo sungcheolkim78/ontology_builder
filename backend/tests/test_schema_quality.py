@@ -49,7 +49,7 @@ def test_find_redundant_type_pairs_flags_near_duplicate_descriptions(monkeypatch
             # orthogonal one, so only the first pair should pass threshold.
             return [[0.0, 1.0] if text.startswith("Product") else [1.0, 0.0] for text in texts]
 
-    monkeypatch.setattr("app.ontology.get_embedding_model", lambda: VectorFakeEmbeddingModel())
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: VectorFakeEmbeddingModel())
 
     pairs = find_redundant_type_pairs(schema, threshold=0.9)
 

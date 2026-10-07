@@ -6,8 +6,7 @@ times and measures how much the proposed type set changes run to run."""
 
 import math
 
-from app import ontology
-from app.llm.telemetry import embed_with_telemetry
+from app.llm.calls import embed
 
 from .chunk_groups import map_concurrently
 from .generate_schema import generate_schema
@@ -34,13 +33,12 @@ def find_redundant_type_pairs(schema: dict, threshold: float = 0.9) -> list[dict
     node_types against node_types and edge_types against edge_types only,
     never across the two, since a node type and an edge type can't be
     merged regardless of how similar their descriptions read."""
-    model = ontology.get_embedding_model()
     pairs = []
     for kind, types in (("node_type", schema["node_types"]), ("edge_type", schema["edge_types"])):
         if len(types) < 2:
             continue
         texts = [f"{t['name']}: {t['description']}" for t in types]
-        vectors = embed_with_telemetry(f"find-redundant-type-pairs-{kind}", model, texts)
+        vectors = embed(f"find-redundant-type-pairs-{kind}", texts)
         for i in range(len(types)):
             for j in range(i + 1, len(types)):
                 similarity = _cosine_similarity(vectors[i], vectors[j])
