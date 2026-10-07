@@ -22,7 +22,7 @@ submodule's own docstring/comments for what it owns:
 - chunk_groups: the one module behind which discover, schema generation and
   graph extraction run their per-chunk-group map step and reduce step
   (run_chunk_groups), including grouping by MAX_CHUNK_GROUP_CHARS, concurrency,
-  the resume cache, and the progress tracker (ChunkProgress/start_progress/
+  the resume cache, and the progress tracker (ChunkProgress/
   load_progress) that main.py's GET /progress route polls. A leaf.
 - utils: dependency-light helpers shared by two or more of the stages above
   (MAX_DOCUMENT_CHARS, the document-loading helpers). A leaf, independent of
@@ -97,7 +97,6 @@ from .chunk_groups import (
     load_progress,
     map_concurrently,
     run_chunk_groups,
-    start_progress,
 )
 from .utils import (
     MAX_DOCUMENT_CHARS,

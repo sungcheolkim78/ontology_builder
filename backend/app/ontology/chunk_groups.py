@@ -90,12 +90,10 @@ _PROGRESS_STATUSES = ("running", "done", "error")
 
 
 class ChunkProgress:
-    """Real, file-backed progress tracker for one document/operation pair.
-    Never constructed directly by pipeline code -- use start_progress()
-    below, which returns a _NoopProgress instead when `stem` is None (the
-    same has-a-real-backend-or-silently-does-nothing shape as
-    app.llm.telemetry's _NoopObservation, so callers never need an `if
-    progress:` guard)."""
+    """File-backed progress tracker for one document/operation pair, opened by
+    run_chunk_groups. Use it as a context manager so status flips to
+    "done"/"error" automatically when the `with` block exits, whether or not
+    the wrapped code raises."""
 
     def __init__(self, stem: str, operation: str, total: int):
         self._lock = threading.Lock()
@@ -142,33 +140,6 @@ class ChunkProgress:
                 self._state["error"] = str(exc)
             self._write()
         return False  # never suppress the exception
-
-
-class _NoopProgress:
-    """Stand-in for ChunkProgress when no `stem` was given (e.g.
-    measure_schema_stability, or any other caller that isn't answering one
-    specific document's route) -- same shape, no filesystem I/O."""
-
-    def advance(self, *_args, **_kwargs) -> None:
-        pass
-
-    def set_stage(self, stage: str) -> None:
-        pass
-
-    def __enter__(self) -> "_NoopProgress":
-        return self
-
-    def __exit__(self, *_exc_info) -> bool:
-        return False
-
-
-def start_progress(stem: str | None, operation: str, total: int):
-    """The one entry point pipeline code should use to get a progress
-    tracker -- a real ChunkProgress when `stem` is given, a _NoopProgress
-    otherwise. Use as a context manager (`with start_progress(...) as
-    progress:`) so status flips to "done"/"error" automatically when the
-    `with` block exits, whether or not the wrapped code raises."""
-    return ChunkProgress(stem, operation, total) if stem else _NoopProgress()
 
 
 def load_progress(stem: str, operation: str) -> dict | None:
@@ -237,13 +208,11 @@ def map_concurrently(fn, items: list, on_item_done=None) -> list:
 # prompt text...) and the group's actual text -- so a run with different
 # inputs can never silently pick up a previous run's output for a group
 # index that merely still exists.
-def _operation_identity(operation: str | None) -> dict | None:
+def _operation_identity(operation: str) -> dict:
     """The part of a group result that depends on how the operation runs
     rather than on what the stage fed it: the model currently selected for it
     and its effective output-token ceiling. A different model (or ceiling)
     can produce a different, or truncated, result for identical input."""
-    if operation is None:
-        return None
     return {
         "operation": operation,
         "model": get_model_name(operation),
@@ -252,7 +221,7 @@ def _operation_identity(operation: str | None) -> dict | None:
 
 
 def _fingerprint(
-    stage: str, fingerprint_inputs: dict, group_text: str, operation_identity: dict | None = None
+    stage: str, fingerprint_inputs: dict, group_text: str, operation_identity: dict
 ) -> str:
     payload = json.dumps(
         {
@@ -270,12 +239,10 @@ def _cache_path(stem: str, stage: str, index: int) -> Path:
     return document_dir_for(stem) / "resume_cache" / f"{stage}_{index}.json"
 
 
-def _load_cached_result(stem: str | None, stage: str, index: int, fingerprint: str):
+def _load_cached_result(stem: str, stage: str, index: int, fingerprint: str):
     """Returns (hit, result). A missing, unreadable or fingerprint-mismatched
     file is a miss -- never an error, since a cache is only ever an
     optimization."""
-    if stem is None:
-        return False, None
     path = _cache_path(stem, stage, index)
     try:
         stored = json.loads(path.read_text())
@@ -290,9 +257,7 @@ def _load_cached_result(stem: str | None, stage: str, index: int, fingerprint: s
     return True, stored["result"]
 
 
-def _store_result(stem: str | None, stage: str, index: int, fingerprint: str, result) -> None:
-    if stem is None:
-        return
+def _store_result(stem: str, stage: str, index: int, fingerprint: str, result) -> None:
     path = _cache_path(stem, stage, index)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Written to a temp name then renamed, so a process killed mid-write
@@ -305,15 +270,13 @@ def _store_result(stem: str | None, stage: str, index: int, fingerprint: str, re
     os.replace(tmp, path)
 
 
-def _load_chunk_items_for_run(stem: str | None, max_chars: int | None) -> list[dict]:
+def _load_chunk_items_for_run(stem: str, max_chars: int | None) -> list[dict]:
     """The document's chunks if it has a chunks.json, otherwise its whole
     raw.md text as a single chunk -- an unchunked document is one chunk group
     holding the whole text (CONTEXT.md, "Chunk group"). `max_chars` caps that
     whole text only -- it is a whole-document limit, never a grouping budget,
     so a chunked document ignores it (MAX_CHUNK_GROUP_CHARS alone decides how
     it is split)."""
-    if stem is None:
-        raise ValueError("run_chunk_groups needs chunk_items or a stem to load them from")
     chunk_items = _load_chunk_items(stem)
     if chunk_items is None:
         document_text = _require_document_text(stem)
@@ -323,30 +286,29 @@ def _load_chunk_items_for_run(stem: str | None, max_chars: int | None) -> list[d
 
 
 def run_chunk_groups(
-    chunk_items: list[dict] | None = None,
     *,
+    stem: str,
     stage: str,
+    operation: str,
     group_fn,
     reduce_fn,
-    stem: str | None = None,
-    operation: str | None = None,
     fingerprint_inputs: dict | None = None,
     max_group_chars: int | None = None,
     max_chars: int | None = None,
     reduce_stage: str = "reduce",
     summarize=None,
 ):
-    """Runs `group_fn(group_text)` once per chunk group (concurrently,
-    resuming from the resume cache where a group's fingerprint still
+    """Runs `group_fn(group_text)` once per chunk group of the document `stem`
+    names -- its chunks.json, or with none its whole raw.md as a single group
+    (concurrently, resuming from the resume cache where a group's fingerprint still
     matches), then folds the group results, in group order, with
     `reduce_fn(results)`. A document that fits in one chunk group skips
     `reduce_fn` entirely and returns that group's result untouched, so
     `reduce_fn` can assume two or more results.
 
-    `stem`, if given, enables the resume cache and the progress file
-    (documents/{stem}/progress/{stage}.json, reset at the start of every run);
-    with `stem=None` the run is entirely in-memory. `fingerprint_inputs` is
-    everything besides a group's own text that its result depends on -- a
+    Progress is written to documents/{stem}/progress/{stage}.json (reset at
+    the start of every run) and group results to the resume cache.
+    `fingerprint_inputs` is everything besides a group's own text that its result depends on -- a
     cached result is reused only if all of it is unchanged. `operation` is
     the name of the operation `group_fn` runs; its currently selected model
     and output-token ceiling are added to every fingerprint automatically.
@@ -357,11 +319,8 @@ def run_chunk_groups(
     across every completed group (cached ones included) and merged into the
     progress file as running totals. `reduce_stage` is the stage label shown
     while `reduce_fn` runs."""
-    if chunk_items is None:
-        chunk_items = _load_chunk_items_for_run(stem, max_chars)
+    chunk_items = _load_chunk_items_for_run(stem, max_chars)
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
-    if not groups:
-        raise ValueError(f"no chunks to run {stage} on")
 
     def run_group(item):
         index, group = item
@@ -383,7 +342,7 @@ def run_chunk_groups(
     totals: dict[str, int] = {}
     totals_lock = threading.Lock()
 
-    with start_progress(stem, stage, len(groups)) as progress:
+    with ChunkProgress(stem, stage, len(groups)) as progress:
 
         def on_group_done(result):
             with totals_lock:

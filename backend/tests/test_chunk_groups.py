@@ -31,6 +31,20 @@ def _chunks(*texts):
     return [{"path": f"P{i}", "text": text} for i, text in enumerate(texts, start=1)]
 
 
+def _write_chunks(stem, *texts):
+    """A chunks.json whose preamble plus chunks are P1..Pn, like _chunks()."""
+    items = _chunks(*texts)
+    doc_dir = document_dir_for(stem)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "chunks.json").write_text(
+        json.dumps({"preamble": items[0], "chunks": items[1:]})
+    )
+
+
+OPERATION = "generate_schema"
+STEM = "doc_raw"
+
+
 def _group_index(group_text):
     """Which group a fake group_fn was handed, read from the "[P{n}]" label the
     runner puts on each chunk of _chunks() -- group_fn itself only gets the
@@ -39,9 +53,11 @@ def _group_index(group_text):
 
 
 def test_reduces_group_results_in_group_order():
+    _write_chunks(STEM, "a" * 10, "b" * 10)
     result = run_chunk_groups(
-        _chunks("a" * 10, "b" * 10),
         stage="schema",
+        stem=STEM,
+        operation=OPERATION,
         max_group_chars=10,
         group_fn=lambda text: {"index": _group_index(text), "text": text},
         reduce_fn=lambda results: results,
@@ -56,21 +72,16 @@ def test_single_group_skips_reduce_and_returns_its_result_untouched():
     def reduce_fn(results):
         raise AssertionError("reduce_fn must not run for a single group")
 
+    _write_chunks(STEM, "short")
     result = run_chunk_groups(
-        _chunks("short"),
         stage="schema",
+        stem=STEM,
+        operation=OPERATION,
         group_fn=lambda text: {"only": True},
         reduce_fn=reduce_fn,
     )
 
     assert result == {"only": True}
-
-
-def test_no_chunks_raises_value_error():
-    with pytest.raises(ValueError, match="no chunks"):
-        run_chunk_groups(
-            [], stage="schema", group_fn=lambda t: {}, reduce_fn=lambda rs: rs
-        )
 
 
 def test_groups_run_concurrently_and_results_stay_in_group_order():
@@ -89,9 +100,11 @@ def test_groups_run_concurrently_and_results_stay_in_group_order():
             active -= 1
         return index
 
+    _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
     result = run_chunk_groups(
-        _chunks("a" * 10, "b" * 10, "c" * 10),
         stage="extract",
+        stem=STEM,
+        operation=OPERATION,
         max_group_chars=10,
         group_fn=group_fn,
         reduce_fn=lambda results: results,
@@ -112,10 +125,12 @@ def test_a_failed_group_lets_in_flight_groups_finish_before_it_raises():
         finished.append(index)
         return index
 
+    _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
     with pytest.raises(RuntimeError, match="group 1 failed"):
         run_chunk_groups(
-            _chunks("a" * 10, "b" * 10, "c" * 10),
             stage="extract",
+            stem=STEM,
+            operation=OPERATION,
             max_group_chars=10,
             group_fn=group_fn,
             reduce_fn=lambda results: results,
@@ -125,9 +140,6 @@ def test_a_failed_group_lets_in_flight_groups_finish_before_it_raises():
 
 
 # --- resume cache -----------------------------------------------------------
-
-STEM = "doc_raw"
-
 
 class _Recorder:
     """A fake group_fn that records which group indexes it was called for and
@@ -145,11 +157,12 @@ class _Recorder:
         return {"index": index, "text": text}
 
 
-def _run(group_fn, chunks=None, fingerprint_inputs=None, stem=STEM):
+def _run(group_fn, texts=("a" * 10, "b" * 10, "c" * 10), fingerprint_inputs=None):
+    _write_chunks(STEM, *texts)
     return run_chunk_groups(
-        chunks or _chunks("a" * 10, "b" * 10, "c" * 10),
         stage="schema",
-        stem=stem,
+        stem=STEM,
+        operation=OPERATION,
         max_group_chars=10,
         fingerprint_inputs=fingerprint_inputs or {"schema_version": 1},
         group_fn=group_fn,
@@ -199,19 +212,9 @@ def test_changed_chunk_text_invalidates_only_the_affected_group():
     _run(_Recorder())
 
     second = _Recorder()
-    _run(second, chunks=_chunks("a" * 10, "X" * 10, "c" * 10))
+    _run(second, texts=("a" * 10, "X" * 10, "c" * 10))
 
     assert second.calls == [2]
-
-
-def test_without_stem_nothing_is_cached_or_written():
-    _run(_Recorder(), stem=None)
-
-    second = _Recorder()
-    _run(second, stem=None)
-
-    assert sorted(second.calls) == [1, 2, 3]
-    assert not DATA_DIR.exists() or not any(DATA_DIR.rglob("*.json"))
 
 
 def test_a_corrupt_cache_file_is_treated_as_a_miss():
@@ -268,9 +271,9 @@ def test_stage_is_labelled_while_reduce_runs(reduce_stage, expected):
         return results
 
     kwargs = {"reduce_stage": reduce_stage} if reduce_stage else {}
+    _write_chunks(STEM, "a" * 10, "b" * 10)
     run_chunk_groups(
-        _chunks("a" * 10, "b" * 10),
-        stage="schema", stem=STEM, max_group_chars=10,
+        stage="schema", stem=STEM, operation=OPERATION, max_group_chars=10,
         group_fn=_Recorder(), reduce_fn=reduce_fn, **kwargs,
     )
 
@@ -285,10 +288,11 @@ def test_summarize_counts_are_summed_across_groups_including_cached_ones():
     def summarize(result):
         return {"nodes": len(result["nodes"]), "edges": len(result["edges"])}
 
+    _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
+
     def run():
         return run_chunk_groups(
-            _chunks("a" * 10, "b" * 10, "c" * 10),
-            stage="extract", stem=STEM, max_group_chars=10,
+            stage="extract", stem=STEM, operation=OPERATION, max_group_chars=10,
             group_fn=group_fn, reduce_fn=lambda results: results, summarize=summarize,
         )
 
@@ -387,14 +391,15 @@ def test_concurrent_runs_of_the_same_stage_do_not_collide_writing_the_cache():
     # Two requests for the same document and stage (a double-clicked Run
     # button, two tabs) write the same cache path at the same time.
     errors = []
+    _write_chunks(STEM, "only")
 
     def worker(worker_id):
         try:
             for attempt in range(40):
                 run_chunk_groups(
-                    _chunks("only"),
                     stage="schema",
                     stem=STEM,
+                    operation=OPERATION,
                     fingerprint_inputs={"worker": worker_id, "attempt": attempt},
                     group_fn=lambda text: {"ok": True},
                     reduce_fn=lambda results: results,
@@ -432,7 +437,7 @@ def test_unchunked_document_runs_group_fn_once_on_the_whole_text_and_skips_reduc
         raise AssertionError("reduce_fn must not run for a single group")
 
     result = run_chunk_groups(
-        stage="schema", stem=STEM, group_fn=group_fn, reduce_fn=reduce_fn
+        stage="schema", stem=STEM, operation=OPERATION, group_fn=group_fn, reduce_fn=reduce_fn
     )
 
     assert result == {"only": True}
@@ -443,7 +448,7 @@ def test_unchunked_document_reports_a_single_group_of_progress():
     _write_document(STEM, "the whole document")
 
     run_chunk_groups(
-        stage="schema", stem=STEM, group_fn=lambda text: {"ok": True}, reduce_fn=lambda rs: rs
+        stage="schema", stem=STEM, operation=OPERATION, group_fn=lambda text: {"ok": True}, reduce_fn=lambda rs: rs
     )
 
     progress = load_progress(STEM, "schema")
@@ -460,7 +465,7 @@ def test_retry_of_an_unchunked_run_reuses_the_resume_cache():
 
     def run():
         return run_chunk_groups(
-            stage="schema", stem=STEM, fingerprint_inputs={"schema_version": 1},
+            stage="schema", stem=STEM, operation=OPERATION, fingerprint_inputs={"schema_version": 1},
             group_fn=group_fn, reduce_fn=lambda rs: rs,
         )
 
@@ -529,16 +534,6 @@ def test_changing_the_operations_output_limit_makes_the_resume_cache_miss(monkey
 # --- a chunked document loaded through its stem ----------------------------
 
 
-def _write_chunks(stem, *texts):
-    """A chunks.json whose preamble plus chunks are P1..Pn, like _chunks()."""
-    items = _chunks(*texts)
-    doc_dir = document_dir_for(stem)
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    (doc_dir / "chunks.json").write_text(
-        json.dumps({"preamble": items[0], "chunks": items[1:]})
-    )
-
-
 def test_chunked_document_loaded_through_its_stem_runs_one_group_per_budget():
     _write_document(STEM, "raw text that must not be what gets sent")
     _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
@@ -549,7 +544,7 @@ def test_chunked_document_loaded_through_its_stem_runs_one_group_per_budget():
         return _group_index(text)
 
     result = run_chunk_groups(
-        stage="schema", stem=STEM, max_group_chars=10,
+        stage="schema", stem=STEM, operation=OPERATION, max_group_chars=10,
         group_fn=group_fn, reduce_fn=lambda results: results,
     )
 
@@ -566,7 +561,7 @@ def test_unchunked_document_over_max_chars_is_rejected_before_any_llm_call():
 
     with pytest.raises(ValueError, match="too long"):
         run_chunk_groups(
-            stage="schema", stem=STEM, max_chars=10,
+            stage="schema", stem=STEM, operation=OPERATION, max_chars=10,
             group_fn=lambda text: calls.append(text), reduce_fn=lambda rs: rs,
         )
 
@@ -580,7 +575,7 @@ def test_max_chars_does_not_override_the_chunk_group_budget(monkeypatch):
     _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
 
     result = run_chunk_groups(
-        stage="schema", stem=STEM, max_chars=1_000_000,
+        stage="schema", stem=STEM, operation=OPERATION, max_chars=1_000_000,
         group_fn=lambda text: _group_index(text), reduce_fn=lambda results: results,
     )
 

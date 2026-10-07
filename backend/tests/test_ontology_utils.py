@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from app.ontology.chunk_groups import ChunkProgress, load_progress, start_progress
+from app.ontology.chunk_groups import ChunkProgress, load_progress
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 
@@ -106,24 +106,6 @@ def test_chunk_progress_advance_is_thread_safe():
         t.join()
 
     assert _read_progress("doc_raw", "schema")["completed"] == 10
-
-
-def test_start_progress_returns_noop_when_stem_is_none():
-    progress = start_progress(None, "schema", total=3)
-
-    # Should be safe to call every method with no filesystem effect at all.
-    with progress:
-        progress.advance(nodes=1)
-        progress.set_stage("reduce")
-
-    assert not (DATA_DIR / "documents").exists()
-
-
-def test_start_progress_returns_real_tracker_when_stem_given():
-    progress = start_progress("doc_raw", "extract", total=3)
-
-    assert isinstance(progress, ChunkProgress)
-    assert _progress_path("doc_raw", "extract").is_file()
 
 
 def test_load_progress_returns_none_when_nothing_recorded():

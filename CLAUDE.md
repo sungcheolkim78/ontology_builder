@@ -185,17 +185,22 @@ files; `utils.py` holds what's shared across two or more of them
 (the document-loading helpers, `MAX_DOCUMENT_CHARS`)
 so each of the three stays scoped to its own stage. `chunk_groups.py` is
 the one module behind which all three run their per-chunk-group map step:
-`run_chunk_groups(chunk_items, stage=, group_fn=, reduce_fn=, stem=,
-fingerprint_inputs=, reduce_stage=, summarize=)` owns grouping by
-`MAX_CHUNK_GROUP_CHARS`, concurrent execution (`map_concurrently`, capped by
-`MAX_CONCURRENT_LLM_CALLS`), the one-group shortcut that skips `reduce_fn`,
-the progress file the frontend polls (`ChunkProgress`/`load_progress`), and
-a *resume cache* at `documents/{stem}/resume_cache/{stage}_{N}.json` -- one
-group result per file, reused on a retry only when a fingerprint of the
-stage, the caller's `fingerprint_inputs` (schema, `document_type`,
-discovery hint, prompt text) and the group's own text still matches, so
-switching schema version or re-chunking can't silently reuse a previous
-run's output. Each stage supplies only its own `group_fn`/`reduce_fn`; see
+`run_chunk_groups(stem=, stage=, operation=, group_fn=, reduce_fn=,
+fingerprint_inputs=, max_chars=, reduce_stage=, summarize=)` loads the
+document itself (its `chunks.json`, or with none its whole `raw.md` as a
+single chunk group) and owns grouping by `MAX_CHUNK_GROUP_CHARS`, concurrent
+execution (`map_concurrently`, capped by `MAX_CONCURRENT_LLM_CALLS`), the
+one-group shortcut that skips `reduce_fn`, the progress file the frontend
+polls (`ChunkProgress`/`load_progress`), and a *resume cache* at
+`documents/{stem}/resume_cache/{stage}_{N}.json` -- one group result per
+file, reused on a retry only when its *fingerprint* still matches: the
+stage, the `operation`'s currently selected model and output-token ceiling
+(added automatically), the caller's `fingerprint_inputs` (schema,
+`document_type`, discovery hint, prompt text) and the group's own text. So
+switching schema version, model or re-chunking can't silently reuse a
+previous run's output. `max_chars` caps only an unchunked document's whole
+text; it never changes how a chunked one is grouped. Each stage supplies
+only its own `group_fn(group_text)`/`reduce_fn`; see
 `CONTEXT.md` for the vocabulary (chunk group, group result, resume cache,
 reduce)
 (see that package's own `__init__.py` docstring for the full split and why
@@ -372,14 +377,17 @@ on-disk path doesn't have to reach into `main.py` for it.
   via `save_document_summary`/`load_document_summary`, following the same
   regenerate-on-demand model as discovery above. `discover_ontology()` (the
   richer, exploratory "candidate ontology" pass — see its own module-level
-  comment) and `generate_schema()` each send the whole document in one call
-  and are bounded by `MAX_DOCUMENT_CHARS`; for a document with `chunks.json`
-  (article-level JSON chunks from `app.preprocess.chunking.chunk_markdown_file`),
-  `main.py`'s `/api/ontology/{filename}/discover` and `.../schema` routes
-  instead call `discover_ontology_from_chunks()`/`generate_schema_from_chunks()`,
-  which both pack consecutive chunks into `MAX_CHUNK_GROUP_CHARS`-budgeted
-  groups (`group_chunks_by_budget`), run the single-document function once
-  per group (map), then fold every group's result into one unified set via a
+  comment) and `generate_schema()` each take one chunk group's text in one
+  call. `main.py`'s `/api/ontology/{filename}/discover` and `.../schema` routes
+  call `discover_for_document()`/`schema_for_document()`, which run that
+  function through `run_chunk_groups` -- for a document with `chunks.json`
+  (article-level JSON chunks from `app.preprocess.chunking.chunk_markdown_file`)
+  consecutive chunks are packed into `MAX_CHUNK_GROUP_CHARS`-budgeted
+  groups (`group_chunks_by_budget`); a document with none is a single group
+  holding its whole text, bounded by `MAX_DOCUMENT_CHARS`/`max_chars`, and
+  gets the progress file and resume cache like any other. The single-document
+  function runs once per group (map), then every group's result is folded
+  into one unified set via a
   dedicated consolidation LLM call (reduce) — deliberately *not* trying to
   keep every group mutually consistent as it goes, since that would make
   each group's result depend on every earlier group's and prevent groups
@@ -397,8 +405,8 @@ on-disk path doesn't have to reach into `main.py` for it.
   document small enough to fit in one group skips consolidation entirely and
   returns that group's result untouched, so the common case still costs
   exactly one LLM call. `extract_graph()` (instance extraction, above) gets
-  the same chunk-based treatment via `extract_graph_from_chunks()`, called
-  from `main.py`'s `/api/ontology/{filename}/extract` route the same way --
+  the same treatment via `extract_for_document()`, called from `main.py`'s
+  `/api/ontology/{filename}/extract` route the same way --
   but its reduce step is deliberately code-only, not a second LLM call: a
   document's node/edge *count* scales with its length, unlike a schema's
   small, fixed-size type list, so folding potentially hundreds of instances
