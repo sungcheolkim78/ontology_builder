@@ -578,3 +578,67 @@ def test_extract_for_document_saves_the_graph_for_the_version_it_returns(monkeyp
     saved = graphdb.load_graph("doc_raw", version=version)
     assert {n["label"] for n in saved["nodes"]} == {"Alice", "Acme"}
     assert len(saved["nodes"]) == len(result["nodes"])
+
+
+# --- evidence offsets are always relative to raw.md ---------------------------
+
+
+def test_extract_for_document_evidence_offsets_are_relative_to_raw_md_for_a_chunked_document(monkeypatch):
+    # The chunk group text the LLM sees is "[c0]\n..." prefixed, so an offset
+    # into *that* is not an offset into raw.md.
+    write_document(content="# Doc\nAlice works at Acme.")
+    write_chunks("doc_raw", ["Alice works at Acme."])
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Entity", "evidence": "Alice works at Acme."}],
+        "edges": [],
+    }
+    model = ScriptedChatModel({"Alice works at Acme.": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    _, result, _ = extract_for_document("doc_raw")
+
+    node = result["nodes"][0]
+    assert (node["start_offset"], node["end_offset"]) == (6, 26)
+
+
+def test_extract_for_document_edge_evidence_offsets_are_relative_to_raw_md_too(monkeypatch):
+    write_document(content="# Doc\nAlice works at Acme.")
+    write_chunks("doc_raw", ["Alice works at Acme."])
+    schema = {
+        "node_types": [{"name": "Person", "description": "p"}, {"name": "Org", "description": "o"}],
+        "edge_types": [{"name": "WORKS_AT", "description": "w", "source": "Person", "target": "Org"}],
+    }
+    _use_schema(schema)
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Person"}, {"id": "n2", "label": "Acme", "type": "Org"}],
+        "edges": [
+            {"source": "n1", "target": "n2", "type": "WORKS_AT", "evidence": "Alice works at Acme."}
+        ],
+    }
+    model = ScriptedChatModel({"Alice works at Acme.": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    _, result, _ = extract_for_document("doc_raw")
+
+    edge = result["edges"][0]
+    assert (edge["start_offset"], edge["end_offset"]) == (6, 26)
+
+
+def test_extract_for_document_keeps_evidence_but_drops_offsets_when_the_quote_is_not_in_raw_md(monkeypatch):
+    # chunking drops "---" page-break lines from a chunk's text, so a quote
+    # that spans one is verbatim in the text the LLM saw but not in raw.md.
+    write_document(content="# Doc\nAlice works\n---\nat Acme.")
+    write_chunks("doc_raw", ["Alice works\nat Acme."])
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Entity", "evidence": "Alice works\nat Acme."}],
+        "edges": [],
+    }
+    model = ScriptedChatModel({"Alice works": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    _, result, _ = extract_for_document("doc_raw")
+
+    node = result["nodes"][0]
+    assert node["evidence_text"] == "Alice works\nat Acme."
+    assert "start_offset" not in node
+    assert "end_offset" not in node

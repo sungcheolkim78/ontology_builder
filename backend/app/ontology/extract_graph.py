@@ -205,13 +205,35 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
     return {"nodes": merged_nodes, "edges": merged_edges}
 
 
+def _anchor_evidence_to_document(items: list[dict], document_text: str) -> None:
+    """Recomputes each item's evidence offsets against `document_text` (the
+    document's raw.md), in place. extract_graph() reports offsets relative to
+    whatever text it was handed, which for a chunk group is the labelled,
+    concatenated group text -- not something any other reader of a stored
+    offset can use. A quote that is verbatim in the text the LLM saw but not
+    in raw.md (chunking drops "---" and page-marker lines, so a quote can span
+    one) keeps its evidence_text and loses only its offsets: no offset is
+    better than one into a different text."""
+    for item in items:
+        evidence = item.get("evidence_text")
+        if not evidence:
+            continue
+        span = _find_evidence_span(evidence, document_text)
+        if span:
+            item.update(span)
+        else:
+            item.pop("start_offset", None)
+            item.pop("end_offset", None)
+
+
 def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     """One seam for main.py's /extract route: runs extract_graph over the
     document's chunk groups (or, with no chunks.json, over its whole text as
     one group) through run_chunk_groups, which owns the progress file (with
     running node/edge totals) and the resume cache either way, then merges
-    the group graphs with _merge_group_graphs. Also owns the
-    no-active-version fallback (create a DEFAULT_SCHEMA version), and saves
+    the group graphs with _merge_group_graphs, and re-anchors every node's and
+    edge's evidence offsets to raw.md (see _anchor_evidence_to_document).
+    Also owns the no-active-version fallback (create a DEFAULT_SCHEMA version), and saves
     the graph for that version (without embeddings -- embedding is the
     separate embed_graph step). Returns (schema, graph, version). Raises
     FileNotFoundError if the document hasn't been parsed yet.
@@ -223,7 +245,7 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     back through an LLM -- a document's node/edge count scales with its
     length, so exact (type, label) matching is used instead (see
     _merge_group_graphs)."""
-    _require_document_text(stem)
+    document_text = _require_document_text(stem)
     version = get_active_version(stem)
     if version is None:
         version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
@@ -238,5 +260,6 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
         reduce_stage="merge",
         summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},
     )
+    _anchor_evidence_to_document([*graph["nodes"], *graph["edges"]], document_text)
     save_graph(stem, graph, version=version)
     return schema, graph, version

@@ -381,7 +381,15 @@ on-disk path doesn't have to reach into `main.py` for it.
   (`use_discovery`), saves the result as the next schema version, activates
   it, and returns `(schema, version)`; extract saves the graph for the
   active version (creating a `DEFAULT_SCHEMA` version first if there is none)
-  and returns `(schema, graph, version)`.
+  and returns `(schema, graph, version)`. A node's/edge's `start_offset`/
+  `end_offset` are always character offsets into the document's `raw.md` (the
+  first occurrence of its `evidence_text`): `extract_graph()` itself reports
+  offsets relative to whatever text it was handed -- for a chunk group, the
+  `[path]`-labelled concatenation -- so `extract_for_document` re-anchors them
+  after the merge, and drops only the offsets (keeping `evidence_text`) when
+  the quote isn't in `raw.md` (chunking drops `---`/page-marker lines, so a
+  quote can span one). A chunked document extracted before that re-anchoring
+  stored group-frame offsets; re-running `/extract` fixes it.
   `summarize_document()` is a separate, lighter LLM call (a 2-3 sentence
   plain-text summary, not JSON) cached at `documents/{stem}/summary.json`
   via `save_document_summary`/`load_document_summary`, following the same
