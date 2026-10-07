@@ -29,8 +29,8 @@ Model selection: only the operations marked `selectable` (the four
 ontology-pipeline ones) get their own model picker in the settings UI; every
 other operation uses the shared "default" bucket. An operation with a
 `model_key` follows the selection made for that other operation instead. The
-consolidation operations (the reduce step of discover_ontology_from_chunks/
-generate_schema_from_chunks) used to reuse "discover_ontology"/
+consolidation operations (the reduce step of the discover and
+schema stages) used to reuse "discover_ontology"/
 "generate_schema" outright; they now have their own entry purely so they can
 have a much larger token ceiling than a single group's call needs, and
 `model_key` is what keeps that from also silently changing *which model* they

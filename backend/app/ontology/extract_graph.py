@@ -211,8 +211,8 @@ def extract_graph_from_chunks(
 ) -> dict:
     """Runs extract_graph() once per token-budget-sized group of consecutive
     chunks, then merges every group's nodes/edges into one graph via
-    _merge_group_graphs. Unlike discover_ontology_from_chunks/
-    generate_schema_from_chunks (generate_schema.py), this never sends
+    _merge_group_graphs. Unlike the discover/schema stages
+    (generate_schema.py), this never sends
     extracted instances back through an LLM to merge -- a document's
     node/edge count scales with its length, unlike a schema's small,
     fixed-size type list, so an LLM consolidation pass here wouldn't fit the

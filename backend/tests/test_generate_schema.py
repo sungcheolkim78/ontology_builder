@@ -4,10 +4,10 @@ import threading
 
 import pytest
 
+from app.llm.chat import set_model_name
 from app.ontology.generate_schema import (
     discover_for_document,
     discover_ontology,
-    discover_ontology_from_chunks,
     find_redundant_type_pairs,
     generate_schema,
     generate_schema_from_chunks,
@@ -148,6 +148,12 @@ def write_chunks(stem, chunk_texts):
     )
 
 
+@pytest.fixture
+def thirty_char_groups(monkeypatch):
+    """Makes two 30-character chunks fall into two chunk groups."""
+    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 30)
+
+
 def _discovery_report(domain="d", classes=None, relationships=None, competency_questions=None):
     return {
         "domain_model": {"domain": domain, "subdomains": [], "document_types": [], "business_processes": [], "major_actors": []},
@@ -183,18 +189,7 @@ def test_discover_ontology_raises_when_classes_missing(monkeypatch):
         discover_ontology("some document text")
 
 
-def test_discover_ontology_from_chunks_single_group_skips_consolidation(monkeypatch):
-    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    fake_model = RecordingChatModel(json.dumps(report))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    result = discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
-
-    assert result == report
-    assert len(fake_model.prompts) == 1
-
-
-def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch):
+def test_discover_for_document_consolidates_multiple_chunk_groups(monkeypatch, thirty_char_groups):
     group1 = _discovery_report(
         domain="insurance",
         classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
@@ -212,9 +207,10 @@ def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch)
     fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = discover_ontology_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
-    )
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+
+    result = discover_for_document("doc_raw")
 
     assert result["classes"] == consolidated["classes"]
     # competency_questions deduped across groups (identical string in both)
@@ -328,7 +324,7 @@ def test_discover_for_document_uses_chunks_when_present(monkeypatch):
 def test_discover_for_document_ignores_max_chars_for_group_budget(monkeypatch):
     """Regression: discover_for_document used to forward its own `max_chars`
     (the frontend's "최대 문자수" field, which defaults to 1,000,000) as
-    discover_ontology_from_chunks's `max_group_chars`, silently overriding
+    the chunk-group budget, silently overriding
     MAX_CHUNK_GROUP_CHARS for every real request, since group_chunks_by_budget
     only falls back to that env-configured default when max_group_chars is
     None -- see discover_for_document's own docstring. A large `max_chars`
@@ -480,35 +476,6 @@ def _read_progress(stem, operation):
     return json.loads((document_dir_for(stem) / "progress" / f"{operation}.json").read_text())
 
 
-def test_discover_ontology_from_chunks_reports_progress_when_stem_given(monkeypatch):
-    write_document()
-    group1 = _discovery_report(classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    consolidated = {"classes": group1["classes"] + group2["classes"], "relationships": []}
-    fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    discover_ontology_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
-        max_group_chars=30,
-        stem="doc_raw",
-    )
-
-    state = _read_progress("doc_raw", "discover")
-    assert state["status"] == "done"
-    assert state["total"] == 2
-    assert state["completed"] == 2
-
-
-def test_discover_ontology_from_chunks_writes_no_progress_without_stem(monkeypatch):
-    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
-
-    discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
-
-    assert not (DATA_DIR / "documents").exists()
-
-
 def test_generate_schema_from_chunks_reports_progress_when_stem_given(monkeypatch):
     write_document()
     schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
@@ -654,11 +621,12 @@ def test_generate_schema_from_chunks_reuses_results_when_inputs_are_unchanged(mo
     assert len(model.prompts) == 1
 
 
-def test_discover_ontology_from_chunks_retry_keeps_every_field_of_a_resumed_report(monkeypatch):
+def test_discover_for_document_retry_keeps_every_field_of_a_resumed_report(monkeypatch, thirty_char_groups):
     # Regression (carried over from the file-layout test it replaces): a
     # resumed group must bring back its *whole* report, not just
     # classes/relationships, or attributes/events/rules/... silently vanish.
     write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
     group1 = _discovery_report(
         classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
     )
@@ -676,12 +644,59 @@ def test_discover_ontology_from_chunks_retry_keeps_every_field_of_a_resumed_repo
     )
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     with pytest.raises(RuntimeError):
-        discover_ontology_from_chunks(_TWO_GROUPS, max_group_chars=30, stem="doc_raw")
+        discover_for_document("doc_raw")
 
     model.fail_on = set()
-    result = discover_ontology_from_chunks(_TWO_GROUPS, max_group_chars=30, stem="doc_raw")
+    result = discover_for_document("doc_raw")
 
     assert model.calls_for("a" * 30) == 1
     assert result["attributes"] == group1["attributes"]
     assert "What is covered?" in result["competency_questions"]
     assert "ambiguous term" in result["warnings"]
+
+
+def test_discover_for_document_reuses_the_resume_cache_for_an_unchunked_document(monkeypatch):
+    # An unchunked document is one chunk group, so a retry resumes from the
+    # resume cache like any chunked run -- it used to re-pay the whole call.
+    write_document()
+    report = _discovery_report(
+        classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
+    )
+    model = ScriptedChatModel({}, default=json.dumps(report))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    first = discover_for_document("doc_raw")
+    second = discover_for_document("doc_raw")
+
+    assert first == second == report
+    assert len(model.prompts) == 1
+
+
+def test_discover_for_document_does_not_reuse_results_across_a_model_change(monkeypatch):
+    write_document()
+    monkeypatch.setattr("app.llm.chat._selected_models", {})
+    report = _discovery_report(
+        classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
+    )
+    model = ScriptedChatModel({}, default=json.dumps(report))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    set_model_name("openai/gpt-5.4-mini", "discover_ontology")
+    discover_for_document("doc_raw")
+    discover_for_document("doc_raw")  # same model: reused
+    assert len(model.prompts) == 1
+
+    set_model_name("anthropic/claude-sonnet-5", "discover_ontology")
+    discover_for_document("doc_raw")
+    assert len(model.prompts) == 2
+
+
+def test_discover_for_document_rejects_an_unchunked_document_over_max_chars(monkeypatch):
+    write_document(content="x" * 50)
+    model = ScriptedChatModel({}, default="{}")
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    with pytest.raises(ValueError, match="too long"):
+        discover_for_document("doc_raw", max_chars=10)
+
+    assert model.prompts == []

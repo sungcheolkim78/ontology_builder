@@ -53,15 +53,15 @@ def summarize_document(document_text: str, max_chars: int | None = None) -> str:
 
 
 # [발견 파이프라인의 leaf 함수] 문서 전체를 한 번의 LLM 호출로 보내 후보
-# 클래스/관계 등을 발견한다. discover_ontology_from_chunks가 청크 그룹마다
-# 이 함수를 호출한다(map 단계).
+# 클래스/관계 등을 발견한다. discover_for_document가 run_chunk_groups를 통해
+# 청크 그룹마다 이 함수를 호출한다(map 단계).
 def discover_ontology(document_text: str, max_chars: int | None = None) -> dict:
     _check_document_length(document_text, max_chars)
     messages = [SystemMessage(content=DISCOVERY_PROMPT), HumanMessage(content=f"Document:\n{document_text}")]
     return call_json("discover_ontology", messages)
 
 
-# [discover_ontology_from_chunks 전용 보조 함수] 그룹별 discover_ontology
+# [discover_for_document 전용 보조 함수] 그룹별 discover_ontology
 # 결과에서 classes/relationships만 추려 LLM에게 하나로 통합해 달라고 요청한다
 # (reduce 단계 -- 서로 다른 그룹에서 같은 개념이 다른 이름으로 발견된 경우를 병합).
 def _consolidate_types(group_reports: list[dict]) -> dict:
@@ -88,7 +88,7 @@ def _consolidate_types(group_reports: list[dict]) -> dict:
     return call_json("consolidate_discovery", messages)
 
 
-# [discover_ontology_from_chunks 전용 보조 함수] 그룹별 domain_model을 LLM 호출
+# [discover_for_document 전용 보조 함수] 그룹별 domain_model을 LLM 호출
 # 없이 코드로만 병합한다(_dedupe_by_key로 중복 제거) -- _consolidate_types와 달리
 # 이름 충돌을 판단할 필요가 없는 단순 리스트 필드들이라 LLM이 필요 없다.
 def _merge_domain_models(domain_models: list[dict]) -> dict:
@@ -131,36 +131,6 @@ def _reduce_discovery_reports(group_reports: list[dict]) -> dict:
             [w for r in group_reports for w in r.get("warnings", [])], key=lambda w: w
         ),
     }
-
-
-# [발견 파이프라인의 오케스트레이터] 그룹 분할/병렬 실행/이어하기 캐시/진행 상황은
-# 모두 chunk_groups.run_chunk_groups가 맡고, 이 함수는 그룹마다 호출할
-# discover_ontology와 reduce 함수만 넘긴다. discover_for_document가 chunks.json이
-# 있는 문서에 대해 이 함수를 호출한다.
-def discover_ontology_from_chunks(
-    chunk_items: list[dict], max_group_chars: int | None = None, stem: str | None = None
-) -> dict:
-    """Runs discover_ontology() once per token-budget-sized group of
-    consecutive chunks, then consolidates every group's classes/relationships
-    into one unified set via _reduce_discovery_reports. A document small
-    enough to fit in one group skips consolidation entirely and returns that
-    single group's report untouched, so the common case pays for exactly one
-    LLM call, same as discover_ontology().
-
-    Grouping, concurrency, progress (documents/{stem}/progress/discover.json)
-    and the resume cache all live in .chunk_groups.run_chunk_groups. A group's
-    cached report is reused on a retry only if the discovery prompt and the
-    group's text are unchanged."""
-    return run_chunk_groups(
-        chunk_items,
-        stage="discover",
-        operation="discover_ontology",
-        stem=stem,
-        max_group_chars=max_group_chars,
-        fingerprint_inputs={"prompt": DISCOVERY_PROMPT},
-        group_fn=discover_ontology,
-        reduce_fn=_reduce_discovery_reports,
-    )
 
 
 # [스키마 생성 파이프라인의 leaf 함수이자 이 파일에서 가장 많이 재사용되는 핵심 함수]
@@ -219,7 +189,7 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
     return call_json("consolidate_schema", messages)
 
 
-# [스키마 생성 파이프라인의 오케스트레이터] discover_ontology_from_chunks와 같은
+# [스키마 생성 파이프라인의 오케스트레이터] discover_for_document와 같은
 # 구조: 그룹 분할/병렬 실행/이어하기 캐시/진행 상황은 chunk_groups.run_chunk_groups가
 # 맡고, 이 함수는 그룹마다 호출할 generate_schema와 reduce 함수
 # (_consolidate_schema_types)만 넘긴다. schema_for_document가 chunks.json이 있는
@@ -261,44 +231,30 @@ def generate_schema_from_chunks(
     )
 
 
-# [외부 진입점] main.py의 /discover 라우트가 호출하는 seam. 문서 존재 여부를 확인한
-# 뒤 chunks.json 유무에 따라 discover_ontology_from_chunks 또는 discover_ontology로
-# 라우팅한다 -- 이 파일 밖에서는 이 함수(그리고 schema_for_document)만 호출되는 것이
-# 정상적인 사용 방식이다.
+# [발견 파이프라인의 외부 진입점] main.py의 /discover 라우트가 호출하는 seam.
+# 그룹 분할/병렬 실행/이어하기 캐시/진행 상황은 모두 chunk_groups.run_chunk_groups가
+# 맡고(chunks.json이 없는 문서는 전체 텍스트가 하나의 그룹), 이 함수는 그룹마다
+# 호출할 discover_ontology와 reduce 함수(_reduce_discovery_reports)만 넘긴다.
 def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
-    """One seam for main.py's /discover route: owns the document-existence
-    check and the chunks.json-vs-whole-document routing that route used to
-    duplicate inline (see discover_ontology_from_chunks/discover_ontology).
-    Raises FileNotFoundError if the document hasn't been parsed yet. Also
-    reports progress for the whole-document (no chunks.json) branch itself
-    -- discover_ontology_from_chunks reports its own when there are
-    chunks -- so a poller always finds a progress record no matter which
-    path this document takes.
+    """One seam for main.py's /discover route: runs discover_ontology over the
+    document's chunk groups (or, with no chunks.json, over its whole text as
+    one group) through run_chunk_groups, which owns the progress file and the
+    resume cache either way. Raises FileNotFoundError if the document hasn't
+    been parsed yet.
 
-    `max_chars` is passed through to discover_ontology() for the
-    whole-document branch only -- it deliberately is NOT forwarded as
-    discover_ontology_from_chunks's own `max_group_chars`, even though
-    they're both "how much text is safe to send in one call" in spirit.
-    They're different budgets in practice: `max_chars` is this route's own
-    request field, sized for "how big a document can this whole-document
-    call handle" (frontend default 1,000,000, effectively "no limit" for
-    real documents); `max_group_chars` controls how finely
-    group_chunks_by_budget splits an *already-chunked* document, and
-    defaults to MAX_CHUNK_GROUP_CHARS (.chunk_groups) precisely so an operator can
-    tune chunk-group size via that env var alone. Passing the former
-    through as the latter used to silently defeat MAX_CHUNK_GROUP_CHARS
-    entirely for any document, real or test, since the frontend always
-    sends a non-None max_chars far larger than any sane group budget --
-    group_chunks_by_budget only falls back to MAX_CHUNK_GROUP_CHARS when
-    its own max_group_chars argument is None."""
-    document_text = _require_document_text(stem)
-    chunk_items = _load_chunk_items(stem)
-    if chunk_items is not None:
-        return discover_ontology_from_chunks(chunk_items, stem=stem)
-    with start_progress(stem, "discover", 1) as progress:
-        result = discover_ontology(document_text, max_chars=max_chars)
-        progress.advance()
-        return result
+    `max_chars` only caps a document with no chunks (see
+    run_chunk_groups); it never changes how a chunked one is split --
+    MAX_CHUNK_GROUP_CHARS alone does that."""
+    _require_document_text(stem)
+    return run_chunk_groups(
+        stage="discover",
+        operation="discover_ontology",
+        stem=stem,
+        max_chars=max_chars,
+        fingerprint_inputs={"prompt": DISCOVERY_PROMPT},
+        group_fn=discover_ontology,
+        reduce_fn=_reduce_discovery_reports,
+    )
 
 
 # [외부 진입점] main.py의 /schema 라우트가 호출하는 seam. discover_for_document와

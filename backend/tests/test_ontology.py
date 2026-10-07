@@ -355,53 +355,6 @@ def test_group_chunks_by_budget_keeps_oversized_chunk_alone():
     assert [len(g) for g in groups] == [1, 1, 1]
 
 
-def test_discover_ontology_from_chunks_single_group_skips_consolidation(monkeypatch):
-    from app.ontology import discover_ontology_from_chunks
-
-    report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    fake_model = RecordingChatModel(json.dumps(report))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    result = discover_ontology_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
-
-    assert result == report
-    assert len(fake_model.prompts) == 1
-
-
-def test_discover_ontology_from_chunks_consolidates_multiple_groups(monkeypatch):
-    from app.ontology import discover_ontology_from_chunks
-
-    group1 = _discovery_report(
-        domain="insurance",
-        classes=[{"name": "Policy", "definition": "d1", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
-        relationships=[],
-        competency_questions=["What does this cover?"],
-    )
-    group2 = _discovery_report(
-        domain="insurance",
-        classes=[{"name": "InsurancePolicy", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}],
-        relationships=[],
-        competency_questions=["What does this cover?"],
-    )
-    consolidated = {
-        "classes": [{"name": "Policy", "definition": "merged", "category": "CONCEPT", "parent": "", "rationale": "merged d1/d2", "confidence": "HIGH"}],
-        "relationships": [],
-    }
-    fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    result = discover_ontology_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
-    )
-
-    assert result["classes"] == consolidated["classes"]
-    assert result["relationships"] == []
-    # competency_questions deduped across groups (identical string in both)
-    assert result["competency_questions"] == ["What does this cover?"]
-    assert result["domain_model"]["domain"] == "insurance"
-    assert fake_model.calls == 3
-
-
 def test_discover_endpoint_uses_chunks_when_present(monkeypatch):
     write_document()
     stem = "doc_raw"

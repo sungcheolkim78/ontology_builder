@@ -5,8 +5,7 @@ script's offline CLI pass over a folder of Markdown files.
 
 Deliberately reads the whole document, never chunks.chunk_markdown_file's
 per-article chunks -- see the module-level rationale in app.ontology for why
-discover_ontology_from_chunks/generate_schema_from_chunks/
-extract_graph_from_chunks all chunk: those pipelines exist to make LLM calls
+the discover/schema/extract stages all chunk: those pipelines exist to make LLM calls
 that would otherwise blow the context window. A golden set is the opposite
 kind of artifact -- it's the ground truth *used to validate* those pipelines'
 output, generated once and curated, not a hot path -- so building it by

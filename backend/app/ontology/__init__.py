@@ -114,7 +114,6 @@ from .generate_schema import (
     _reduce_discovery_reports,
     discover_for_document,
     discover_ontology,
-    discover_ontology_from_chunks,
     find_redundant_type_pairs,
     generate_schema,
     generate_schema_from_chunks,
