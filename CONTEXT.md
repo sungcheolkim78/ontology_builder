@@ -5,8 +5,12 @@ Turns a document into a custom ontology (schema plus extracted nodes and edges) 
 ## Language
 
 **Chunk group**:
-A budgeted run of consecutive chunks sent to the LLM in a single call.
+A budgeted run of consecutive chunks sent to the LLM in a single call. A document with no chunks is a single chunk group holding its whole text.
 _Avoid_: batch, candidate group
+
+**Fingerprint**:
+What identifies a group result as reusable: the stage, the model and output limit of its operation, the stage's own inputs (schema, document type, prompt) and the chunk group's text. A resume cache entry is reused only when its fingerprint matches.
+_Avoid_: cache key, hash
 
 **Group result**:
 What one chunk group produced for one pipeline stage.

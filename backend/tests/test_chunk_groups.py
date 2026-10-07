@@ -3,12 +3,16 @@ interface with a fake `group_fn` -- no LLM patching needed, since the runner
 never talks to an LLM itself (each stage's own `group_fn` does)."""
 
 import json
+import re
 import shutil
 import threading
 import time
+from dataclasses import replace
 
 import pytest
 
+from app.llm.chat import set_model_name
+from app.llm.operations import OPERATIONS
 from app.ontology.chunk_groups import map_concurrently, run_chunk_groups
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
@@ -27,12 +31,19 @@ def _chunks(*texts):
     return [{"path": f"P{i}", "text": text} for i, text in enumerate(texts, start=1)]
 
 
+def _group_index(group_text):
+    """Which group a fake group_fn was handed, read from the "[P{n}]" label the
+    runner puts on each chunk of _chunks() -- group_fn itself only gets the
+    group's text."""
+    return int(re.match(r"\[P(\d+)\]", group_text).group(1))
+
+
 def test_reduces_group_results_in_group_order():
     result = run_chunk_groups(
         _chunks("a" * 10, "b" * 10),
         stage="schema",
         max_group_chars=10,
-        group_fn=lambda text, index: {"index": index, "text": text},
+        group_fn=lambda text: {"index": _group_index(text), "text": text},
         reduce_fn=lambda results: results,
     )
 
@@ -48,7 +59,7 @@ def test_single_group_skips_reduce_and_returns_its_result_untouched():
     result = run_chunk_groups(
         _chunks("short"),
         stage="schema",
-        group_fn=lambda text, index: {"only": True},
+        group_fn=lambda text: {"only": True},
         reduce_fn=reduce_fn,
     )
 
@@ -58,7 +69,7 @@ def test_single_group_skips_reduce_and_returns_its_result_untouched():
 def test_no_chunks_raises_value_error():
     with pytest.raises(ValueError, match="no chunks"):
         run_chunk_groups(
-            [], stage="schema", group_fn=lambda t, i: {}, reduce_fn=lambda rs: rs
+            [], stage="schema", group_fn=lambda t: {}, reduce_fn=lambda rs: rs
         )
 
 
@@ -67,7 +78,8 @@ def test_groups_run_concurrently_and_results_stay_in_group_order():
     active = 0
     peak = 0
 
-    def group_fn(text, index):
+    def group_fn(text):
+        index = _group_index(text)
         nonlocal active, peak
         with lock:
             active += 1
@@ -92,7 +104,8 @@ def test_groups_run_concurrently_and_results_stay_in_group_order():
 def test_a_failed_group_lets_in_flight_groups_finish_before_it_raises():
     finished = []
 
-    def group_fn(text, index):
+    def group_fn(text):
+        index = _group_index(text)
         if index == 1:
             raise RuntimeError("group 1 failed")
         time.sleep(0.1)
@@ -124,7 +137,8 @@ class _Recorder:
         self.calls = []
         self.fail_on = set(fail_on)
 
-    def __call__(self, text, index):
+    def __call__(self, text):
+        index = _group_index(text)
         self.calls.append(index)
         if index in self.fail_on:
             raise RuntimeError(f"group {index} failed")
@@ -264,7 +278,8 @@ def test_stage_is_labelled_while_reduce_runs(reduce_stage, expected):
 
 
 def test_summarize_counts_are_summed_across_groups_including_cached_ones():
-    def group_fn(text, index):
+    def group_fn(text):
+        index = _group_index(text)
         return {"nodes": ["n"] * index, "edges": ["e"]}
 
     def summarize(result):
@@ -292,7 +307,8 @@ def test_starting_a_new_run_resets_the_previous_runs_done_record():
 
     seen = {}
 
-    def group_fn(text, index):
+    def group_fn(text):
+        index = _group_index(text)
         seen.setdefault("progress", load_progress(STEM, "schema"))
         return index
 
@@ -380,7 +396,7 @@ def test_concurrent_runs_of_the_same_stage_do_not_collide_writing_the_cache():
                     stage="schema",
                     stem=STEM,
                     fingerprint_inputs={"worker": worker_id, "attempt": attempt},
-                    group_fn=lambda text, index: {"ok": True},
+                    group_fn=lambda text: {"ok": True},
                     reduce_fn=lambda results: results,
                 )
         except Exception as exc:  # noqa: BLE001 -- collected and asserted below
@@ -393,3 +409,179 @@ def test_concurrent_runs_of_the_same_stage_do_not_collide_writing_the_cache():
         thread.join()
 
     assert errors == []
+
+
+# --- unchunked document: one chunk group holding the whole text -------------
+
+
+def _write_document(stem, raw_text):
+    doc_dir = document_dir_for(stem)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "raw.md").write_text(raw_text)
+
+
+def test_unchunked_document_runs_group_fn_once_on_the_whole_text_and_skips_reduce():
+    _write_document(STEM, "# Title\n\nthe whole document")
+    seen = []
+
+    def group_fn(text):
+        seen.append(text)
+        return {"only": True}
+
+    def reduce_fn(results):
+        raise AssertionError("reduce_fn must not run for a single group")
+
+    result = run_chunk_groups(
+        stage="schema", stem=STEM, group_fn=group_fn, reduce_fn=reduce_fn
+    )
+
+    assert result == {"only": True}
+    assert seen == ["# Title\n\nthe whole document"]
+
+
+def test_unchunked_document_reports_a_single_group_of_progress():
+    _write_document(STEM, "the whole document")
+
+    run_chunk_groups(
+        stage="schema", stem=STEM, group_fn=lambda text: {"ok": True}, reduce_fn=lambda rs: rs
+    )
+
+    progress = load_progress(STEM, "schema")
+    assert (progress["status"], progress["total"], progress["completed"]) == ("done", 1, 1)
+
+
+def test_retry_of_an_unchunked_run_reuses_the_resume_cache():
+    _write_document(STEM, "the whole document")
+    calls = []
+
+    def group_fn(text):
+        calls.append(text)
+        return {"ok": True}
+
+    def run():
+        return run_chunk_groups(
+            stage="schema", stem=STEM, fingerprint_inputs={"schema_version": 1},
+            group_fn=group_fn, reduce_fn=lambda rs: rs,
+        )
+
+    first = run()
+    second = run()
+
+    assert first == second == {"ok": True}
+    assert len(calls) == 1
+
+
+# --- fingerprint includes the operation's model and output limit -------------
+
+
+@pytest.fixture
+def selected_models(monkeypatch):
+    """The settings UI's per-operation model picks, isolated per test."""
+    monkeypatch.setattr("app.llm.chat._selected_models", {})
+    return set_model_name
+
+
+def _run_for_operation(group_fn, operation="generate_schema"):
+    return run_chunk_groups(
+        stage="schema", stem=STEM, operation=operation,
+        fingerprint_inputs={"schema_version": 1},
+        group_fn=group_fn, reduce_fn=lambda rs: rs,
+    )
+
+
+def test_changing_the_operations_model_makes_the_resume_cache_miss(selected_models):
+    _write_document(STEM, "the whole document")
+    calls = []
+
+    def group_fn(text):
+        calls.append(text)
+        return {"ok": True}
+
+    selected_models("openai/gpt-5.4-mini", "generate_schema")
+    _run_for_operation(group_fn)
+    _run_for_operation(group_fn)  # same model: reused
+    assert len(calls) == 1
+
+    selected_models("anthropic/claude-sonnet-5", "generate_schema")
+    _run_for_operation(group_fn)
+    assert len(calls) == 2
+
+
+def test_changing_the_operations_output_limit_makes_the_resume_cache_miss(monkeypatch, selected_models):
+    _write_document(STEM, "the whole document")
+    calls = []
+
+    def group_fn(text):
+        calls.append(text)
+        return {"ok": True}
+
+    _run_for_operation(group_fn)
+    _run_for_operation(group_fn)  # same limit: reused
+    assert len(calls) == 1
+
+    monkeypatch.setitem(
+        OPERATIONS, "generate_schema", replace(OPERATIONS["generate_schema"], max_tokens=9_000)
+    )
+    _run_for_operation(group_fn)
+    assert len(calls) == 2
+
+
+# --- a chunked document loaded through its stem ----------------------------
+
+
+def _write_chunks(stem, *texts):
+    """A chunks.json whose preamble plus chunks are P1..Pn, like _chunks()."""
+    items = _chunks(*texts)
+    doc_dir = document_dir_for(stem)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "chunks.json").write_text(
+        json.dumps({"preamble": items[0], "chunks": items[1:]})
+    )
+
+
+def test_chunked_document_loaded_through_its_stem_runs_one_group_per_budget():
+    _write_document(STEM, "raw text that must not be what gets sent")
+    _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
+    seen = []
+
+    def group_fn(text):
+        seen.append(text)
+        return _group_index(text)
+
+    result = run_chunk_groups(
+        stage="schema", stem=STEM, max_group_chars=10,
+        group_fn=group_fn, reduce_fn=lambda results: results,
+    )
+
+    assert result == [1, 2, 3]
+    assert sorted(seen) == ["[P1]\n" + "a" * 10, "[P2]\n" + "b" * 10, "[P3]\n" + "c" * 10]
+
+
+# --- max_chars: a whole-document cap, never a grouping budget ---------------
+
+
+def test_unchunked_document_over_max_chars_is_rejected_before_any_llm_call():
+    _write_document(STEM, "x" * 50)
+    calls = []
+
+    with pytest.raises(ValueError, match="too long"):
+        run_chunk_groups(
+            stage="schema", stem=STEM, max_chars=10,
+            group_fn=lambda text: calls.append(text), reduce_fn=lambda rs: rs,
+        )
+
+    assert calls == []
+
+
+def test_max_chars_does_not_override_the_chunk_group_budget(monkeypatch):
+    # The frontend always sends a huge max_chars; it must never silently
+    # replace MAX_CHUNK_GROUP_CHARS as the budget a chunked document is split by.
+    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 10)
+    _write_chunks(STEM, "a" * 10, "b" * 10, "c" * 10)
+
+    result = run_chunk_groups(
+        stage="schema", stem=STEM, max_chars=1_000_000,
+        group_fn=lambda text: _group_index(text), reduce_fn=lambda results: results,
+    )
+
+    assert result == [1, 2, 3]

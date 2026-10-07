@@ -232,10 +232,11 @@ def extract_graph_from_chunks(
     return run_chunk_groups(
         chunk_items,
         stage="extract",
+        operation="extract_graph",
         stem=stem,
         max_group_chars=max_group_chars,
         fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT},
-        group_fn=lambda group_text, index: extract_graph(group_text, schema),
+        group_fn=lambda group_text: extract_graph(group_text, schema),
         reduce_fn=_merge_group_graphs,
         reduce_stage="merge",
         summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},

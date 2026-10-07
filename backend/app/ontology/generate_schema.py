@@ -154,10 +154,11 @@ def discover_ontology_from_chunks(
     return run_chunk_groups(
         chunk_items,
         stage="discover",
+        operation="discover_ontology",
         stem=stem,
         max_group_chars=max_group_chars,
         fingerprint_inputs={"prompt": DISCOVERY_PROMPT},
-        group_fn=lambda group_text, index: discover_ontology(group_text),
+        group_fn=discover_ontology,
         reduce_fn=_reduce_discovery_reports,
     )
 
@@ -245,6 +246,7 @@ def generate_schema_from_chunks(
     return run_chunk_groups(
         chunk_items,
         stage="schema",
+        operation="generate_schema",
         stem=stem,
         max_group_chars=max_group_chars,
         fingerprint_inputs={
@@ -252,7 +254,7 @@ def generate_schema_from_chunks(
             "prompt": SCHEMA_PROMPTS.get(document_type),
             "discovery": discovery,
         },
-        group_fn=lambda group_text, index: generate_schema(
+        group_fn=lambda group_text: generate_schema(
             group_text, document_type=document_type, discovery=discovery
         ),
         reduce_fn=_consolidate_schema_types,

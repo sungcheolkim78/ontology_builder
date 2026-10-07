@@ -12,6 +12,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from app.llm.chat import get_model_max_tokens, get_model_name
+from app.ontology.utils import _check_document_length, _load_chunk_items, _require_document_text
 from app.utils.paths import document_dir_for
 
 logger = logging.getLogger(__name__)
@@ -235,9 +237,30 @@ def map_concurrently(fn, items: list, on_item_done=None) -> list:
 # prompt text...) and the group's actual text -- so a run with different
 # inputs can never silently pick up a previous run's output for a group
 # index that merely still exists.
-def _fingerprint(stage: str, fingerprint_inputs: dict, group_text: str) -> str:
+def _operation_identity(operation: str | None) -> dict | None:
+    """The part of a group result that depends on how the operation runs
+    rather than on what the stage fed it: the model currently selected for it
+    and its effective output-token ceiling. A different model (or ceiling)
+    can produce a different, or truncated, result for identical input."""
+    if operation is None:
+        return None
+    return {
+        "operation": operation,
+        "model": get_model_name(operation),
+        "max_tokens": get_model_max_tokens(operation),
+    }
+
+
+def _fingerprint(
+    stage: str, fingerprint_inputs: dict, group_text: str, operation_identity: dict | None = None
+) -> str:
     payload = json.dumps(
-        {"stage": stage, "inputs": fingerprint_inputs, "text": group_text},
+        {
+            "stage": stage,
+            "inputs": fingerprint_inputs,
+            "operation": operation_identity,
+            "text": group_text,
+        },
         sort_keys=True, ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -282,19 +305,38 @@ def _store_result(stem: str | None, stage: str, index: int, fingerprint: str, re
     os.replace(tmp, path)
 
 
+def _load_chunk_items_for_run(stem: str | None, max_chars: int | None) -> list[dict]:
+    """The document's chunks if it has a chunks.json, otherwise its whole
+    raw.md text as a single chunk -- an unchunked document is one chunk group
+    holding the whole text (CONTEXT.md, "Chunk group"). `max_chars` caps that
+    whole text only -- it is a whole-document limit, never a grouping budget,
+    so a chunked document ignores it (MAX_CHUNK_GROUP_CHARS alone decides how
+    it is split)."""
+    if stem is None:
+        raise ValueError("run_chunk_groups needs chunk_items or a stem to load them from")
+    chunk_items = _load_chunk_items(stem)
+    if chunk_items is None:
+        document_text = _require_document_text(stem)
+        _check_document_length(document_text, max_chars)
+        chunk_items = [{"text": document_text}]
+    return chunk_items
+
+
 def run_chunk_groups(
-    chunk_items: list[dict],
+    chunk_items: list[dict] | None = None,
     *,
     stage: str,
     group_fn,
     reduce_fn,
     stem: str | None = None,
+    operation: str | None = None,
     fingerprint_inputs: dict | None = None,
     max_group_chars: int | None = None,
+    max_chars: int | None = None,
     reduce_stage: str = "reduce",
     summarize=None,
 ):
-    """Runs `group_fn(group_text, index)` once per chunk group (concurrently,
+    """Runs `group_fn(group_text)` once per chunk group (concurrently,
     resuming from the resume cache where a group's fingerprint still
     matches), then folds the group results, in group order, with
     `reduce_fn(results)`. A document that fits in one chunk group skips
@@ -305,12 +347,18 @@ def run_chunk_groups(
     (documents/{stem}/progress/{stage}.json, reset at the start of every run);
     with `stem=None` the run is entirely in-memory. `fingerprint_inputs` is
     everything besides a group's own text that its result depends on -- a
-    cached result is reused only if all of it is unchanged.
+    cached result is reused only if all of it is unchanged. `operation` is
+    the name of the operation `group_fn` runs; its currently selected model
+    and output-token ceiling are added to every fingerprint automatically.
+    `max_chars` is the whole-document size cap for a document with no chunks
+    (see _load_chunk_items_for_run); it has no effect on a chunked one.
 
     `summarize(result)` may return a dict of numeric counts; they are summed
     across every completed group (cached ones included) and merged into the
     progress file as running totals. `reduce_stage` is the stage label shown
     while `reduce_fn` runs."""
+    if chunk_items is None:
+        chunk_items = _load_chunk_items_for_run(stem, max_chars)
     groups = group_chunks_by_budget(chunk_items, max_group_chars=max_group_chars)
     if not groups:
         raise ValueError(f"no chunks to run {stage} on")
@@ -318,7 +366,9 @@ def run_chunk_groups(
     def run_group(item):
         index, group = item
         group_text = _group_document_text(group)
-        fingerprint = _fingerprint(stage, fingerprint_inputs or {}, group_text)
+        fingerprint = _fingerprint(
+            stage, fingerprint_inputs or {}, group_text, _operation_identity(operation)
+        )
         hit, cached = _load_cached_result(stem, stage, index, fingerprint)
         if hit:
             return cached
@@ -326,7 +376,7 @@ def run_chunk_groups(
             "%s: processing group %d/%d (%d chunks, %d chars)",
             stage, index, len(groups), len(group), len(group_text),
         )
-        result = group_fn(group_text, index)
+        result = group_fn(group_text)
         _store_result(stem, stage, index, fingerprint, result)
         return result
 
