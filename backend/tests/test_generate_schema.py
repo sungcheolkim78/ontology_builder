@@ -13,60 +13,9 @@ from app.ontology.generate_schema import (
     schema_for_document,
     summarize_document,
 )
-from app.preprocess.embeddings import EMBEDDING_DIM
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class RecordingChatModel:
-    """Same as FakeChatModel, but remembers every prompt it was invoked
-    with -- needed for the discovery-hint tests below, which assert on the
-    prompt text itself rather than just the returned content."""
-
-    def __init__(self, content):
-        self.content = content
-        self.prompts = []
-
-    def invoke(self, prompt):
-        self.prompts.append(prompt)
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-def _prompt_text(prompt):
-    """Flattens a captured prompt (now usually a [SystemMessage, HumanMessage]
-    list -- see generate_schema.py's own SystemMessage/HumanMessage calls)
-    into one string for substring assertions, regardless of which shape it is."""
-    if isinstance(prompt, str):
-        return prompt
-    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call -- needed for
-    the multi-group schema tests, which make one LLM call per
-    group plus one more for the consolidation pass. The map step of
-    the schema stage calls invoke() concurrently from multiple threads, so the read-index-then-increment
-    below is lock-protected -- otherwise two threads could race and read the
-    same index (or skip one)."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-        self._lock = threading.Lock()
-
-    def invoke(self, messages):
-        with self._lock:
-            content = self.responses[self.calls]
-            self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
+from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
 
 
 class KeyedChatModel:
@@ -84,23 +33,13 @@ class KeyedChatModel:
         self.default = default
 
     def invoke(self, prompt):
-        text = _prompt_text(prompt)
+        text = prompt_text(prompt)
         for marker, content in self.responses_by_marker.items():
             if marker in text:
                 return type("FakeResponse", (), {"content": content})()
         if self.default is not None:
             return type("FakeResponse", (), {"content": self.default})()
         raise AssertionError(f"no matching response for prompt: {prompt!r}")
-
-
-class FakeEmbeddingModel:
-    def embed_documents(self, texts):
-        return [[0.0] * EMBEDDING_DIM for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 @pytest.fixture(autouse=True)
@@ -247,8 +186,8 @@ def test_generate_schema_includes_discovery_hint_when_given(monkeypatch):
 
     generate_schema("some document text", discovery={"classes": [{"name": "Policy"}]})
 
-    assert "Reference --" in _prompt_text(fake_model.prompts[0])
-    assert "Policy" in _prompt_text(fake_model.prompts[0])
+    assert "Reference --" in prompt_text(fake_model.prompts[0])
+    assert "Policy" in prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_ignores_discovery_by_default(monkeypatch):
@@ -258,7 +197,7 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
 
     generate_schema("some document text")
 
-    assert "Reference --" not in _prompt_text(fake_model.prompts[0])
+    assert "Reference --" not in prompt_text(fake_model.prompts[0])
 
 
 def test_schema_for_document_single_chunk_group_skips_consolidation(monkeypatch):
@@ -477,10 +416,10 @@ class ScriptedChatModel:
         self._lock = threading.Lock()
 
     def calls_for(self, marker):
-        return sum(1 for p in self.prompts if marker in _prompt_text(p))
+        return sum(1 for p in self.prompts if marker in prompt_text(p))
 
     def invoke(self, prompt):
-        text = _prompt_text(prompt)
+        text = prompt_text(prompt)
         with self._lock:
             self.prompts.append(prompt)
         for marker in self.fail_on:
@@ -732,7 +671,7 @@ def test_schema_for_document_feeds_the_saved_discovery_to_the_prompt_when_asked(
 
     schema_for_document("doc_raw", use_discovery=True)
 
-    prompt = _prompt_text(model.prompts[0])
+    prompt = prompt_text(model.prompts[0])
     assert "Reference --" in prompt
     assert '"name": "Policy"' in prompt
 
@@ -745,4 +684,4 @@ def test_schema_for_document_without_a_saved_discovery_runs_with_no_hint(monkeyp
 
     schema_for_document("doc_raw", use_discovery=True)
 
-    assert "Reference --" not in _prompt_text(model.prompts[0])
+    assert "Reference --" not in prompt_text(model.prompts[0])

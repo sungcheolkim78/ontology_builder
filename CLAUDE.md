@@ -549,11 +549,15 @@ on-disk path doesn't have to reach into `main.py` for it.
 `get_embedding_model` in its own namespace, so every test patches exactly two
 names, never per caller: `app.llm.calls.get_chat_model` (for every operation,
 JSON or prose -- its fake takes the operation name: `lambda operation=None:
-model`) and `app.llm.calls.get_embedding_model` (`lambda: model`). Every test
-file whose code path can reach `embed_nodes()`/`embed_query()` has an autouse
-fixture stubbing `get_embedding_model` with a fake `embed_documents()`, so no
-test run ever makes a real OpenRouter embeddings call even for tests that
-don't specifically exercise the embedding fallback. A single `/api/chat` request
+model`) and `app.llm.calls.get_embedding_model` (`lambda: model`). The fake
+models live once in `backend/tests/fakes.py` (`FakeChatModel`,
+`RecordingChatModel`, `SequencedChatModel`, `LoggingSequencedChatModel`,
+`FakeEmbeddingModel`, plus `prompt_text` for asserting on a captured prompt);
+a file defines its own only when it needs different behaviour. `conftest.py`
+has an autouse fixture installing `FakeEmbeddingModel` as the embedding model
+for every test, so no test run ever makes a real OpenRouter embeddings call
+even for tests that don't specifically exercise the embedding fallback; a
+test that cares about the vectors patches the same name itself. A single `/api/chat` request
 with `filename` set makes up to *two* chat LLM calls (question analysis, then
 the answer; one fake at the one patch point serves both) — see `SequencedChatModel` in
 `test_chat.py` for the fake used to test that (a list of canned responses,

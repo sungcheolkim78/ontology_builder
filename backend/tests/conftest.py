@@ -15,3 +15,17 @@ os.environ["ONTOLOGY_DATA_DIR"] = _TEST_DATA_DIR
 
 def pytest_sessionfinish(session, exitstatus):
     shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def stub_embedding_model(monkeypatch):
+    """No test makes a real OpenRouter embeddings call: every test starts with
+    a fake embedding model installed at the one patch point,
+    app.llm.calls.get_embedding_model. A test that cares about the vectors
+    patches that same name itself, after this runs."""
+    from fakes import FakeEmbeddingModel
+
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())

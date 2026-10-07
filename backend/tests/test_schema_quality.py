@@ -1,36 +1,11 @@
 """Tests for app.ontology.schema_quality: the standalone schema diagnostics."""
 
 import json
-import threading
 
 import pytest
 
 from app.ontology.schema_quality import find_redundant_type_pairs, measure_schema_stability
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call. The runs of
-    measure_schema_stability invoke concurrently, so the read-then-increment is
-    lock-protected."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-        self._lock = threading.Lock()
-
-    def invoke(self, messages):
-        with self._lock:
-            content = self.responses[self.calls]
-            self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
+from fakes import FakeChatModel, SequencedChatModel
 
 
 def test_find_redundant_type_pairs_flags_near_duplicate_descriptions(monkeypatch):

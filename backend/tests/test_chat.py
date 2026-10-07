@@ -2,13 +2,12 @@ import json
 import os
 import shutil
 
-import pytest
 from fastapi.testclient import TestClient
 
-from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
 from app.graph import graphdb
+from fakes import LoggingSequencedChatModel
 
 NODES = [
     {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
@@ -30,30 +29,6 @@ class FakeChatModel:
     def invoke(self, messages):
         last = messages[-1]
         return type("FakeResponse", (), {"content": f"echo: {last.content}"})()
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call. Records the
-    messages it was called with so tests can inspect what was actually sent."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = []
-
-    def invoke(self, messages):
-        self.calls.append(messages)
-        content = self.responses[len(self.calls) - 1]
-        return type("FakeResponse", (), {"content": content})()
-
-
-class FakeEmbeddingModel:
-    def embed_documents(self, texts):
-        return [[0.0] * EMBEDDING_DIM for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
 
 
 def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
@@ -84,7 +59,7 @@ def test_chat_returns_assistant_reply(monkeypatch):
 
 def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monkeypatch):
     write_graph_dir()
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -137,7 +112,7 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
 
 def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
     write_graph_dir()
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
@@ -176,7 +151,7 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
     # type, the answer should still use every instance of that type rather
     # than reporting "not found."
     write_graph_dir()
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -228,7 +203,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
         "edge_types": SCHEMA["edge_types"],
     }
     write_graph_dir(schema=schema_with_unused_type)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -268,7 +243,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
 
 
 def test_chat_with_filename_but_no_graph_skips_retrieval(monkeypatch):
-    model = SequencedChatModel(["plain answer"])
+    model = LoggingSequencedChatModel(["plain answer"])
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 

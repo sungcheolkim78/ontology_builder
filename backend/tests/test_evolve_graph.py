@@ -14,31 +14,7 @@ from app.ontology.evolve_graph import (
     validate_ontology,
 )
 from app.preprocess.parser import DATA_DIR
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call -- needed
-    because converge_domain_schema makes multiple sequential LLM calls
-    (extract/validate/propose_evolution, per document) within one function
-    call, unlike the single-call tests above that get away with a fixed
-    FakeChatModel response."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-
-    def invoke(self, messages):
-        content = self.responses[self.calls]
-        self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
+from fakes import FakeChatModel, SequencedChatModel
 
 
 @pytest.fixture(autouse=True)

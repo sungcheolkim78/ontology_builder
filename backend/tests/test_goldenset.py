@@ -6,41 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.graph import graphdb
-from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
 from app.ontology import DOCUMENTS_DIR
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class SequencedChatModel:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-
-    def invoke(self, messages):
-        content = self.responses[self.calls]
-        self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
-
-
-class FakeEmbeddingModel:
-    def embed_documents(self, texts):
-        return [[0.0] * EMBEDDING_DIM for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
+from fakes import FakeChatModel, SequencedChatModel
 
 
 @pytest.fixture(autouse=True)

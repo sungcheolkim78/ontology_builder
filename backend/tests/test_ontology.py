@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,24 +10,7 @@ from app.main import app
 from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR, embed_graph, embed_nodes
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class FakeEmbeddingModel:
-    def embed_documents(self, texts):
-        return [[0.0] * EMBEDDING_DIM for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
+from fakes import FakeChatModel, FakeEmbeddingModel, RecordingChatModel, SequencedChatModel, prompt_text
 
 
 @pytest.fixture(autouse=True)
@@ -151,26 +133,6 @@ def test_generate_schema_returns_404_when_document_missing(monkeypatch):
     assert response.status_code == 404
 
 
-class RecordingChatModel:
-    def __init__(self, content):
-        self.content = content
-        self.prompts = []
-
-    def invoke(self, prompt):
-        self.prompts.append(prompt)
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-def _prompt_text(prompt):
-    """Flattens a captured prompt (now usually a [SystemMessage, HumanMessage]
-    list, since app.ontology's LLM call sites build messages instead of one
-    formatted string -- see prompts.py's own module comment) into a single
-    string for substring assertions, regardless of which shape it is."""
-    if isinstance(prompt, str):
-        return prompt
-    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
-
-
 def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     write_document()
     schema = {"node_types": [], "edge_types": []}
@@ -183,7 +145,7 @@ def test_generate_schema_uses_legal_prompt_for_legal_document_type(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "defined terms" in _prompt_text(fake_model.prompts[0])
+    assert "defined terms" in prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_returns_400_on_unknown_document_type(monkeypatch):
@@ -353,7 +315,7 @@ def test_schema_endpoint_ignores_discovery_by_default(monkeypatch):
 
     client.post("/api/ontology/doc_raw.md/schema")
 
-    assert "Reference --" not in _prompt_text(fake_model.prompts[0])
+    assert "Reference --" not in prompt_text(fake_model.prompts[0])
 
 
 def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
@@ -368,8 +330,8 @@ def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema", json={"use_discovery": True})
 
     assert response.status_code == 200
-    assert "Reference --" in _prompt_text(fake_model.prompts[0])
-    assert "Policy" in _prompt_text(fake_model.prompts[0])
+    assert "Reference --" in prompt_text(fake_model.prompts[0])
+    assert "Policy" in prompt_text(fake_model.prompts[0])
 
 
 def test_embed_nodes_attaches_a_vector_per_node(monkeypatch):
@@ -1257,29 +1219,6 @@ def test_evolve_apply_endpoint_bumps_version():
 
     assert response.status_code == 200
     assert response.json()["version"] == 2
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call -- needed here
-    because converge_domain_schema makes multiple sequential LLM calls
-    (extract/validate/propose_evolution, per document) within one function
-    call, unlike the single-call tests above that get away with a fixed
-    FakeChatModel response. Also used by the schema-stage/
-    measure_schema_stability tests below, whose map step now calls invoke()
-    concurrently from multiple threads -- the read-index-then-increment is
-    lock-protected so two threads can't race and read the same index (or
-    skip one)."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-        self._lock = threading.Lock()
-
-    def invoke(self, messages):
-        with self._lock:
-            content = self.responses[self.calls]
-            self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
 
 
 def _minimal_validation_report(issue_count=0):

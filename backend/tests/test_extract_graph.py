@@ -14,47 +14,7 @@ from app.ontology.extract_graph import (
 )
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
-
-
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class RecordingChatModel:
-    def __init__(self, content):
-        self.content = content
-        self.prompts = []
-
-    def invoke(self, prompt):
-        self.prompts.append(prompt)
-        return type("FakeResponse", (), {"content": self.content})()
-
-
-class SequencedChatModel:
-    """Returns each response in order, one per invoke() call. Groups now run
-    concurrently, so the read-index-then-increment below is lock-protected --
-    otherwise two threads could read the same index."""
-
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = 0
-        self._lock = threading.Lock()
-
-    def invoke(self, messages):
-        with self._lock:
-            content = self.responses[self.calls]
-            self.calls += 1
-        return type("FakeResponse", (), {"content": content})()
-
-
-def _prompt_text(prompt):
-    if isinstance(prompt, str):
-        return prompt
-    return "\n".join(getattr(m, "content", str(m)) for m in prompt)
+from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
 
 
 class KeyedChatModel:
@@ -67,7 +27,7 @@ class KeyedChatModel:
         self.responses_by_marker = responses_by_marker
 
     def invoke(self, prompt):
-        text = _prompt_text(prompt)
+        text = prompt_text(prompt)
         for marker, content in self.responses_by_marker.items():
             if marker in text:
                 return type("FakeResponse", (), {"content": content})()
@@ -436,10 +396,10 @@ class ScriptedChatModel:
         self._lock = threading.Lock()
 
     def calls_for(self, marker):
-        return sum(1 for p in self.prompts if marker in _prompt_text(p))
+        return sum(1 for p in self.prompts if marker in prompt_text(p))
 
     def invoke(self, prompt):
-        text = _prompt_text(prompt)
+        text = prompt_text(prompt)
         with self._lock:
             self.prompts.append(prompt)
         for marker in self.fail_on:

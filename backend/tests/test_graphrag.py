@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from app.graph import graphdb
 from app.preprocess.embeddings import EMBEDDING_DIM
@@ -8,6 +7,7 @@ from app.graph.graphrag import (
     analyze_question,
     search_graph,
 )
+from fakes import FakeChatModel, LoggingSequencedChatModel
 
 NODES = [
     {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
@@ -36,14 +36,6 @@ SCHEMA = {
 STEM = "doc_raw"
 
 
-class FakeChatModel:
-    def __init__(self, content):
-        self.content = content
-
-    def invoke(self, messages):
-        return type("FakeResponse", (), {"content": self.content})()
-
-
 class FakeEmbeddingModel:
     """Returns the same fixed vector for every text -- good enough for
     tests that only need embedding calls to not hit the network. Tests
@@ -56,22 +48,6 @@ class FakeEmbeddingModel:
     def embed_documents(self, texts):
         self.calls.append(texts)
         return [self.vector for _ in texts]
-
-
-@pytest.fixture(autouse=True)
-def stub_embedding_model(monkeypatch):
-    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
-
-
-class SequencedChatModel:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = []
-
-    def invoke(self, messages):
-        self.calls.append(messages)
-        content = self.responses[len(self.calls) - 1]
-        return type("FakeResponse", (), {"content": content})()
 
 
 def _remove_db_path():
@@ -130,7 +106,7 @@ def test_analyze_question_raises_on_invalid_json(monkeypatch):
 
 def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -163,7 +139,7 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
 
 def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
@@ -182,7 +158,7 @@ def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatc
 
 def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -209,7 +185,7 @@ def test_search_graph_falls_back_per_type_when_only_one_type_has_no_keyword_matc
     # to all its instances instead of contributing nothing just because
     # Person's search succeeded.
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -242,7 +218,7 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
         {"id": "n3", "label": "Charles Babbage", "type": "Person", "embedding": orthogonal_vector},
     ]
     graphdb.write_graph(STEM, nodes, [])
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {}})]
     )
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
@@ -275,7 +251,7 @@ def test_search_graph_uses_property_filter_when_keyword_and_embedding_both_miss(
         {"id": "c2", "label": "골절보장", "type": "Coverage", "properties": {"amount": "10"}},
     ]
     graphdb.write_graph(STEM, nodes, [])
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -300,7 +276,7 @@ def test_search_graph_uses_property_filter_when_keyword_and_embedding_both_miss(
 
 def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": ["MEMBER_OF"], "keywords": {}})]
     )
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
@@ -317,7 +293,7 @@ def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeyp
     nodes_without_organizations = [n for n in NODES if n["type"] != "Organization"]
     edges_without_organizations = [e for e in EDGES if e["type"] != "MEMBER_OF"]
     graphdb.write_graph(STEM, nodes_without_organizations, edges_without_organizations)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -355,7 +331,7 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
         },
     ]
     graphdb.write_graph(STEM, nodes_with_detail, edges_with_detail)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -376,7 +352,7 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
 
 def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -415,7 +391,7 @@ def test_search_graph_includes_evidence_and_source_section_in_context(monkeypatc
         },
     ]
     graphdb.write_graph(STEM, nodes_with_evidence, edges_with_evidence)
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -441,7 +417,7 @@ def test_search_graph_excludes_low_confidence_nodes_when_threshold_set(monkeypat
         {"id": "n2", "label": "Analytical Engine", "type": "Concept", "confidence": "LOW"},
     ]
     graphdb.write_graph(STEM, nodes, [])
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
@@ -464,7 +440,7 @@ def test_search_graph_excludes_low_confidence_nodes_when_threshold_set(monkeypat
 def test_search_graph_includes_nodes_with_no_confidence_regardless_of_threshold(monkeypatch):
     nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
     graphdb.write_graph(STEM, nodes, [])
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Ada Lovelace"]}}
@@ -487,7 +463,7 @@ def test_search_graph_scoped_to_active_version(monkeypatch):
         [],
         version=2,
     )
-    model = SequencedChatModel(
+    model = LoggingSequencedChatModel(
         [
             json.dumps(
                 {
