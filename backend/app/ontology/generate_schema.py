@@ -27,6 +27,7 @@ from app.llm.prompts import (
 from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 from .chunk_groups import map_concurrently, run_chunk_groups
+from .persistence import save_discovery
 from .utils import (
     _check_document_length,
     _dedupe_by_key,
@@ -196,14 +197,15 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     """One seam for main.py's /discover route: runs discover_ontology over the
     document's chunk groups (or, with no chunks.json, over its whole text as
     one group) through run_chunk_groups, which owns the progress file and the
-    resume cache either way. Raises FileNotFoundError if the document hasn't
-    been parsed yet.
+    resume cache either way, then saves the report (one per document,
+    overwritten on every run -- see save_discovery) and returns it. Raises
+    FileNotFoundError if the document hasn't been parsed yet.
 
     `max_chars` only caps a document with no chunks (see
     run_chunk_groups); it never changes how a chunked one is split --
     MAX_CHUNK_GROUP_CHARS alone does that."""
     _require_document_text(stem)
-    return run_chunk_groups(
+    report = run_chunk_groups(
         stage="discover",
         operation="discover_ontology",
         stem=stem,
@@ -212,6 +214,8 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
         group_fn=discover_ontology,
         reduce_fn=_reduce_discovery_reports,
     )
+    save_discovery(stem, report)
+    return report
 
 
 # [스키마 생성 파이프라인의 외부 진입점] main.py의 /schema 라우트가 호출하는 seam.

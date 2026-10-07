@@ -5,6 +5,7 @@ import threading
 import pytest
 
 from app.llm.chat import set_model_name
+from app.ontology import load_discovery
 from app.ontology.generate_schema import (
     discover_for_document,
     discover_ontology,
@@ -748,3 +749,19 @@ def test_schema_for_document_rejects_an_unknown_document_type(monkeypatch):
         schema_for_document("doc_raw", document_type="nonsense")
 
     assert model.prompts == []
+
+
+# --- discover_for_document persists its report --------------------------------
+
+
+def test_discover_for_document_saves_the_report_it_returns(monkeypatch):
+    write_document()
+    report = _discovery_report(
+        classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
+    )
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+
+    result = discover_for_document("doc_raw")
+
+    assert result == report
+    assert load_discovery("doc_raw") == report

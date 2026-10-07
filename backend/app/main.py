@@ -54,7 +54,6 @@ from app.ontology import (
     measure_schema_stability,
     propose_evolution,
     run_domain_convergence,
-    save_discovery,
     save_document_manifest,
     save_document_summary,
     save_graph,
@@ -689,7 +688,6 @@ def discover(filename: str, request: DiscoverRequest | None = None):
         raise HTTPException(status_code=404, detail="document not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    save_discovery(stem, report)
     return report
 
 
