@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.llm.json_call import call_json
 from app.llm.prompts import EXTRACT_PROMPT
 
-from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema
+from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema, save_graph
 from .schema_validation import normalize_schema
 from .chunk_groups import run_chunk_groups
 from .utils import (
@@ -211,9 +211,9 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     one group) through run_chunk_groups, which owns the progress file (with
     running node/edge totals) and the resume cache either way, then merges
     the group graphs with _merge_group_graphs. Also owns the
-    no-active-version fallback (create a DEFAULT_SCHEMA version) that route
-    used to do inline. Returns (schema, graph, version); the caller is still
-    responsible for persisting the graph (save_graph). Raises
+    no-active-version fallback (create a DEFAULT_SCHEMA version), and saves
+    the graph for that version (without embeddings -- embedding is the
+    separate embed_graph step). Returns (schema, graph, version). Raises
     FileNotFoundError if the document hasn't been parsed yet.
 
     A group's cached graph is reused on a retry only if the schema,
@@ -238,4 +238,5 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
         reduce_stage="merge",
         summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},
     )
+    save_graph(stem, graph, version=version)
     return schema, graph, version

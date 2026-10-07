@@ -56,7 +56,6 @@ from app.ontology import (
     run_domain_convergence,
     save_document_manifest,
     save_document_summary,
-    save_graph,
     schema_for_document,
     summarize_document,
     update_document_manifest,
@@ -780,11 +779,7 @@ def create_extraction(filename: str):
             metadata={"filename": filename},
             input=f"extract graph for {filename}",
         ) as span:
-            schema, graph, version = extract_for_document(stem)
-            # Inside the same trace as the extraction calls above -- save_graph()
-            # calls embed_nodes(), an embedding call that's still part of
-            # serving this one /extract request.
-            save_graph(stem, graph, version=version)
+            _, graph, _ = extract_for_document(stem)
             span.update(
                 output=f"{len(graph.get('nodes', []))} nodes, {len(graph.get('edges', []))} edges extracted"
             )

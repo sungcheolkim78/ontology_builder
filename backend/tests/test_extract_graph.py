@@ -4,6 +4,7 @@ import threading
 
 import pytest
 
+from app.graph import graphdb
 from app.llm.chat import set_model_name
 from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, create_schema_version
 from app.ontology.extract_graph import (
@@ -75,9 +76,11 @@ class KeyedChatModel:
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
+    graphdb.reset_database()
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
     yield
+    graphdb.reset_database()
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
 
@@ -555,3 +558,23 @@ def test_extract_for_document_evidence_offsets_are_relative_to_raw_md_for_an_unc
 
     node = result["nodes"][0]
     assert (node["start_offset"], node["end_offset"]) == (6, 26)
+
+
+# --- extract_for_document persists the graph it returns -----------------------
+
+
+def test_extract_for_document_saves_the_graph_for_the_version_it_returns(monkeypatch):
+    write_document()
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}, {"id": "n2", "label": "Acme", "type": "Entity"}],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
+    )
+
+    _, result, version = extract_for_document("doc_raw")
+
+    saved = graphdb.load_graph("doc_raw", version=version)
+    assert {n["label"] for n in saved["nodes"]} == {"Alice", "Acme"}
+    assert len(saved["nodes"]) == len(result["nodes"])

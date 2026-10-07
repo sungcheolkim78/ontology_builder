@@ -366,12 +366,22 @@ on-disk path doesn't have to reach into `main.py` for it.
   `backend/data/documents/{stem}/schema_v{N}.json` (one file per version,
   see `versions.json` in the same folder); nodes/edges are persisted in
   LadybugDB via `graphdb.write_graph`/`graphdb.load_graph`, not as
-  `nodes.json`/`edges.json`. `save_graph()` calls `embed_nodes()` first,
-  which embeds each node's `label`+`detail` text (batched into a single
-  `embed_documents()` call) and attaches the resulting vector as an
-  `embedding` field before handing nodes to `graphdb.write_graph` -- the
-  embedding call happens here, not in `graphdb.py`, since that module
-  owns storage only and never makes LLM/embedding calls itself.
+  `nodes.json`/`edges.json`. `save_graph()` writes them with no embedding;
+  embedding is a separate pass, `embed_graph()` (`POST /api/ontology/{filename}/embed`),
+  which reads the saved nodes back, has `embed_nodes()` embed each node's
+  `label`+`detail` text (batched into a single `embed_documents()` call) and
+  stores the vectors via `graphdb.update_node_embeddings` -- the embedding
+  call happens here, not in `graphdb.py`, since that module owns storage
+  only and never makes LLM/embedding calls itself.
+  Each of the three pipeline stages' entry points (`discover_for_document`,
+  `schema_for_document`, `extract_for_document`) owns its whole workflow, so
+  `main.py`'s routes only shape the request/response, open the Langfuse
+  `trace`, and map `FileNotFoundError`/`ValueError` to 404/400: discover
+  saves `discovery.json`; schema loads the saved discovery hint when asked
+  (`use_discovery`), saves the result as the next schema version, activates
+  it, and returns `(schema, version)`; extract saves the graph for the
+  active version (creating a `DEFAULT_SCHEMA` version first if there is none)
+  and returns `(schema, graph, version)`.
   `summarize_document()` is a separate, lighter LLM call (a 2-3 sentence
   plain-text summary, not JSON) cached at `documents/{stem}/summary.json`
   via `save_document_summary`/`load_document_summary`, following the same
