@@ -1,11 +1,11 @@
 from datetime import datetime
 
 from app.utils.paths import (  # noqa: F401 -- re-exported: callers import these from here
-    data_dir,
     domain_dir_for,
     domain_manifest_path as _domain_manifest_path,
     domain_pending_review_path as _domain_pending_review_path,
     domain_schema_path,
+    domain_schemas_dir,
 )
 from app.utils.store import locked, read_json, write_json
 from .schema_validation import SCHEMA_CONTRACT_VERSION, summarize_validation_issues, validate_schema
@@ -25,9 +25,6 @@ from .persistence import _apply_schema_type_changes, create_schema_version
 # across every document in that domain via use_domain_schema() rather than
 # regenerated per document. See
 # docs/ontology/domain_schema_convergence.md section 4.
-DOMAIN_SCHEMA_DIR = data_dir() / "domain_schemas"
-
-
 def save_domain_schema(domain: str, schema: dict) -> None:
     write_json(domain_schema_path(domain), schema)
 
@@ -37,10 +34,10 @@ def load_domain_schema(domain: str) -> dict | None:
 
 
 def list_domains() -> list[str]:
-    if not DOMAIN_SCHEMA_DIR.is_dir():
+    if not domain_schemas_dir().is_dir():
         return []
     return sorted(
-        p.name for p in DOMAIN_SCHEMA_DIR.iterdir() if p.is_dir() and (p / "schema.json").is_file()
+        p.name for p in domain_schemas_dir().iterdir() if p.is_dir() and (p / "schema.json").is_file()
     )
 
 

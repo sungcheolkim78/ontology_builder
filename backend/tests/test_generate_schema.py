@@ -13,9 +13,9 @@ from app.ontology.generate_schema import (
     schema_for_document,
     summarize_document,
 )
-from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
+from app.utils.paths import data_dir
 
 
 class KeyedChatModel:
@@ -44,11 +44,11 @@ class KeyedChatModel:
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):

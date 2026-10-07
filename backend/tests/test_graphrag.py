@@ -53,11 +53,11 @@ class FakeEmbeddingModel:
 def _remove_db_path():
     import shutil
 
-    if graphdb.DB_PATH.exists():
-        if graphdb.DB_PATH.is_dir():
-            shutil.rmtree(graphdb.DB_PATH)
+    if graphdb.db_path().exists():
+        if graphdb.db_path().is_dir():
+            shutil.rmtree(graphdb.db_path())
         else:
-            graphdb.DB_PATH.unlink()
+            graphdb.db_path().unlink()
 
 
 def setup_function():

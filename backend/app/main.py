@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 from dataclasses import asdict
@@ -422,7 +421,7 @@ def list_documents():
                 "has_schema": active_version is not None,
                 "has_graph": active_version is not None
                 and graphdb.has_graph(stem, version=active_version),
-                "graphdb_name": graphdb.DB_PATH.name,
+                "graphdb_name": graphdb.db_path().name,
             }
         )
     # PDF-only documents (source.pdf saved, Markdown conversion deferred --
@@ -445,7 +444,7 @@ def list_documents():
                 "has_goldenset": False,
                 "has_schema": False,
                 "has_graph": False,
-                "graphdb_name": graphdb.DB_PATH.name,
+                "graphdb_name": graphdb.db_path().name,
             }
         )
     documents.sort(key=lambda doc: doc["modified_at"], reverse=True)

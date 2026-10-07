@@ -5,17 +5,17 @@ import threading
 import pytest
 
 from app.ontology.chunk_groups import ChunkProgress, load_progress
-from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
+from app.utils.paths import data_dir
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def _progress_path(stem, operation):

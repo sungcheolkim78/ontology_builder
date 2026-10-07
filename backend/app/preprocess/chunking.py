@@ -12,10 +12,8 @@ from __future__ import annotations
 import json
 import re
 
-from app.utils.paths import chunk_path_for, data_dir, raw_path_for
+from app.utils.paths import chunk_path_for, raw_path_for
 from app.utils.store import write_json
-
-DATA_DIR = data_dir()
 
 # Anchored to the full line: a TOC duplicate or a mid-sentence PDF line-wrap
 # artifact always has extra text trailing the closing bracket/paren, so

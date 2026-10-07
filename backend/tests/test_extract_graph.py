@@ -6,15 +6,15 @@ import pytest
 
 from app.graph import graphdb
 from app.llm.chat import set_model_name
-from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, create_schema_version
+from app.ontology import DEFAULT_SCHEMA, create_schema_version
 from app.ontology.extract_graph import (
     _find_evidence_span,
     extract_for_document,
     extract_graph,
 )
-from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
+from app.utils.paths import data_dir, documents_dir
 
 
 class KeyedChatModel:
@@ -37,12 +37,12 @@ class KeyedChatModel:
 @pytest.fixture(autouse=True)
 def clean_data_dir():
     graphdb.reset_database()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
     graphdb.reset_database()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):
@@ -317,7 +317,7 @@ def test_extract_for_document_creates_default_schema_when_none_saved(monkeypatch
     assert schema == DEFAULT_SCHEMA
     assert result_graph == graph
     assert version == 1
-    saved_schema = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
+    saved_schema = json.loads((documents_dir() / "doc_raw" / "schema_v1.json").read_text())
     assert saved_schema == DEFAULT_SCHEMA
 
 

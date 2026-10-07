@@ -15,8 +15,6 @@ from app.utils.paths import (  # noqa: F401 -- re-exported: callers import these
 )
 from app.utils.store import locked, read_json, write_json
 
-DOCUMENTS_DIR = documents_dir()
-
 DEFAULT_SCHEMA = {
     "node_types": [
         {"name": "Entity", "description": "A generic named entity mentioned in the document."}
@@ -219,11 +217,11 @@ def embed_graph(stem: str, version: int = 1) -> int:
 
 
 def list_schema_stems() -> list[str]:
-    if not DOCUMENTS_DIR.is_dir():
+    if not documents_dir().is_dir():
         return []
     return [
         d.name
-        for d in DOCUMENTS_DIR.iterdir()
+        for d in documents_dir().iterdir()
         if d.is_dir() and (d / "versions.json").is_file()
     ]
 

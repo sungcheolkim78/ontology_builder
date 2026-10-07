@@ -7,21 +7,20 @@ from fastapi.testclient import TestClient
 
 from app.graph import graphdb
 from app.main import app
-from app.ontology import DOCUMENTS_DIR
-from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel
+from app.utils.paths import data_dir, documents_dir
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
     graphdb.reset_connection()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
     graphdb.reset_connection()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def write_raw(stem, content="content"):
@@ -47,8 +46,8 @@ def test_list_files_returns_saved_filenames_newest_first():
 
 
 def test_list_files_excludes_hidden_entries():
-    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
-    (DOCUMENTS_DIR / ".DS_Store").write_text("")
+    documents_dir().mkdir(parents=True, exist_ok=True)
+    (documents_dir() / ".DS_Store").write_text("")
     write_raw("report_raw")
     client = TestClient(app)
 
@@ -102,7 +101,7 @@ def test_list_documents_reports_original_filename_and_schema_and_graph_status():
         "has_goldenset": False,
         "has_schema": True,
         "has_graph": False,
-        "graphdb_name": graphdb.DB_PATH.name,
+        "graphdb_name": graphdb.db_path().name,
     }
 
 
@@ -312,7 +311,7 @@ def test_get_document_pdf_returns_404_when_not_saved():
 
 
 def test_list_files_excludes_ladybugdb_files(monkeypatch):
-    # Regression test: graphdb.DB_PATH lives under data/graph/, a sibling of
+    # Regression test: graphdb.db_path() lives under data/graph/, a sibling of
     # data/documents/ -- GET /api/files only ever lists document folders, so
     # the ladybug DB file (and its .wal sidecar) must never show up here.
     write_raw("doc_raw", "# Doc\nAlice works at Acme.")
@@ -342,8 +341,8 @@ def test_list_files_excludes_ladybugdb_files(monkeypatch):
 
 
 def test_get_file_blocks_path_traversal():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    outside = DATA_DIR.parent / "secret.txt"
+    data_dir().mkdir(parents=True, exist_ok=True)
+    outside = data_dir().parent / "secret.txt"
     outside.write_text("top secret")
     client = TestClient(app)
 

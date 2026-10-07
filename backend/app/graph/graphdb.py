@@ -3,13 +3,20 @@ import os
 import re
 import shutil
 import threading
+from pathlib import Path
 
 from ladybug import Connection, Database
 
 from app.preprocess.embeddings import EMBEDDING_DIM
 from app.utils.paths import data_dir
 
-DB_PATH = data_dir() / "graph" / "graph.ladybugdb"
+
+def db_path() -> Path:
+    """The graph database's location, under the data directory as it is *now*
+    (see app.utils.paths.data_dir), not as it was when this module was
+    imported."""
+    return data_dir() / "graph" / "graph.ladybugdb"
+
 
 # ladybug's Database() defaults buffer_pool_size to ~80% of *system* memory,
 # not of any container memory limit -- on this app's default podman-machine
@@ -77,8 +84,8 @@ def _validate_identifier(name: str) -> str:
 def _get_connection() -> Connection:
     global _database, _connection
     if _connection is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _database = Database(str(DB_PATH), buffer_pool_size=_GRAPH_BUFFER_POOL_SIZE)
+        db_path().parent.mkdir(parents=True, exist_ok=True)
+        _database = Database(str(db_path()), buffer_pool_size=_GRAPH_BUFFER_POOL_SIZE)
         _connection = Connection(_database)
         _connection.execute(
             "CREATE NODE TABLE IF NOT EXISTS _ExtractedDocument("
@@ -89,9 +96,9 @@ def _get_connection() -> Connection:
 
 def reset_connection() -> None:
     """Drop cached connection/database handles so a fresh one opens next
-    time. Needed because tests delete DB_PATH on disk between runs -- the
+    time. Needed because tests delete the database on disk between runs -- the
     cached native handles would otherwise point at a now-missing directory
-    -- and by reset_database() below, which deletes DB_PATH itself."""
+    -- and by reset_database() below, which deletes db_path() itself."""
     global _database, _connection
     if _connection is not None:
         _connection.close()
@@ -105,7 +112,7 @@ def reset_connection() -> None:
 def reset_database() -> None:
     """Recovery path for a corrupted WAL file (observed to make every query
     against the database fail): closes the cached connection, then deletes
-    DB_PATH and every sibling file sharing its name (the main file/dir plus
+    db_path() and every sibling file sharing its name (the main file/dir plus
     the `.wal` file, and any other file the engine may create alongside
     them) so the next call to any public function in this module opens a
     completely fresh, empty database. This wipes every document's
@@ -113,8 +120,9 @@ def reset_database() -> None:
     each document's `schema.json` is untouched, so re-extraction remains
     possible."""
     reset_connection()
-    if DB_PATH.parent.is_dir():
-        for path in DB_PATH.parent.glob(DB_PATH.name + "*"):
+    path_ = db_path()
+    if path_.parent.is_dir():
+        for path in path_.parent.glob(path_.name + "*"):
             if path.is_dir():
                 shutil.rmtree(path)
             else:

@@ -4,23 +4,22 @@ import shutil
 import pytest
 
 from app.preprocess.chunking import (
-    DATA_DIR,
     chunk_markdown,
     chunk_markdown_file,
     guess_section_label,
     parse_article_heading,
     parse_section_heading,
 )
-from app.utils.paths import document_dir_for
+from app.utils.paths import data_dir, document_dir_for
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def test_parse_article_heading_matches_bracket_title():

@@ -10,20 +10,20 @@ from app.preprocess.embeddings import EMBEDDING_DIM
 @pytest.fixture(autouse=True)
 def clean_graphdb():
     graphdb.reset_connection()
-    if graphdb.DB_PATH.exists():
+    if graphdb.db_path().exists():
         import shutil
-        if graphdb.DB_PATH.is_dir():
-            shutil.rmtree(graphdb.DB_PATH)
+        if graphdb.db_path().is_dir():
+            shutil.rmtree(graphdb.db_path())
         else:
-            graphdb.DB_PATH.unlink()
+            graphdb.db_path().unlink()
     yield
     graphdb.reset_connection()
-    if graphdb.DB_PATH.exists():
+    if graphdb.db_path().exists():
         import shutil
-        if graphdb.DB_PATH.is_dir():
-            shutil.rmtree(graphdb.DB_PATH)
+        if graphdb.db_path().is_dir():
+            shutil.rmtree(graphdb.db_path())
         else:
-            graphdb.DB_PATH.unlink()
+            graphdb.db_path().unlink()
 
 
 def test_has_graph_is_false_for_unknown_stem():
@@ -192,8 +192,8 @@ def test_reset_database_clears_all_documents_and_deletes_files_on_disk():
 
     graphdb.reset_database()
 
-    assert not graphdb.DB_PATH.exists()
-    wal_path = graphdb.DB_PATH.parent / (graphdb.DB_PATH.name + ".wal")
+    assert not graphdb.db_path().exists()
+    wal_path = graphdb.db_path().parent / (graphdb.db_path().name + ".wal")
     assert not wal_path.exists()
     assert graphdb.has_graph("doc_a") is False
     assert graphdb.has_graph("doc_b") is False
@@ -318,7 +318,7 @@ def test_load_graph_handles_document_with_no_edges_on_fresh_database():
     # load_graph's edge query used to raise
     # `RuntimeError: Binder exception: Cannot find property source_document
     # for r.` instead of returning edges: []. The `clean_graphdb` autouse
-    # fixture wipes DB_PATH before every test, so this test -- calling
+    # fixture wipes the graph database before every test, so this test -- calling
     # write_graph exactly once, with zero edges -- is guaranteed to hit a
     # database with no REL tables at all.
     nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
@@ -620,7 +620,7 @@ def test_find_matching_edges_handles_document_with_no_edges_on_fresh_database():
     # a naive `MATCH (a)-[r]->(b) WHERE r.type IN $types ...` raises
     # `RuntimeError: Binder exception: Cannot find property source_document
     # for r.` when no REL table exists at all anywhere in the database. The
-    # clean_graphdb autouse fixture wipes DB_PATH before every test, so this
+    # clean_graphdb autouse fixture wipes the graph database before every test, so this
     # is guaranteed to be the very first write_graph call against a fresh
     # database, with zero edges -- no REL table exists yet.
     nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
@@ -690,7 +690,7 @@ def test_expand_hops_zero_hops_on_zero_rel_table_database_returns_seed():
     # does NOT raise against a database with zero REL tables -- verified
     # experimentally -- it runs and silently returns zero rows, even at
     # hops=0 where m should always include n itself. The clean_graphdb
-    # autouse fixture wipes DB_PATH before every test, so a single
+    # autouse fixture wipes the graph database before every test, so a single
     # write_graph call with zero edges guarantees no REL table exists yet.
     nodes = [{"id": "n1", "label": "Ada Lovelace", "type": "Person"}]
     graphdb.write_graph("doc_no_edges", nodes, [])

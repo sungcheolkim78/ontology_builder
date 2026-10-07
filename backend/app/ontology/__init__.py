@@ -43,7 +43,6 @@ from app.preprocess.embeddings import node_embedding_text  # noqa: F401
 
 from .persistence import (
     DEFAULT_SCHEMA,
-    DOCUMENTS_DIR,
     _apply_schema_type_changes,
     _apply_type_change,
     _load_versions_manifest,
@@ -125,7 +124,6 @@ from .evolve_graph import (
     validate_ontology,
 )
 from .domain_schema import (
-    DOMAIN_SCHEMA_DIR,
     _domain_manifest_path,
     _domain_pending_review_path,
     _load_domain_manifest,

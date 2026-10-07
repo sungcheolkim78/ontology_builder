@@ -29,10 +29,9 @@ from typing import Any
 
 import anydoc
 import pdfplumber
-from app.utils.paths import data_dir, raw0_path_for, raw_path_for
+from app.utils.paths import raw0_path_for, raw_path_for
 from app.utils.store import write_text
 
-DATA_DIR = data_dir()
 
 
 POLICY_SECTION_LINE = re.compile(r"^제\s*\d+\s*(?:편|장|절|관)\b.*$")

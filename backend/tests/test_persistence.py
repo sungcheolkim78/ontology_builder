@@ -10,18 +10,18 @@ import pytest
 
 from app.ontology import domain_schema, persistence
 from app.preprocess import goldenset
-from app.preprocess.parser import DATA_DIR
+from app.utils.paths import data_dir
 
 STEM = "doc_raw"
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def _slow(real):

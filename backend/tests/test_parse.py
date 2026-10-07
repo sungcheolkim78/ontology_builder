@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.preprocess.parser import (
-    DATA_DIR,
     convert_general_pdf_to_markdown,
     convert_pdf_to_markdown_file,
     general_page_to_markdown,
@@ -15,15 +14,16 @@ from app.preprocess.parser import (
     table_to_markdown,
 )
 from app.utils.paths import document_dir_for
+from app.utils.paths import data_dir
 
 
 @pytest.fixture(autouse=True)
 def clean_data_dir():
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
     yield
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
 
 
 def test_parse_saves_markdown_and_returns_path(monkeypatch):

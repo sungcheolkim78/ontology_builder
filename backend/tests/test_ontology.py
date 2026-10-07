@@ -7,35 +7,35 @@ from fastapi.testclient import TestClient
 
 from app.preprocess.embeddings import EMBEDDING_DIM
 from app.main import app
-from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR, embed_graph, embed_nodes
-from app.preprocess.parser import DATA_DIR
+from app.ontology import DEFAULT_SCHEMA, embed_graph, embed_nodes
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, FakeEmbeddingModel, RecordingChatModel, SequencedChatModel, prompt_text
+from app.utils.paths import data_dir, documents_dir, domain_schemas_dir
 
 
 @pytest.fixture(autouse=True)
 def clean_dirs():
     from app.graph import graphdb
     graphdb.reset_connection()
-    for d in (DATA_DIR, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR):
+    for d in (data_dir(), documents_dir(), domain_schemas_dir()):
         if d.exists():
             shutil.rmtree(d)
-    if graphdb.DB_PATH.exists():
-        if graphdb.DB_PATH.is_file():
-            os.remove(graphdb.DB_PATH)
+    if graphdb.db_path().exists():
+        if graphdb.db_path().is_file():
+            os.remove(graphdb.db_path())
         else:
-            shutil.rmtree(graphdb.DB_PATH)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.rmtree(graphdb.db_path())
+    data_dir().mkdir(parents=True, exist_ok=True)
     yield
     graphdb.reset_connection()
-    for d in (DATA_DIR, DOCUMENTS_DIR, DOMAIN_SCHEMA_DIR):
+    for d in (data_dir(), documents_dir(), domain_schemas_dir()):
         if d.exists():
             shutil.rmtree(d)
-    if graphdb.DB_PATH.exists():
-        if graphdb.DB_PATH.is_file():
-            os.remove(graphdb.DB_PATH)
+    if graphdb.db_path().exists():
+        if graphdb.db_path().is_file():
+            os.remove(graphdb.db_path())
         else:
-            shutil.rmtree(graphdb.DB_PATH)
+            shutil.rmtree(graphdb.db_path())
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):
@@ -46,7 +46,7 @@ def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme.")
 
 
 def seed_schema_version(stem, schema, version=1, document_type="general"):
-    d = DOCUMENTS_DIR / stem
+    d = documents_dir() / stem
     d.mkdir(parents=True, exist_ok=True)
     (d / f"schema_v{version}.json").write_text(json.dumps(schema))
     (d / "versions.json").write_text(
@@ -306,8 +306,8 @@ def test_schema_endpoint_uses_chunks_when_present(monkeypatch):
 
 def test_schema_endpoint_ignores_discovery_by_default(monkeypatch):
     write_document()
-    (DOCUMENTS_DIR / "doc_raw").mkdir(parents=True, exist_ok=True)
-    (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    (documents_dir() / "doc_raw").mkdir(parents=True, exist_ok=True)
+    (documents_dir() / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
@@ -320,8 +320,8 @@ def test_schema_endpoint_ignores_discovery_by_default(monkeypatch):
 
 def test_generate_schema_includes_discovery_hint_when_requested(monkeypatch):
     write_document()
-    (DOCUMENTS_DIR / "doc_raw").mkdir(parents=True, exist_ok=True)
-    (DOCUMENTS_DIR / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
+    (documents_dir() / "doc_raw").mkdir(parents=True, exist_ok=True)
+    (documents_dir() / "doc_raw" / "discovery.json").write_text(json.dumps({"classes": [{"name": "Policy"}]}))
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
@@ -418,7 +418,7 @@ def test_extract_uses_and_saves_default_schema_when_none_saved(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == graph
-    saved_schema = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
+    saved_schema = json.loads((documents_dir() / "doc_raw" / "schema_v1.json").read_text())
     assert saved_schema == DEFAULT_SCHEMA
 
 
@@ -769,7 +769,7 @@ def test_list_schemas_returns_stems_with_a_saved_schema():
     for stem in ("doc_raw", "other_raw"):
         seed_schema_version(stem, schema)
     # a graph dir with no versions.json shouldn't be listed
-    (DOCUMENTS_DIR / "no_schema_raw").mkdir(parents=True)
+    (documents_dir() / "no_schema_raw").mkdir(parents=True)
     client = TestClient(app)
 
     response = client.get("/api/ontology/schemas")
@@ -851,7 +851,7 @@ def test_use_schema_copies_source_schema_to_target():
 
     assert response.status_code == 200
     assert response.json() == {**source_schema, "version": 1}
-    saved = json.loads((DOCUMENTS_DIR / "target_raw" / "schema_v1.json").read_text())
+    saved = json.loads((documents_dir() / "target_raw" / "schema_v1.json").read_text())
     assert saved == source_schema
 
 
@@ -991,7 +991,7 @@ def test_delete_version_removes_schema_file_and_graph_rows():
     delete_version("doc_raw", v1)
 
     assert list_versions("doc_raw") == []
-    assert not (DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").is_file()
+    assert not (documents_dir() / "doc_raw" / "schema_v1.json").is_file()
     assert graphdb.has_graph("doc_raw", version=1) is False
 
 
@@ -1033,9 +1033,9 @@ def test_generate_schema_response_includes_version(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {**schema, "version": 1}
-    saved = json.loads((DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").read_text())
+    saved = json.loads((documents_dir() / "doc_raw" / "schema_v1.json").read_text())
     assert saved == schema
-    versions = json.loads((DOCUMENTS_DIR / "doc_raw" / "versions.json").read_text())
+    versions = json.loads((documents_dir() / "doc_raw" / "versions.json").read_text())
     assert versions["active_version"] == 1
 
 
@@ -1051,8 +1051,8 @@ def test_generate_schema_second_call_creates_second_version(monkeypatch):
     response = client.post("/api/ontology/doc_raw.md/schema")
 
     assert response.json()["version"] == 2
-    assert (DOCUMENTS_DIR / "doc_raw" / "schema_v1.json").is_file()
-    assert (DOCUMENTS_DIR / "doc_raw" / "schema_v2.json").is_file()
+    assert (documents_dir() / "doc_raw" / "schema_v1.json").is_file()
+    assert (documents_dir() / "doc_raw" / "schema_v2.json").is_file()
 
 
 def test_list_schema_versions_endpoint_reports_active_and_graph_status(monkeypatch):

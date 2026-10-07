@@ -13,30 +13,30 @@ from app.ontology.evolve_graph import (
     propose_evolution,
     validate_ontology,
 )
-from app.preprocess.parser import DATA_DIR
 from fakes import FakeChatModel, SequencedChatModel
+from app.utils.paths import data_dir
 
 
 @pytest.fixture(autouse=True)
 def clean_dirs():
     graphdb.reset_connection()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
-    if graphdb.DB_PATH.exists():
-        if graphdb.DB_PATH.is_file():
-            os.remove(graphdb.DB_PATH)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
+    if graphdb.db_path().exists():
+        if graphdb.db_path().is_file():
+            os.remove(graphdb.db_path())
         else:
-            shutil.rmtree(graphdb.DB_PATH)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.rmtree(graphdb.db_path())
+    data_dir().mkdir(parents=True, exist_ok=True)
     yield
     graphdb.reset_connection()
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
-    if graphdb.DB_PATH.exists():
-        if graphdb.DB_PATH.is_file():
-            os.remove(graphdb.DB_PATH)
+    if data_dir().exists():
+        shutil.rmtree(data_dir())
+    if graphdb.db_path().exists():
+        if graphdb.db_path().is_file():
+            os.remove(graphdb.db_path())
         else:
-            shutil.rmtree(graphdb.DB_PATH)
+            shutil.rmtree(graphdb.db_path())
 
 
 def _seed_schema_and_graph(stem="doc_raw"):
