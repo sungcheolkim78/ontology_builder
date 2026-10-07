@@ -66,7 +66,7 @@ def test_find_redundant_type_pairs_skips_types_with_fewer_than_two_entries():
 
 def test_measure_schema_stability_perfect_agreement_across_runs(monkeypatch):
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result = measure_schema_stability("some document text", runs=3)
 
@@ -80,7 +80,7 @@ def test_measure_schema_stability_disagreement_lowers_similarity(monkeypatch):
         {"node_types": [{"name": "Individual", "description": "a person"}], "edge_types": []},
     ]
     fake_model = SequencedChatModel([json.dumps(s) for s in schemas])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result = measure_schema_stability("some document text", runs=2)
 

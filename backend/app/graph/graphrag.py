@@ -3,7 +3,7 @@ import os
 
 from app.graph import graphdb
 from app.llm.chat import get_chat_model, to_langchain_messages
-from app.llm.json_call import call_json
+from app.llm.calls import call_json
 from app.preprocess.embeddings import get_embedding_model
 from app.ontology.schema_validation import normalize_schema
 from app.llm.telemetry import invoke_with_telemetry, embed_with_telemetry

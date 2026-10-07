@@ -1,4 +1,4 @@
-"""Tests for app.llm.json_call.call_json, crossing its one interface with a
+"""Tests for app.llm.calls.call_json, crossing its one interface with a
 fake chat model patched in at the module's own `get_chat_model` seam -- no
 real LLM, no per-caller patching."""
 
@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.llm.json_call import call_json, parse_json_response
+from app.llm.calls import call_json, parse_json_response
 
 
 class FakeChatModel:
@@ -32,7 +32,7 @@ def fake_model(monkeypatch):
             asked.append(operation)
             return model
 
-        monkeypatch.setattr("app.llm.json_call.get_chat_model", fake_get_chat_model)
+        monkeypatch.setattr("app.llm.calls.get_chat_model", fake_get_chat_model)
         model.asked = asked
         return model
 
@@ -94,13 +94,13 @@ def test_an_unknown_operation_raises_value_error(fake_model):
 def test_the_registered_telemetry_name_is_used(fake_model, monkeypatch):
     fake_model({"node_types": [], "edge_types": []})
     names = []
-    real = __import__("app.llm.json_call", fromlist=["invoke_with_telemetry"]).invoke_with_telemetry
+    real = __import__("app.llm.calls", fromlist=["invoke_with_telemetry"]).invoke_with_telemetry
 
     def spy(operation, model, prompt, *args, **kwargs):
         names.append(operation)
         return real(operation, model, prompt, *args, **kwargs)
 
-    monkeypatch.setattr("app.llm.json_call.invoke_with_telemetry", spy)
+    monkeypatch.setattr("app.llm.calls.invoke_with_telemetry", spy)
 
     call_json("generate_schema", "p")
 

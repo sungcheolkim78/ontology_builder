@@ -206,7 +206,7 @@ reduce)
 (see that package's own `__init__.py` docstring for the full split and why
 `get_chat_model`/`get_embedding_model` are still re-exported from there for
 `summarize_document` (a prose call) and the embedding call sites; every
-JSON-returning call goes through `app.llm.json_call.call_json` instead). `app.ontology.schema_validation` (normalization/validation
+JSON-returning call goes through `app.llm.calls.call_json` instead). `app.ontology.schema_validation` (normalization/validation
 of a schema's `node_types`/`edge_types` shape) lives inside this same
 package rather than as its own top-level module, since it's a leaf every
 other `app.ontology` submodule reaches for, not a pipeline stage of its
@@ -291,7 +291,7 @@ on-disk path doesn't have to reach into `main.py` for it.
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages. Prose-returning LLM calls
   (the chat answer, `summarize_document`) use `get_chat_model` from here.
-- `operations.py` + `json_call.py` (`app/llm/`) — every LLM call that must
+- `operations.py` + `calls.py` (`app/llm/`) — every LLM call that must
   return a JSON object goes through `call_json(operation, prompt)`, which
   returns the parsed dict (`parse_json_response` lives here too: strips
   markdown code fences, handles the Responses-API content-block shape,
@@ -359,7 +359,7 @@ on-disk path doesn't have to reach into `main.py` for it.
   conditions, exceptions, figures) that label/type alone would lose —
   added because label/type extraction is a lossy summary, and GraphRAG
   answers were otherwise capped at whatever a short label could convey.
-  Both steps call the model via `call_json` (see `operations.py`/`json_call.py`
+  Both steps call the model via `call_json` (see `operations.py`/`calls.py`
   above), which owns JSON parsing and shape-checking for every LLM-JSON caller
   in this codebase.
   Only the schema is still a JSON file, at
@@ -543,7 +543,7 @@ on-disk path doesn't have to reach into `main.py` for it.
 into each module's own namespace, so tests patch them per-module rather than
 at their definitions in `app.llm.chat`/`app.preprocess.embeddings`. Every
 JSON operation (discover, schema, extract, validate, evolve, question
-analysis, goldenset) shares one patch point, `app.llm.json_call.get_chat_model`
+analysis, goldenset) shares one patch point, `app.llm.calls.get_chat_model`
 (its fake takes the operation name: `lambda operation=None: model`); only the
 prose calls keep their own (`app.ontology.get_chat_model` for
 `summarize_document`, `app.graph.graphrag.get_chat_model` for the GraphRAG

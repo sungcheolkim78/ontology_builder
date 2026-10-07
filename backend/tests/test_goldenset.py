@@ -117,7 +117,7 @@ def test_generate_goldenset_single_group_two_llm_calls(monkeypatch):
     questions = _question_payload(1)
     answers = _answer_payload(["q001"])
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result = generate_goldenset("Alice works at Acme.", "doc_raw.md", question_count=1)
 
@@ -135,7 +135,7 @@ def test_generate_goldenset_downgrades_unverifiable_evidence(monkeypatch):
     questions = _question_payload(1)
     answers = _answer_payload(["q001"], quote="this text is not in the document")
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result = generate_goldenset("Alice works at Acme.", "doc_raw.md", question_count=1)
 
@@ -156,7 +156,7 @@ def test_goldenset_endpoint_saves_and_returns_report(monkeypatch):
     questions = _question_payload(1)
     answers = _answer_payload(["q001"])
     fake_model = SequencedChatModel([json.dumps(questions), json.dumps(answers)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset", json={"question_count": 1})
@@ -180,7 +180,7 @@ def test_goldenset_endpoint_returns_404_when_document_missing():
 
 def test_goldenset_endpoint_returns_400_on_invalid_json(monkeypatch):
     write_document()
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel("not json"))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("not json"))
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset")
@@ -282,7 +282,7 @@ def test_goldenset_answer_endpoint_generates_saves_and_returns_record(monkeypatc
         ]
     )
     monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/goldenset/q001/answer", json={"hops": 2})

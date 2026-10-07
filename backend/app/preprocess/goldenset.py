@@ -24,7 +24,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from app.llm.json_call import call_json
+from app.llm.calls import call_json
 from app.utils.paths import document_dir_for
 from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
 

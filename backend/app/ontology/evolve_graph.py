@@ -14,7 +14,7 @@ from collections import Counter
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.graph import graphdb
-from app.llm.json_call import call_json
+from app.llm.calls import call_json
 from app.llm.prompts import EVOLUTION_PROMPT, VALIDATION_PROMPT
 
 from .extract_graph import extract_graph

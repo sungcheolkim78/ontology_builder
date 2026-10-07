@@ -15,7 +15,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app import ontology
-from app.llm.json_call import call_json
+from app.llm.calls import call_json
 from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,

@@ -11,7 +11,7 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.llm.json_call import call_json
+from app.llm.calls import call_json
 from app.llm.prompts import EXTRACT_PROMPT
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema, save_graph

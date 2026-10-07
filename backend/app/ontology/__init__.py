@@ -40,7 +40,7 @@ not a JSON operation) reaches get_chat_model via `from app import ontology` +
 `ontology.get_chat_model(...)` at call time, and embed_nodes/embed_query-style
 callers do the same for get_embedding_model (never `from . import
 get_chat_model`, which would bind a private copy of the name at import time).
-Every JSON-returning LLM call goes through app.llm.json_call.call_json
+Every JSON-returning LLM call goes through app.llm.calls.call_json
 instead, whose own `get_chat_model` is the one patch point tests use for it.
 """
 

@@ -170,7 +170,7 @@ def _discovery_report(domain="d", classes=None, relationships=None, competency_q
 
 def test_discover_ontology_returns_report_from_llm_json(monkeypatch):
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
 
     result = discover_ontology("some document text")
 
@@ -179,7 +179,7 @@ def test_discover_ontology_returns_report_from_llm_json(monkeypatch):
 
 def test_discover_ontology_raises_when_classes_missing(monkeypatch):
     monkeypatch.setattr(
-        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({"no_classes_key": []}))
+        "app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({"no_classes_key": []}))
     )
 
     with pytest.raises(ValueError):
@@ -202,7 +202,7 @@ def test_discover_for_document_consolidates_multiple_chunk_groups(monkeypatch, t
         "relationships": [],
     }
     fake_model = SequencedChatModel([json.dumps(group1), json.dumps(group2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     write_document()
     write_chunks("doc_raw", ["a" * 30, "b" * 30])
@@ -221,7 +221,7 @@ def test_discover_for_document_consolidates_multiple_chunk_groups(monkeypatch, t
 
 def test_generate_schema_returns_schema_from_llm_json(monkeypatch):
     schema = {"node_types": [{"name": "Person", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result = generate_schema("some document text")
 
@@ -234,7 +234,7 @@ def test_generate_schema_raises_for_unknown_document_type():
 
 
 def test_generate_schema_raises_when_node_edge_types_missing(monkeypatch):
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))
 
     with pytest.raises(ValueError):
         generate_schema("some document text")
@@ -243,7 +243,7 @@ def test_generate_schema_raises_when_node_edge_types_missing(monkeypatch):
 def test_generate_schema_includes_discovery_hint_when_given(monkeypatch):
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     generate_schema("some document text", discovery={"classes": [{"name": "Policy"}]})
 
@@ -254,7 +254,7 @@ def test_generate_schema_includes_discovery_hint_when_given(monkeypatch):
 def test_generate_schema_ignores_discovery_by_default(monkeypatch):
     schema = {"node_types": [], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     generate_schema("some document text")
 
@@ -266,7 +266,7 @@ def test_schema_for_document_single_chunk_group_skips_consolidation(monkeypatch)
     write_chunks("doc_raw", ["hello"])
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result, _ = schema_for_document("doc_raw")
 
@@ -281,7 +281,7 @@ def test_schema_for_document_consolidates_multiple_chunk_groups(monkeypatch, thi
     schema2 = {"node_types": [{"name": "InsurancePolicy", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": [{"name": "Policy", "description": "merged"}], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result, _ = schema_for_document("doc_raw")
 
@@ -300,7 +300,7 @@ def test_discover_for_document_raises_file_not_found_when_document_missing():
 def test_discover_for_document_uses_whole_document_when_no_chunks(monkeypatch):
     write_document()
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
 
     result = discover_for_document("doc_raw")
 
@@ -312,7 +312,7 @@ def test_discover_for_document_uses_chunks_when_present(monkeypatch):
     write_chunks("doc_raw", ["Alice works at Acme."])
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
     fake_model = RecordingChatModel(json.dumps(report))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     result = discover_for_document("doc_raw")
 
@@ -335,7 +335,7 @@ def test_discover_for_document_ignores_max_chars_for_group_budget(monkeypatch):
     group2 = _discovery_report(classes=[{"name": "Coverage", "definition": "d2", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
     consolidated = {"classes": group1["classes"] + group2["classes"], "relationships": []}
     model = KeyedChatModel({"a" * 30: json.dumps(group1), "b" * 30: json.dumps(group2)}, default=json.dumps(consolidated))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     discover_for_document("doc_raw", max_chars=1_000_000)  # the frontend's real-world default
 
@@ -351,7 +351,7 @@ def test_schema_for_document_raises_file_not_found_when_document_missing():
 def test_schema_for_document_uses_whole_document_when_no_chunks(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result, _ = schema_for_document("doc_raw")
 
@@ -362,7 +362,7 @@ def test_schema_for_document_uses_chunks_when_present(monkeypatch):
     write_document()
     write_chunks("doc_raw", ["Alice works at Acme."])
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result, _ = schema_for_document("doc_raw")
 
@@ -380,7 +380,7 @@ def test_schema_for_document_ignores_max_chars_for_group_budget(monkeypatch):
     schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
     model = KeyedChatModel({"a" * 30: json.dumps(schema1), "b" * 30: json.dumps(schema2)}, default=json.dumps(consolidated))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     schema_for_document("doc_raw", max_chars=1_000_000)  # the frontend's real-world default
 
@@ -420,7 +420,7 @@ def test_schema_for_document_reports_progress_per_chunk_group(monkeypatch, thirt
     schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
 
     schema_for_document("doc_raw")
 
@@ -433,7 +433,7 @@ def test_schema_for_document_reports_progress_per_chunk_group(monkeypatch, thirt
 def test_discover_for_document_reports_progress_for_whole_document(monkeypatch):
     write_document()
     report = _discovery_report(classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
 
     discover_for_document("doc_raw")
 
@@ -451,7 +451,7 @@ def test_discover_for_document_reports_progress_for_whole_document(monkeypatch):
 def test_schema_for_document_reports_progress_for_whole_document(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     schema_for_document("doc_raw")
 
@@ -503,7 +503,7 @@ def test_schema_for_document_retry_reruns_only_the_failed_group(monkeypatch, thi
         default=json.dumps(consolidated),
         fail_on={"b" * 30},
     )
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     with pytest.raises(RuntimeError):
         schema_for_document("doc_raw")
 
@@ -531,7 +531,7 @@ def test_schema_for_document_does_not_reuse_results_across_different_inputs(
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     write_chunks("doc_raw", ["hello"])
     save_discovery("doc_raw", _discovery_report(classes=[{"name": "Policy"}]))
 
@@ -545,7 +545,7 @@ def test_schema_for_document_reuses_results_when_inputs_are_unchanged(monkeypatc
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     write_chunks("doc_raw", ["hello"])
 
     schema_for_document("doc_raw")
@@ -575,7 +575,7 @@ def test_discover_for_document_retry_keeps_every_field_of_a_resumed_report(monke
         default=json.dumps(consolidated),
         fail_on={"b" * 30},
     )
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     with pytest.raises(RuntimeError):
         discover_for_document("doc_raw")
 
@@ -596,7 +596,7 @@ def test_discover_for_document_reuses_the_resume_cache_for_an_unchunked_document
         classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
     )
     model = ScriptedChatModel({}, default=json.dumps(report))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     first = discover_for_document("doc_raw")
     second = discover_for_document("doc_raw")
@@ -612,7 +612,7 @@ def test_discover_for_document_does_not_reuse_results_across_a_model_change(monk
         classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
     )
     model = ScriptedChatModel({}, default=json.dumps(report))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     set_model_name("openai/gpt-5.4-mini", "discover_ontology")
     discover_for_document("doc_raw")
@@ -627,7 +627,7 @@ def test_discover_for_document_does_not_reuse_results_across_a_model_change(monk
 def test_discover_for_document_rejects_an_unchunked_document_over_max_chars(monkeypatch):
     write_document(content="x" * 50)
     model = ScriptedChatModel({}, default="{}")
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     with pytest.raises(ValueError, match="too long"):
         discover_for_document("doc_raw", max_chars=10)
@@ -639,7 +639,7 @@ def test_schema_for_document_reuses_the_resume_cache_for_an_unchunked_document(m
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     first, _ = schema_for_document("doc_raw")
     second, _ = schema_for_document("doc_raw")
@@ -653,7 +653,7 @@ def test_schema_for_document_does_not_reuse_results_across_a_model_change(monkey
     monkeypatch.setattr("app.llm.chat._selected_models", {})
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     set_model_name("openai/gpt-5.4-mini", "generate_schema")
     schema_for_document("doc_raw")
@@ -668,7 +668,7 @@ def test_schema_for_document_does_not_reuse_results_across_a_model_change(monkey
 def test_schema_for_document_rejects_an_unchunked_document_over_max_chars(monkeypatch):
     write_document(content="x" * 50)
     model = ScriptedChatModel({}, default="{}")
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     with pytest.raises(ValueError, match="too long"):
         schema_for_document("doc_raw", max_chars=10)
@@ -679,7 +679,7 @@ def test_schema_for_document_rejects_an_unchunked_document_over_max_chars(monkey
 def test_schema_for_document_rejects_an_unknown_document_type(monkeypatch):
     write_document()
     model = ScriptedChatModel({}, default="{}")
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     with pytest.raises(ValueError, match="unknown document_type"):
         schema_for_document("doc_raw", document_type="nonsense")
@@ -695,7 +695,7 @@ def test_discover_for_document_saves_the_report_it_returns(monkeypatch):
     report = _discovery_report(
         classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
     )
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(report)))
 
     result = discover_for_document("doc_raw")
 
@@ -709,7 +709,7 @@ def test_discover_for_document_saves_the_report_it_returns(monkeypatch):
 def test_schema_for_document_creates_and_activates_a_version_and_returns_it(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
     result_schema, version = schema_for_document("doc_raw", document_type="legal")
 
@@ -728,7 +728,7 @@ def test_schema_for_document_feeds_the_saved_discovery_to_the_prompt_when_asked(
     save_discovery("doc_raw", report)
     schema = {"node_types": [], "edge_types": []}
     model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     schema_for_document("doc_raw", use_discovery=True)
 
@@ -741,7 +741,7 @@ def test_schema_for_document_without_a_saved_discovery_runs_with_no_hint(monkeyp
     write_document()
     schema = {"node_types": [], "edge_types": []}
     model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     schema_for_document("doc_raw", use_discovery=True)
 

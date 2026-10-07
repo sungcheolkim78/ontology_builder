@@ -86,7 +86,7 @@ def get_chat_model(operation: str | None = None):
         # Responses API instead of Chat Completions, which returns
         # `response.content` as a list of content blocks (reasoning + text,
         # order not guaranteed) rather than a plain string -- see
-        # app.llm.json_call.parse_json_response's own comment for the
+        # app.llm.calls.parse_json_response's own comment for the
         # normalization this requires downstream.
         kwargs["reasoning"] = {"effort": "low"}
     return ChatOpenAI(
