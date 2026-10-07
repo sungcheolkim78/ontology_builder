@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,32 +9,7 @@ from app.main import app
 from app.ontology import DEFAULT_SCHEMA, embed_graph, embed_nodes
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, FakeEmbeddingModel, RecordingChatModel, SequencedChatModel, prompt_text
-from app.utils.paths import data_dir, documents_dir, domain_schemas_dir
-
-
-@pytest.fixture(autouse=True)
-def clean_dirs():
-    from app.graph import graphdb
-    graphdb.reset_connection()
-    for d in (data_dir(), documents_dir(), domain_schemas_dir()):
-        if d.exists():
-            shutil.rmtree(d)
-    if graphdb.db_path().exists():
-        if graphdb.db_path().is_file():
-            os.remove(graphdb.db_path())
-        else:
-            shutil.rmtree(graphdb.db_path())
-    data_dir().mkdir(parents=True, exist_ok=True)
-    yield
-    graphdb.reset_connection()
-    for d in (data_dir(), documents_dir(), domain_schemas_dir()):
-        if d.exists():
-            shutil.rmtree(d)
-    if graphdb.db_path().exists():
-        if graphdb.db_path().is_file():
-            os.remove(graphdb.db_path())
-        else:
-            shutil.rmtree(graphdb.db_path())
+from app.utils.paths import documents_dir
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):

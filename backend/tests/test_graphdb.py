@@ -7,25 +7,6 @@ from app.graph import graphdb
 from app.preprocess.embeddings import EMBEDDING_DIM
 
 
-@pytest.fixture(autouse=True)
-def clean_graphdb():
-    graphdb.reset_connection()
-    if graphdb.db_path().exists():
-        import shutil
-        if graphdb.db_path().is_dir():
-            shutil.rmtree(graphdb.db_path())
-        else:
-            graphdb.db_path().unlink()
-    yield
-    graphdb.reset_connection()
-    if graphdb.db_path().exists():
-        import shutil
-        if graphdb.db_path().is_dir():
-            shutil.rmtree(graphdb.db_path())
-        else:
-            graphdb.db_path().unlink()
-
-
 def test_has_graph_is_false_for_unknown_stem():
     assert graphdb.has_graph("nonexistent_stem") is False
 

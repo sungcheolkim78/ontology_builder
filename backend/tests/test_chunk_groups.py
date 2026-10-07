@@ -4,7 +4,6 @@ never talks to an LLM itself (each stage's own `group_fn` does)."""
 
 import json
 import re
-import shutil
 import threading
 import time
 from dataclasses import replace
@@ -15,16 +14,6 @@ from app.llm.chat import set_model_name
 from app.llm.operations import OPERATIONS
 from app.ontology.chunk_groups import map_concurrently, run_chunk_groups
 from app.utils.paths import document_dir_for
-from app.utils.paths import data_dir
-
-
-@pytest.fixture(autouse=True)
-def clean_data_dir():
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    yield
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
 
 
 def _chunks(*texts):

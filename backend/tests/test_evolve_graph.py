@@ -1,6 +1,4 @@
 import json
-import os
-import shutil
 
 import pytest
 
@@ -14,29 +12,6 @@ from app.ontology.evolve_graph import (
     validate_ontology,
 )
 from fakes import FakeChatModel, SequencedChatModel
-from app.utils.paths import data_dir
-
-
-@pytest.fixture(autouse=True)
-def clean_dirs():
-    graphdb.reset_connection()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    if graphdb.db_path().exists():
-        if graphdb.db_path().is_file():
-            os.remove(graphdb.db_path())
-        else:
-            shutil.rmtree(graphdb.db_path())
-    data_dir().mkdir(parents=True, exist_ok=True)
-    yield
-    graphdb.reset_connection()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    if graphdb.db_path().exists():
-        if graphdb.db_path().is_file():
-            os.remove(graphdb.db_path())
-        else:
-            shutil.rmtree(graphdb.db_path())
 
 
 def _seed_schema_and_graph(stem="doc_raw"):

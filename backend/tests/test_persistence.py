@@ -2,7 +2,6 @@
 concurrent callers: two requests for one document at once must not lose an
 update."""
 
-import shutil
 import threading
 import time
 
@@ -10,18 +9,8 @@ import pytest
 
 from app.ontology import domain_schema, persistence
 from app.preprocess import goldenset
-from app.utils.paths import data_dir
 
 STEM = "doc_raw"
-
-
-@pytest.fixture(autouse=True)
-def clean_data_dir():
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    yield
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
 
 
 def _slow(real):

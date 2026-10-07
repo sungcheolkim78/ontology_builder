@@ -1,8 +1,6 @@
 import json
 import os
-import shutil
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.graph import graphdb
@@ -10,17 +8,6 @@ from app.main import app
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel
 from app.utils.paths import data_dir, documents_dir
-
-
-@pytest.fixture(autouse=True)
-def clean_data_dir():
-    graphdb.reset_connection()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    yield
-    graphdb.reset_connection()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
 
 
 def write_raw(stem, content="content"):

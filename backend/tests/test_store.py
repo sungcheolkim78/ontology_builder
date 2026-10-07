@@ -10,8 +10,17 @@ import pytest
 from app.utils.store import locked, read_json, write_json
 
 
-def test_write_json_creates_missing_folders_and_round_trips_korean_text(tmp_path):
-    path = tmp_path / "documents" / "doc_raw" / "versions.json"
+@pytest.fixture
+def work(tmp_path):
+    """A folder of the test's own: tmp_path also holds the data directory the
+    suite's autouse fixture creates, which these tests must not see."""
+    folder = tmp_path / "work"
+    folder.mkdir()
+    return folder
+
+
+def test_write_json_creates_missing_folders_and_round_trips_korean_text(work):
+    path = work / "documents" / "doc_raw" / "versions.json"
 
     write_json(path, {"name": "보험약관", "versions": [1, 2]})
 
@@ -20,13 +29,13 @@ def test_write_json_creates_missing_folders_and_round_trips_korean_text(tmp_path
     assert "보험약관" in path.read_text()
 
 
-def test_read_json_returns_the_default_for_a_missing_file(tmp_path):
-    assert read_json(tmp_path / "nope.json") is None
-    assert read_json(tmp_path / "nope.json", default=[]) == []
+def test_read_json_returns_the_default_for_a_missing_file(work):
+    assert read_json(work / "nope.json") is None
+    assert read_json(work / "nope.json", default=[]) == []
 
 
-def test_a_failed_replace_leaves_the_old_file_intact_and_no_temp_file_behind(tmp_path, monkeypatch):
-    path = tmp_path / "versions.json"
+def test_a_failed_replace_leaves_the_old_file_intact_and_no_temp_file_behind(work, monkeypatch):
+    path = work / "versions.json"
     write_json(path, {"version": 1})
 
     def failing_replace(src, dst):
@@ -38,11 +47,11 @@ def test_a_failed_replace_leaves_the_old_file_intact_and_no_temp_file_behind(tmp
         write_json(path, {"version": 2})
 
     assert read_json(path) == {"version": 1}
-    assert [p.name for p in tmp_path.iterdir()] == ["versions.json"]
+    assert [p.name for p in work.iterdir()] == ["versions.json"]
 
 
-def test_concurrent_writers_to_one_path_never_fail_and_leave_one_whole_value(tmp_path):
-    path = tmp_path / "progress.json"
+def test_concurrent_writers_to_one_path_never_fail_and_leave_one_whole_value(work):
+    path = work / "progress.json"
     errors = []
 
     def writer(worker):
@@ -60,11 +69,11 @@ def test_concurrent_writers_to_one_path_never_fail_and_leave_one_whole_value(tmp
 
     assert errors == []
     assert set(read_json(path)) == {"worker", "attempt"}  # a whole value, not a torn one
-    assert [p.name for p in tmp_path.iterdir()] == ["progress.json"]
+    assert [p.name for p in work.iterdir()] == ["progress.json"]
 
 
-def test_a_locked_read_modify_write_loses_no_update(tmp_path):
-    path = tmp_path / "counter.json"
+def test_a_locked_read_modify_write_loses_no_update(work):
+    path = work / "counter.json"
     write_json(path, {"n": 0})
 
     def bump():

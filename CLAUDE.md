@@ -117,17 +117,23 @@ OPENROUTER_API_KEY=dummy python -m pytest tests/test_chat.py::test_chat_returns_
 mocks the LLM call rather than hitting OpenRouter. Tests run directly
 against the venv, not inside a container.
 
-Tests never touch the real `backend/data` — `tests/conftest.py` points
-`ONTOLOGY_DATA_DIR` at a throwaway temp directory before any `app.*` module
-is imported, and `app/utils/paths.py`'s `data_dir()` (used by `parser.DATA_DIR`,
-`ontology.DOCUMENTS_DIR`, `graphdb.DB_PATH`) honors that override. This
-exists because `test_graphdb.py`/`test_ontology.py`/`test_files.py`'s
-fixtures delete and recreate `DATA_DIR`/`DOCUMENTS_DIR`/`graphdb.DB_PATH`
-before and after every test — before this override existed, that meant
-deleting every real extracted document, schema, and the graph DB on every
-test run. Do not remove or bypass this isolation; if you need to inspect
-what a test actually wrote, read `os.environ["ONTOLOGY_DATA_DIR"]` inside
-the test process rather than pointing tests at the project path.
+Tests never touch the real `backend/data` — `tests/conftest.py` sets
+`ONTOLOGY_DATA_DIR` to a throwaway directory before any `app.*` module is
+imported (a safety net for anything that runs at import time), and an autouse
+fixture, `isolated_data_dir`, then gives *every test* an empty data directory
+of its own (a `data/` folder under pytest's `tmp_path`) and drops the graph
+database's cached connection on the way in and out. This works because
+nothing caches the data directory: `app/utils/paths.py`'s `data_dir()` reads
+`ONTOLOGY_DATA_DIR` every time a path is needed, and `graphdb.db_path()`,
+`documents_dir()` and `domain_schemas_dir()` build on it (there is no
+module-level `DATA_DIR`/`DOCUMENTS_DIR`/`DB_PATH` constant to go stale), so a
+test never has to delete or recreate anything — what one test writes is simply
+not there for the next. Do not remove or bypass this isolation. A test that
+starts a worker process (e.g. the PDF converter in `test_samsunglife.py`) must
+start it *after* the fixture has set the environment, since the child inherits
+it — that file gives each test a pool of its own for this reason. To inspect
+what a test wrote, use `data_dir()` inside the test, or the `isolated_data_dir`
+fixture's value, rather than pointing at the project path.
 
 ### Backing up analyzed data
 
@@ -211,15 +217,33 @@ other `app.ontology` submodule reaches for, not a pipeline stage of its
 own.
 
 `app/utils/` holds cross-cutting helpers with no pipeline stage or route of
-their own: `auth.py` (token issuing/checking) and `paths.py` (every
-filesystem-path computation for `backend/data`'s layout — `data_dir`,
-`documents_dir`, `document_dir_for`, plus the small filename-derived
-helpers `stem_for`, `document_path_for`, `chunk_path_for`,
-`document_raw_files`). Those four were originally private helpers inside
-`main.py`; they moved here once several unrelated routes needed the same
-`{stem}.md` ⇄ `raw.md`/`chunks.json` path logic, so `main.py` stays
-request/response shaping only and any future module needing a document's
-on-disk path doesn't have to reach into `main.py` for it.
+their own: `auth.py` (token issuing/checking), `paths.py` and `store.py`.
+Together the last two are how everything under `backend/data` is located,
+read and written:
+
+- `paths.py` owns the *layout* — every file and folder name under a document
+  folder (`documents/{stem}/`: `raw.md`, `raw0.md`, `source.pdf`, `chunks.json`,
+  `versions.json`, `schema_v{N}.json`, `manifest.json`, `discovery.json`,
+  `summary.json`, `goldenset*.json`, `progress/`, `resume_cache/`) and a domain
+  folder (`domain_schemas/{domain}/`), as functions (`raw_path_for`,
+  `versions_path`, `progress_path_for`, ...) built on `data_dir()`, plus the
+  filename-derived helpers `stem_for`/`document_path_for` and
+  `document_raw_files`/`pdf_only_document_dirs`, which know what counts as a
+  document for `/api/files` and `/api/documents`. No other module spells out one of
+  these names (the modules that used to define a path helper import it from
+  here, so `from app.ontology import versions_path` still works).
+- `store.py` owns the *I/O*: `write_text`/`write_bytes`/`write_json` write to a
+  temp file beside the target and `os.replace` it, so a reader — a request
+  thread, or the process converting a PDF — never sees a half-written file, and
+  a failed write leaves the old file; `read_json(path, default)` returns the
+  default for a missing file; `locked(key)` is a re-entrant per-key lock that
+  serializes a read-modify-write (`versions.json` and `manifest.json` under the
+  document's stem, goldenset answers likewise, a domain's files under
+  `"domain:{name}"`). It is in-process only, which is enough: the server is one
+  `uvicorn` process whose request threads are what overlap, and the one other
+  writer, the PDF converter subprocess, only replaces whole files. Anything that
+  reads-then-writes one of these files must hold `locked(...)` across both
+  steps, as `create_schema_version` and `update_document_manifest` do.
 
 - `parser.py` — the pdf -> markdown stage of document ingestion, all of it
   writing `backend/data/documents/{stem}/raw.md` (`app.utils.paths.document_dir_for`

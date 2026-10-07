@@ -4,6 +4,14 @@ Turns a document into a custom ontology (schema plus extracted nodes and edges) 
 
 ## Language
 
+**Document folder**:
+The one directory under `documents/` holding everything about one document: its Markdown, source PDF, chunks, schema versions, graph-extraction progress and so on. A domain has a folder of its own under `domain_schemas/`.
+_Avoid_: document directory, document store
+
+**Artifact**:
+One kind of file inside a document folder (or a domain folder): `raw.md`, `chunks.json`, `versions.json`, a `schema_v{N}.json`, and so on. Where each one lives is decided in one place, `app.utils.paths`.
+_Avoid_: output, cache file (a resume cache entry is an artifact too)
+
 **Chunk group**:
 A budgeted run of consecutive chunks sent to the LLM in a single call. A document with no chunks is a single chunk group holding its whole text.
 _Avoid_: batch, candidate group

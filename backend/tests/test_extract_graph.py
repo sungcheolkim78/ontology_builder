@@ -1,5 +1,4 @@
 import json
-import shutil
 import threading
 
 import pytest
@@ -14,7 +13,7 @@ from app.ontology.extract_graph import (
 )
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
-from app.utils.paths import data_dir, documents_dir
+from app.utils.paths import documents_dir
 
 
 class KeyedChatModel:
@@ -32,17 +31,6 @@ class KeyedChatModel:
             if marker in text:
                 return type("FakeResponse", (), {"content": content})()
         raise AssertionError(f"no matching response for prompt: {prompt!r}")
-
-
-@pytest.fixture(autouse=True)
-def clean_data_dir():
-    graphdb.reset_database()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    yield
-    graphdb.reset_database()
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
 
 
 def write_document(filename="doc_raw.md", content="# Doc\nAlice works at Acme."):

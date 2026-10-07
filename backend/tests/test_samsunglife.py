@@ -1,5 +1,5 @@
-import shutil
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -9,16 +9,19 @@ from app.main import app
 from app.ontology import load_document_manifest
 from app.preprocess.samsunglife_utils import DEFAULT_CATEGORIES, SamsungLifeTerm
 from app.utils.paths import data_dir, document_dir_for
-from app.utils.paths import data_dir
 
 
 @pytest.fixture(autouse=True)
-def clean_data_dir():
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
+def fresh_converter_pool(monkeypatch):
+    """The PDF converter runs in worker processes that inherit the environment
+    they were started with -- including ONTOLOGY_DATA_DIR, which every test
+    changes (see conftest.py). A pool shared across tests would leave its
+    workers writing under an earlier test's data directory, so each test gets a
+    pool of its own, whose workers start (on first use) in this test's."""
+    pool = ProcessPoolExecutor(max_workers=2)
+    monkeypatch.setattr("app.preprocess.md_generation._executor", pool)
     yield
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
+    pool.shutdown(wait=True, cancel_futures=True)
 
 
 FAKE_TERM = SamsungLifeTerm(

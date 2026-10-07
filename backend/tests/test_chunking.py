@@ -1,5 +1,4 @@
 import json
-import shutil
 
 import pytest
 
@@ -10,16 +9,7 @@ from app.preprocess.chunking import (
     parse_article_heading,
     parse_section_heading,
 )
-from app.utils.paths import data_dir, document_dir_for
-
-
-@pytest.fixture(autouse=True)
-def clean_data_dir():
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
-    yield
-    if data_dir().exists():
-        shutil.rmtree(data_dir())
+from app.utils.paths import document_dir_for
 
 
 def test_parse_article_heading_matches_bracket_title():

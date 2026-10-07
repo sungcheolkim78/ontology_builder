@@ -50,26 +50,6 @@ class FakeEmbeddingModel:
         return [self.vector for _ in texts]
 
 
-def _remove_db_path():
-    import shutil
-
-    if graphdb.db_path().exists():
-        if graphdb.db_path().is_dir():
-            shutil.rmtree(graphdb.db_path())
-        else:
-            graphdb.db_path().unlink()
-
-
-def setup_function():
-    graphdb.reset_connection()
-    _remove_db_path()
-
-
-def teardown_function():
-    graphdb.reset_connection()
-    _remove_db_path()
-
-
 def test_analyze_question_parses_and_filters_hallucinated_types(monkeypatch):
     monkeypatch.setattr(
         "app.llm.calls.get_chat_model",

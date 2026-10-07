@@ -2,13 +2,10 @@ import os
 import shutil
 import tempfile
 
-# Must run before any `app.*` module is imported (conftest.py is loaded by
-# pytest ahead of test module collection) -- app.utils.paths.data_dir() reads this
-# env var once, at each module's import time, to compute DATA_DIR/GRAPH_DIR/
-# DB_PATH. Without this, the test suite reads/writes/deletes the real
-# backend/data tree, which is exactly the accidental-data-loss risk this
-# isolates against (see CLAUDE.md's "Do not run the backend test suite
-# while podman-compose is up").
+# A session-wide throwaway data directory, set before anything imports an app
+# module: a safety net so that nothing running outside a test (collection,
+# import time) can touch the real backend/data tree. Every test then gets a
+# data directory of its own, see isolated_data_dir below.
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="ontology_builder_test_data_")
 os.environ["ONTOLOGY_DATA_DIR"] = _TEST_DATA_DIR
 
@@ -29,3 +26,21 @@ def stub_embedding_model(monkeypatch):
     from fakes import FakeEmbeddingModel
 
     monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel())
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """Points the app at an empty data directory of its own for each test, so no
+    test deletes or recreates anything: the documents, schemas and graph
+    database one test writes are simply gone for the next. The graph
+    database's connection is cached, so it is dropped on the way in and out."""
+    from app.graph import graphdb
+
+    # A subfolder, so a test can keep its own files in tmp_path without them
+    # being part of (or wiped with) the data directory.
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("ONTOLOGY_DATA_DIR", str(data))
+    graphdb.reset_connection()
+    yield data
+    graphdb.reset_connection()

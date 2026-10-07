@@ -1,6 +1,4 @@
 import json
-import os
-import shutil
 
 from fastapi.testclient import TestClient
 
@@ -74,40 +72,30 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
-    try:
-        response = client.post(
-            "/api/chat",
-            json={
-                "messages": [{"role": "user", "content": "What did Ada Lovelace work on?"}],
-                "filename": "doc_raw.md",
-                "hops": 1,
-            },
-        )
+    response = client.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "What did Ada Lovelace work on?"}],
+            "filename": "doc_raw.md",
+            "hops": 1,
+        },
+    )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["role"] == "assistant"
-        assert body["content"] == "Ada Lovelace worked on the Analytical Engine."
-        assert body["node_types"] == ["Person"]
-        assert body["edge_types"] == ["WORKED_ON"]
-        assert len(model.calls) == 2
-        final_messages = model.calls[1]
-        assert final_messages[0].content.startswith("다음은")
-        assert "Analytical Engine" in final_messages[0].content
-        assert {n["label"] for n in body["related_nodes"]} == {
-            "Ada Lovelace",
-            "Analytical Engine",
-        }
-        assert [e["type"] for e in body["related_edges"]] == ["WORKED_ON"]
-    finally:
-        graphdb.reset_connection()
-        if documents_dir().exists():
-            shutil.rmtree(documents_dir())
-        if graphdb.db_path().exists():
-            if graphdb.db_path().is_file():
-                os.remove(graphdb.db_path())
-            else:
-                shutil.rmtree(graphdb.db_path())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "assistant"
+    assert body["content"] == "Ada Lovelace worked on the Analytical Engine."
+    assert body["node_types"] == ["Person"]
+    assert body["edge_types"] == ["WORKED_ON"]
+    assert len(model.calls) == 2
+    final_messages = model.calls[1]
+    assert final_messages[0].content.startswith("다음은")
+    assert "Analytical Engine" in final_messages[0].content
+    assert {n["label"] for n in body["related_nodes"]} == {
+        "Ada Lovelace",
+        "Analytical Engine",
+    }
+    assert [e["type"] for e in body["related_edges"]] == ["WORKED_ON"]
 
 
 def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
@@ -118,30 +106,20 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
-    try:
-        response = client.post(
-            "/api/chat",
-            json={
-                "messages": [{"role": "user", "content": "완전히 무관한 질문"}],
-                "filename": "doc_raw.md",
-            },
-        )
+    response = client.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "완전히 무관한 질문"}],
+            "filename": "doc_raw.md",
+        },
+    )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["content"] == "관련된 내용을 찾을 수 없습니다."
-        assert body["node_types"] == []
-        assert body["edge_types"] == []
-        assert len(model.calls) == 1  # only type analysis, no final answer call
-    finally:
-        graphdb.reset_connection()
-        if documents_dir().exists():
-            shutil.rmtree(documents_dir())
-        if graphdb.db_path().exists():
-            if graphdb.db_path().is_file():
-                os.remove(graphdb.db_path())
-            else:
-                shutil.rmtree(graphdb.db_path())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "관련된 내용을 찾을 수 없습니다."
+    assert body["node_types"] == []
+    assert body["edge_types"] == []
+    assert len(model.calls) == 1  # only type analysis, no final answer call
 
 
 def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
@@ -166,31 +144,21 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
-    try:
-        response = client.post(
-            "/api/chat",
-            json={
-                "messages": [{"role": "user", "content": "언급된 사람은 누구인가요?"}],
-                "filename": "doc_raw.md",
-            },
-        )
+    response = client.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "언급된 사람은 누구인가요?"}],
+            "filename": "doc_raw.md",
+        },
+    )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["node_types"] == ["Person"]
-        assert body["content"] == "Ada Lovelace is the person mentioned."
-        assert len(model.calls) == 2
-        final_messages = model.calls[1]
-        assert "Ada Lovelace" in final_messages[0].content
-    finally:
-        graphdb.reset_connection()
-        if documents_dir().exists():
-            shutil.rmtree(documents_dir())
-        if graphdb.db_path().exists():
-            if graphdb.db_path().is_file():
-                os.remove(graphdb.db_path())
-            else:
-                shutil.rmtree(graphdb.db_path())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["node_types"] == ["Person"]
+    assert body["content"] == "Ada Lovelace is the person mentioned."
+    assert len(model.calls) == 2
+    final_messages = model.calls[1]
+    assert "Ada Lovelace" in final_messages[0].content
 
 
 def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatch):
@@ -217,29 +185,19 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
-    try:
-        response = client.post(
-            "/api/chat",
-            json={
-                "messages": [{"role": "user", "content": "어디에서 일했나요?"}],
-                "filename": "doc_raw.md",
-            },
-        )
+    response = client.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "어디에서 일했나요?"}],
+            "filename": "doc_raw.md",
+        },
+    )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["node_types"] == ["Location"]
-        assert body["content"] == "관련된 내용을 찾을 수 없습니다."
-        assert len(model.calls) == 1
-    finally:
-        graphdb.reset_connection()
-        if documents_dir().exists():
-            shutil.rmtree(documents_dir())
-        if graphdb.db_path().exists():
-            if graphdb.db_path().is_file():
-                os.remove(graphdb.db_path())
-            else:
-                shutil.rmtree(graphdb.db_path())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["node_types"] == ["Location"]
+    assert body["content"] == "관련된 내용을 찾을 수 없습니다."
+    assert len(model.calls) == 1
 
 
 def test_chat_with_filename_but_no_graph_skips_retrieval(monkeypatch):
