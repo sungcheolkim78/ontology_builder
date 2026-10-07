@@ -176,7 +176,7 @@ and `app/llm/` holds `chat.py`, `prompts.py`, and `telemetry.py` (everything
 about talking to an LLM that isn't itself a pipeline stage). `ontology.py`
 is likewise a package, `app/ontology/`, split by concern into
 `persistence.py`, `chunk_groups.py`, `generate_schema.py`, `extract_graph.py`,
-`evolve_graph.py`, `utils.py`, `legal_guards.py`, and `domain_schema.py` --
+`evolve_graph.py`, `utils.py`, and `domain_schema.py` --
 `generate_schema.py`/`extract_graph.py`/`evolve_graph.py` used to be one
 `extraction.py` module, split by pipeline stage once it grew large enough
 that the three concerns (propose a schema, extract instances against it,

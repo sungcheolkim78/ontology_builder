@@ -867,7 +867,7 @@ LEGAL_FIXTURE_EXTRACTION_RESPONSE = {
 
 
 def test_legal_fixture_extraction_produces_full_rule_chain_with_evidence(monkeypatch):
-    from app.ontology import extract_graph, run_graph_validation
+    from app.ontology import extract_graph
 
     monkeypatch.setattr(
         "app.llm.json_call.get_chat_model",
@@ -894,12 +894,6 @@ def test_legal_fixture_extraction_produces_full_rule_chain_with_evidence(monkeyp
     # Not a chunked call (no bracketed section labels in this document text),
     # so source_section must be absent, never fabricated.
     assert all("source_section" not in n for n in graph["nodes"])
-
-    # Structural/legal shape guards both pass: Article carries no substantive
-    # detail of its own (the actual content lives on Norm and its
-    # participants), and every reified rule edge points at the right kind of
-    # participant.
-    assert run_graph_validation(LEGAL_FIXTURE_SCHEMA, graph) == []
 
 
 def test_legal_fixture_reextraction_is_idempotent(monkeypatch):
@@ -987,95 +981,6 @@ def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
         n.get("evidence_text") == "계약일로부터 90일 이내에 암 진단 확정을 받은 경우"
         for n in result_cq3["related_nodes"]
     )
-
-
-def test_flag_structural_catchall_nodes_accepts_reified_legal_graph():
-    from app.ontology import flag_structural_catchall_nodes
-
-    fixture = _load_legal_fixture()
-    assert flag_structural_catchall_nodes(fixture["reference_graph"]) == []
-
-
-def test_flag_structural_catchall_nodes_flags_detail_only_article():
-    from app.ontology import flag_structural_catchall_nodes
-
-    fixture = _load_legal_fixture()
-    issues = flag_structural_catchall_nodes(fixture["reference_graph_with_catchall_violation"])
-
-    assert len(issues) == 1
-    assert issues[0]["code"] == "structural_catchall"
-    assert issues[0]["node_id"] == "article17"
-
-
-def test_flag_structural_catchall_nodes_ignores_structural_node_with_no_detail():
-    from app.ontology import flag_structural_catchall_nodes
-
-    graph = {"nodes": [{"id": "a1", "type": "Article", "label": "제1조", "detail": ""}], "edges": []}
-    assert flag_structural_catchall_nodes(graph) == []
-
-
-def test_validate_legal_edge_shapes_accepts_reified_legal_graph():
-    from app.ontology import validate_legal_edge_shapes
-
-    fixture = _load_legal_fixture()
-    assert validate_legal_edge_shapes(fixture["reference_graph"]) == []
-
-
-def test_validate_legal_edge_shapes_flags_has_condition_pointed_at_a_benefit():
-    from app.ontology import validate_legal_edge_shapes
-
-    fixture = _load_legal_fixture()
-    issues = validate_legal_edge_shapes(fixture["reference_graph_with_bad_edge_shape"])
-
-    assert len(issues) == 1
-    assert issues[0]["code"] == "unexpected_endpoint_type"
-
-
-def test_validate_legal_edge_shapes_ignores_edge_types_it_has_no_hint_for():
-    from app.ontology import validate_legal_edge_shapes
-
-    graph = {
-        "nodes": [{"id": "a", "type": "Person", "label": "x"}, {"id": "b", "type": "Person", "label": "y"}],
-        "edges": [{"source": "a", "target": "b", "type": "KNOWS"}],
-    }
-    assert validate_legal_edge_shapes(graph) == []
-
-
-def test_run_graph_validation_combines_schema_and_legal_guards():
-    from app.ontology import run_graph_validation
-
-    schema = {
-        "node_types": [
-            {"name": "Article", "description": "d"},
-            {"name": "Norm", "description": "d"},
-        ],
-        "edge_types": [{"name": "STATES", "description": "d"}],
-    }
-    # Two independent problems at once: a schema_validation.validate_graph
-    # issue (missing evidence on a Norm) and an app.ontology legal-guard
-    # issue (a structural Article carrying catch-all detail).
-    graph = {
-        "nodes": [
-            {"id": "a1", "type": "Article", "label": "제1조", "detail": "some substantive content"},
-            {"id": "n1", "type": "Norm", "label": "규정"},
-        ],
-        "edges": [],
-    }
-
-    issues = run_graph_validation(schema, graph)
-    codes = {i["code"] for i in issues}
-
-    assert "structural_catchall" in codes
-    assert "missing_evidence" in codes
-
-
-def test_run_graph_validation_returns_empty_for_clean_graph():
-    from app.ontology import run_graph_validation
-
-    schema = {"node_types": [{"name": "Person", "description": "d"}], "edge_types": []}
-    graph = {"nodes": [{"id": "p1", "type": "Person", "label": "Alice"}], "edges": []}
-
-    assert run_graph_validation(schema, graph) == []
 
 
 def test_extract_endpoint_uses_chunks_when_present(monkeypatch):

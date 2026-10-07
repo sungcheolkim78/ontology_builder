@@ -27,10 +27,6 @@ submodule's own docstring/comments for what it owns:
 - utils: dependency-light helpers shared by two or more of the stages above
   (MAX_DOCUMENT_CHARS, the document-loading helpers). A leaf, independent of
   every other submodule here.
-- legal_guards: this app's own legal-reification structural checks
-  (flag_structural_catchall_nodes, validate_legal_edge_shapes) plus
-  run_graph_validation, which combines them with app.ontology.schema_validation's
-  generic checks. A leaf, independent of every other submodule here.
 - domain_schema: persistence for a *domain*'s (not a document's) converged
   schema -- storage, calibration history, pending-review queue. Depends on
   evolve_graph (converge_domain_schema), generate_schema (generate_schema),
@@ -80,14 +76,6 @@ from .persistence import (
     summary_path_for,
     update_document_manifest,
     versions_path,
-)
-from .legal_guards import (
-    STRUCTURAL_TYPE_NAMES,
-    _LEGAL_EDGE_ENDPOINT_HINTS,
-    _is_structural_type,
-    flag_structural_catchall_nodes,
-    run_graph_validation,
-    validate_legal_edge_shapes,
 )
 from .chunk_groups import (
     MAX_CHUNK_GROUP_CHARS,

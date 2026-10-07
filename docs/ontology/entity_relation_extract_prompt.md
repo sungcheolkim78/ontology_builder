@@ -337,6 +337,7 @@ document's intent, specifically:
   `unmapped_concept` the way this document's section 7 describes.
 - **Not implemented**: the numeric confidence scale, `extraction_method`,
   page numbers, and the `unmapped_concepts`/`extraction_warnings` output
-  fields. `app.ontology.run_graph_validation`/`app.schema_validation.validate_graph`
-  cover a related but distinct concern (structural/evidence validation of an
-  already-extracted graph, not an extraction-time warning list).
+  fields. A deterministic structural/evidence check of an already-extracted
+  graph was once written (`run_graph_validation`, removed again as unused --
+  see git history, commits `0ff9b81`/`74b6973`), but it was a related, distinct
+  concern from an extraction-time warning list.
