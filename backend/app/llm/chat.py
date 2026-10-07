@@ -77,7 +77,8 @@ def get_chat_model(operation: str | None = None):
     max_tokens = get_model_max_tokens(operation)
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
-    if operation in OPERATIONS:
+    spec = OPERATIONS.get(operation)
+    if spec is not None and spec.json:
         kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
         # A first-class ChatOpenAI field (not another model_kwargs entry) --
         # passing it through model_kwargs instead works but logs a

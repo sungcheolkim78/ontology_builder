@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.llm.calls import call_json, parse_json_response
+from app.llm.calls import call_json, call_text, parse_json_response
 
 
 class FakeChatModel:
@@ -177,3 +177,56 @@ def test_parse_json_response_ignores_trailing_garbage_in_a_content_list():
     ]
 
     assert parse_json_response(content) == {"ok": True}
+
+
+
+# --- call_text: a prose reply, through the same seam --------------------------
+
+
+def test_call_text_returns_the_response_text_for_the_operation(fake_model):
+    model = fake_model("hello there")
+
+    result = call_text("answer_chat", "the prompt")
+
+    assert result == "hello there"
+    assert model.asked == ["answer_chat"]
+    assert model.prompts == ["the prompt"]
+
+
+def test_call_text_records_the_operations_registered_telemetry_name(fake_model, monkeypatch):
+    fake_model("hello")
+    names = []
+    real = __import__("app.llm.calls", fromlist=["invoke_with_telemetry"]).invoke_with_telemetry
+
+    def spy(operation, model, prompt, *args, **kwargs):
+        names.append(operation)
+        return real(operation, model, prompt, *args, **kwargs)
+
+    monkeypatch.setattr("app.llm.calls.invoke_with_telemetry", spy)
+
+    call_text("summarize_document", "p")
+
+    assert names == ["summarize-document"]
+
+
+def test_call_text_rejects_an_unknown_operation(fake_model):
+    fake_model("hello")
+
+    with pytest.raises(ValueError, match="unknown operation"):
+        call_text("no_such_operation", "p")
+
+
+def test_call_text_rejects_a_json_operation(fake_model):
+    # A JSON operation's model is built in JSON mode; asking it for prose
+    # through call_text would quietly return a JSON string.
+    fake_model("{}")
+
+    with pytest.raises(ValueError, match="not a prose operation"):
+        call_text("generate_schema", "p")
+
+
+def test_call_json_rejects_a_prose_operation(fake_model):
+    fake_model("hello")
+
+    with pytest.raises(ValueError, match="not a JSON operation"):
+        call_json("answer_chat", "p")

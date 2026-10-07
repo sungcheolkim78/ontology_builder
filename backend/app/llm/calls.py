@@ -57,6 +57,21 @@ def parse_json_response(content: str | list) -> dict:
         raise ValueError(f"LLM did not return valid JSON: {e}")
 
 
+def call_text(operation: str, prompt) -> str:
+    """Calls the model for the prose `operation` with `prompt` (a string or a
+    list of langchain messages) and returns the reply text. The prose
+    counterpart of call_json: same seam, same telemetry and connection-retry
+    behaviour, no parsing."""
+    spec = OPERATIONS.get(operation)
+    if spec is None:
+        raise ValueError(f"unknown operation: {operation!r}")
+    if spec.json:
+        raise ValueError(f"{operation} is not a prose operation; use call_json")
+    model = get_chat_model(operation)
+    response = invoke_with_telemetry(spec.telemetry_name, model, prompt)
+    return response.content
+
+
 def call_json(operation: str, prompt) -> dict:
     """Calls the model for `operation` with `prompt` (a string or a list of
     langchain messages), parses the reply as a JSON object and checks that it
@@ -67,6 +82,8 @@ def call_json(operation: str, prompt) -> dict:
     spec = OPERATIONS.get(operation)
     if spec is None:
         raise ValueError(f"unknown operation: {operation!r}")
+    if not spec.json:
+        raise ValueError(f"{operation} is not a JSON operation; use call_text")
     model = get_chat_model(operation)
     response = invoke_with_telemetry(spec.telemetry_name, model, prompt)
     result = parse_json_response(response.content)

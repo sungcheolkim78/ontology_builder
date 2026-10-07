@@ -15,7 +15,6 @@ from app.utils.auth import APP_PASSWORD, is_valid_token, issue_token
 from app.llm.chat import (
     MODEL_CATALOG,
     OPERATION_KEYS,
-    get_chat_model,
     get_model_max_tokens,
     get_model_name,
     set_model_name,
@@ -93,7 +92,8 @@ from app.preprocess.samsunglife_utils import (
     download_term_by_name,
     find_terms_by_name,
 )
-from app.llm.telemetry import configure_telemetry, invoke_with_telemetry, trace
+from app.llm.calls import call_text
+from app.llm.telemetry import configure_telemetry, trace
 
 configure_telemetry()
 
@@ -255,11 +255,9 @@ def chat(request: ChatRequest):
                     span.update(output=result["content"])
                     return {"role": "assistant", **result}
 
-        model = get_chat_model()
-        lc_messages = to_langchain_messages(messages)
-        response = invoke_with_telemetry("answer-chat", model, lc_messages)
-        span.update(output=response.content)
-        return {"role": "assistant", "content": response.content}
+        content = call_text("answer_chat", to_langchain_messages(messages))
+        span.update(output=content)
+        return {"role": "assistant", "content": content}
 
 
 @app.post("/api/parse")

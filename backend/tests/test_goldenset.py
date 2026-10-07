@@ -281,7 +281,6 @@ def test_goldenset_answer_endpoint_generates_saves_and_returns_record(monkeypatc
             "Alice는 Acme에서 일합니다.",
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 

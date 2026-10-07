@@ -700,7 +700,6 @@ def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
         "keywords": {"Condition": ["암 진단 확정"], "PaymentAmount": ["가입금액의 50%"]},
     }
     model_cq1 = SequencedChatModel([json.dumps(analysis_cq1), "가입금액의 50%를 지급합니다."])
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model_cq1)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model_cq1)
 
     result_cq1 = answer_question(
@@ -721,7 +720,6 @@ def test_legal_fixture_competency_questions_answered_via_graphrag(monkeypatch):
         "keywords": {"Exclusion": ["계약일로부터 90일 이내 면책"]},
     }
     model_cq3 = SequencedChatModel([json.dumps(analysis_cq3), "계약일로부터 90일 이내에는 지급하지 않습니다."])
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model_cq3)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model_cq3)
 
     result_cq3 = answer_question(
@@ -1781,7 +1779,7 @@ def test_use_domain_schema_endpoint_returns_404_when_domain_missing():
 def test_create_summary_endpoint_saves_and_returns_summary(monkeypatch):
     write_document()
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("문서 요약입니다.")
+        "app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("문서 요약입니다.")
     )
     client = TestClient(app)
 
@@ -1814,7 +1812,7 @@ def test_get_summary_returns_404_when_not_generated():
 
 def test_create_summary_returns_400_on_empty_llm_response(monkeypatch):
     write_document()
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel("   "))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("   "))
     client = TestClient(app)
 
     response = client.post("/api/documents/doc_raw.md/summary")

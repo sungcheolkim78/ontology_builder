@@ -119,7 +119,6 @@ def test_analyze_question_parses_and_filters_hallucinated_types(monkeypatch):
 
 
 def test_analyze_question_raises_on_invalid_json(monkeypatch):
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: FakeChatModel("not json"))
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("not json"))
 
     try:
@@ -142,7 +141,6 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
@@ -168,7 +166,6 @@ def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatc
     model = SequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("completely unrelated question", SCHEMA, STEM, hops=1)
@@ -196,7 +193,6 @@ def test_search_graph_falls_back_to_all_instances_when_no_keyword_match(monkeypa
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("who are the people?", SCHEMA, STEM, hops=1)
@@ -224,7 +220,6 @@ def test_search_graph_falls_back_per_type_when_only_one_type_has_no_keyword_matc
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=0)
@@ -250,7 +245,6 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
     model = SequencedChatModel(
         [json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {}})]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.graph.graphrag.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
 
@@ -295,7 +289,6 @@ def test_search_graph_uses_property_filter_when_keyword_and_embedding_both_miss(
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph(
@@ -310,7 +303,6 @@ def test_search_graph_falls_back_to_all_edges_of_type_when_no_keyword_match(monk
     model = SequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": ["MEMBER_OF"], "keywords": {}})]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("what memberships exist?", SCHEMA, STEM, hops=1)
@@ -336,7 +328,6 @@ def test_search_graph_returns_none_when_determined_type_has_no_instances(monkeyp
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("what organizations?", SCHEMA, STEM, hops=1)
@@ -375,7 +366,6 @@ def test_search_graph_includes_node_and_edge_detail_in_context(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
@@ -397,7 +387,6 @@ def test_search_graph_context_omits_missing_detail_gracefully(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
@@ -437,7 +426,6 @@ def test_search_graph_includes_evidence_and_source_section_in_context(monkeypatc
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
@@ -464,7 +452,6 @@ def test_search_graph_excludes_low_confidence_nodes_when_threshold_set(monkeypat
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.graph.graphrag.MIN_CONFIDENCE", "MEDIUM")
 
@@ -484,7 +471,6 @@ def test_search_graph_includes_nodes_with_no_confidence_regardless_of_threshold(
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     monkeypatch.setattr("app.graph.graphrag.MIN_CONFIDENCE", "HIGH")
 
@@ -512,7 +498,6 @@ def test_search_graph_scoped_to_active_version(monkeypatch):
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
 
     result = search_graph("Who is Grace Hopper?", SCHEMA, STEM, version=2, hops=0)

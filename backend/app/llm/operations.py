@@ -1,13 +1,12 @@
 """The registry of operations: one entry per named kind of LLM call, holding
 everything about that call that isn't the prompt. See CONTEXT.md ("Operation").
 
-Being registered here is what makes an operation a JSON operation. That's an
-allowlist rather than "everything except a known-prose set" because several
-call sites whose replies are prose (main.py's /api/chat, app.graph.graphrag's
-answer_question, summarize_document) call get_chat_model() with no operation
-or an unregistered one, and an allowlist can never accidentally catch one of
-those. For exactly the registered operations, app.llm.chat.get_chat_model adds
-response_format={"type": "json_object"} and asks for low reasoning effort.
+Every call to a chat model is a registered operation. Each entry says whether
+its reply is a JSON object (`json=True`, the default, made through
+app.llm.calls.call_json) or prose (`json=False`, made through call_text); only
+a JSON operation gets response_format={"type": "json_object"} and a low
+reasoning effort from app.llm.chat.get_chat_model, and each of the two call
+functions refuses an operation of the other kind.
 
 Low reasoning effort was verified live against every model in MODEL_CATALOG
 plus two not-yet-cataloged ones (qwen/qwen3.8-flash, google/gemini-3.8-flash):
@@ -47,14 +46,19 @@ class Operation:
     name: str
     # Name of the Langfuse observation this operation's calls are recorded under.
     telemetry_name: str
-    # Safety ceiling on output tokens -- see the comment above _ENTRIES.
-    max_tokens: int
+    # Safety ceiling on output tokens -- see the comment above _ENTRIES. None
+    # means no ceiling of its own beyond the selected model's.
+    max_tokens: int | None
     # Top-level keys the response must contain, and the type each must have.
     required: dict = field(default_factory=dict)
     # Which operation's model selection this one follows, if not its own.
     model_key: str | None = None
     # Whether the settings UI lets a person pick a model for this operation.
     selectable: bool = False
+    # Whether the reply is a JSON object (call_json) rather than prose
+    # (call_text); get_chat_model asks for JSON mode and low reasoning effort
+    # only for a JSON operation.
+    json: bool = True
 
 
 # Hard ceilings well below each model's own max_completion_tokens
@@ -127,6 +131,10 @@ _ENTRIES = (
     ),
     Operation("generate_goldenset_questions", "generate-goldenset-questions", 16_000),
     Operation("generate_goldenset_answers", "generate-goldenset-answers", 40_000),
+    # Prose replies: no JSON mode, no ceiling of their own, the shared "default"
+    # model bucket -- what an unregistered operation used to get implicitly.
+    Operation("answer_chat", "answer-chat", None, json=False),
+    Operation("summarize_document", "summarize-document", None, json=False),
 )
 
 OPERATIONS: dict[str, Operation] = {op.name: op for op in _ENTRIES}

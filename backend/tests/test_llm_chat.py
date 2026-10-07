@@ -36,14 +36,14 @@ def test_get_chat_model_asks_for_low_reasoning_effort_for_json_operations(operat
     assert model.reasoning == {"effort": "low"}
 
 
-@pytest.mark.parametrize("operation", [None, "summarize_document", "some_other_operation"])
+@pytest.mark.parametrize("operation", [None, "summarize_document", "answer_chat", "some_other_operation"])
 def test_get_chat_model_omits_response_format_for_non_json_operations(operation):
     model = get_chat_model(operation)
 
     assert model.model_kwargs == {}
 
 
-@pytest.mark.parametrize("operation", [None, "summarize_document", "some_other_operation"])
+@pytest.mark.parametrize("operation", [None, "summarize_document", "answer_chat", "some_other_operation"])
 def test_get_chat_model_omits_reasoning_for_non_json_operations(operation):
     model = get_chat_model(operation)
 
@@ -90,7 +90,9 @@ def test_model_catalog_caps_are_all_above_every_operation_cap():
     from app.llm.operations import OPERATIONS
 
     smallest_model_cap = min(m["max_tokens"] for m in MODEL_CATALOG)
-    assert all(op.max_tokens <= smallest_model_cap for op in OPERATIONS.values())
+    assert all(
+        op.max_tokens <= smallest_model_cap for op in OPERATIONS.values() if op.max_tokens is not None
+    )
 
 
 def test_consolidation_operations_get_a_larger_cap_than_their_own_single_group_call():
@@ -124,13 +126,23 @@ def test_consolidation_operations_fall_back_to_default_like_their_counterpart_wo
     assert get_model_name("consolidate_discovery") == get_model_name("discover_ontology")
 
 
-def test_every_registered_operation_is_a_json_operation():
+def test_json_mode_and_low_reasoning_follow_the_registry_json_flag():
     from app.llm.operations import OPERATIONS
 
-    for name in OPERATIONS:
+    for name, spec in OPERATIONS.items():
         model = get_chat_model(name)
-        assert model.model_kwargs == {"response_format": {"type": "json_object"}}, name
-        assert model.reasoning == {"effort": "low"}, name
+        if spec.json:
+            assert model.model_kwargs == {"response_format": {"type": "json_object"}}, name
+            assert model.reasoning == {"effort": "low"}, name
+        else:
+            assert model.model_kwargs == {}, name
+            assert model.reasoning is None, name
+
+
+def test_the_json_operations_listed_here_are_exactly_the_registry_json_operations():
+    from app.llm.operations import OPERATIONS
+
+    assert set(JSON_OPERATIONS) == {name for name, spec in OPERATIONS.items() if spec.json}
 
 
 @pytest.mark.parametrize(

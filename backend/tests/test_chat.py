@@ -70,7 +70,7 @@ def write_graph_dir(stem="doc_raw", schema=SCHEMA, nodes=NODES, edges=EDGES):
 
 
 def test_chat_returns_assistant_reply(monkeypatch):
-    monkeypatch.setattr("app.main.get_chat_model", lambda: FakeChatModel())
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel())
     client = TestClient(app)
 
     response = client.post(
@@ -96,9 +96,7 @@ def test_chat_with_filename_injects_graph_context_and_returns_type_analysis(monk
             "Ada Lovelace worked on the Analytical Engine.",
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
-    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
     try:
@@ -142,9 +140,7 @@ def test_chat_reports_not_found_when_no_types_relevant(monkeypatch):
     model = SequencedChatModel(
         [json.dumps({"node_types": [], "edge_types": [], "keywords": {}})]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
-    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
     try:
@@ -192,9 +188,7 @@ def test_chat_falls_back_to_all_instances_when_no_keyword_match(monkeypatch):
             "Ada Lovelace is the person mentioned.",
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
-    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
     try:
@@ -245,9 +239,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
             ),
         ]
     )
-    monkeypatch.setattr("app.graph.graphrag.get_chat_model", lambda: model)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
-    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
     client = TestClient(app)
 
     try:
@@ -277,7 +269,7 @@ def test_chat_reports_not_found_when_determined_type_has_no_instances(monkeypatc
 
 def test_chat_with_filename_but_no_graph_skips_retrieval(monkeypatch):
     model = SequencedChatModel(["plain answer"])
-    monkeypatch.setattr("app.main.get_chat_model", lambda: model)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     client = TestClient(app)
 
     response = client.post(

@@ -393,14 +393,14 @@ def test_schema_for_document_ignores_max_chars_for_group_budget(monkeypatch):
 
 def test_summarize_document_strips_and_returns_llm_text(monkeypatch):
     monkeypatch.setattr(
-        "app.ontology.get_chat_model", lambda operation=None: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
+        "app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("  이 문서는 보험약관을 설명합니다.  ")
     )
 
     assert summarize_document("some document text") == "이 문서는 보험약관을 설명합니다."
 
 
 def test_summarize_document_raises_on_empty_response(monkeypatch):
-    monkeypatch.setattr("app.ontology.get_chat_model", lambda operation=None: FakeChatModel("   "))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel("   "))
 
     with pytest.raises(ValueError):
         summarize_document("some document text")

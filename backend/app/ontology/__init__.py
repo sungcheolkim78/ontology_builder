@@ -34,17 +34,15 @@ submodule's own docstring/comments for what it owns:
   evolve_graph (converge_domain_schema), generate_schema (generate_schema),
   and persistence (create_schema_version).
 
-get_chat_model/get_embedding_model are still imported here for the two
-callers that need a live, patchable lookup: summarize_document (a prose call,
-not a JSON operation) reaches get_chat_model via `from app import ontology` +
-`ontology.get_chat_model(...)` at call time, and embed_nodes/embed_query-style
-callers do the same for get_embedding_model (never `from . import
-get_chat_model`, which would bind a private copy of the name at import time).
-Every JSON-returning LLM call goes through app.llm.calls.call_json
-instead, whose own `get_chat_model` is the one patch point tests use for it.
+get_embedding_model is still imported here for the callers that need a live,
+patchable lookup (embed_nodes reaches it via `from app import ontology` +
+`ontology.get_embedding_model(...)` at call time -- never `from . import
+get_embedding_model`, which would bind a private copy of the name at import
+time). Every chat-model call, JSON or prose, goes through app.llm.calls
+(call_json/call_text), whose own `get_chat_model` is the one patch point tests
+use for it.
 """
 
-from app.llm.chat import get_chat_model  # noqa: F401 -- re-exported; see module docstring
 from app.preprocess.embeddings import get_embedding_model, node_embedding_text  # noqa: F401
 
 from .persistence import (

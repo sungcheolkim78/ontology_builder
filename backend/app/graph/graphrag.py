@@ -2,11 +2,11 @@ import json
 import os
 
 from app.graph import graphdb
-from app.llm.chat import get_chat_model, to_langchain_messages
-from app.llm.calls import call_json
+from app.llm.chat import to_langchain_messages
+from app.llm.calls import call_json, call_text
 from app.preprocess.embeddings import get_embedding_model
 from app.ontology.schema_validation import normalize_schema
-from app.llm.telemetry import invoke_with_telemetry, embed_with_telemetry
+from app.llm.telemetry import embed_with_telemetry
 
 # How many of a type's own nodes to keep when keyword matching finds none
 # and search falls back to embedding similarity -- a ranked cutoff instead
@@ -318,9 +318,7 @@ def answer_question(
                 "content": f"다음은 문서에서 추출된 관련 정보입니다:\n{result['context']}",
             }
         ] + messages
-        model = get_chat_model()
-        response = invoke_with_telemetry("answer-chat", model, to_langchain_messages(augmented))
-        content = response.content
+        content = call_text("answer_chat", to_langchain_messages(augmented))
     else:
         content = "관련된 내용을 찾을 수 없습니다."
     return {

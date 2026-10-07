@@ -14,8 +14,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app import ontology
-from app.llm.calls import call_json
+from app.llm.calls import call_json, call_text
 from app.llm.prompts import (
     CONSOLIDATION_PROMPT,
     DISCOVERY_PROMPT,
@@ -23,7 +22,6 @@ from app.llm.prompts import (
     SCHEMA_PROMPTS,
     SUMMARY_PROMPT,
 )
-from app.llm.telemetry import invoke_with_telemetry
 
 from .chunk_groups import run_chunk_groups
 from .persistence import create_schema_version, load_discovery, save_discovery
@@ -37,15 +35,7 @@ from .utils import (
 # 이 파일의 discover/generate 파이프라인과는 호출 관계가 없다.
 def summarize_document(document_text: str, max_chars: int | None = None) -> str:
     _check_document_length(document_text, max_chars)
-    # "summarize_document" is deliberately not registered in
-    # app.llm.operations: an unregistered operation gets no response_format or
-    # reasoning hint (this reply is prose, not JSON) and still falls through
-    # to the same "default" model bucket as every other prose call.
-    model = ontology.get_chat_model("summarize_document")
-    response = invoke_with_telemetry(
-        "summarize-document", model, SUMMARY_PROMPT.format(document=document_text)
-    )
-    summary = response.content.strip()
+    summary = call_text("summarize_document", SUMMARY_PROMPT.format(document=document_text)).strip()
     if not summary:
         raise ValueError("summary generation returned empty content")
     return summary
