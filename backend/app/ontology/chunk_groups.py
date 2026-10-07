@@ -10,11 +10,11 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from app.llm.chat import get_model_max_tokens, get_model_name
 from app.ontology.utils import _check_document_length, _load_chunk_items, _require_document_text
-from app.utils.paths import document_dir_for
+from app.utils.paths import progress_path_for, resume_cache_path_for
+from app.utils.store import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class ChunkProgress:
 
     def __init__(self, stem: str, operation: str, total: int):
         self._lock = threading.Lock()
-        self._path = document_dir_for(stem) / "progress" / f"{operation}.json"
+        self._path = progress_path_for(stem, operation)
         self._state = {
             "operation": operation,
             "status": "running",
@@ -109,8 +109,7 @@ class ChunkProgress:
         self._write()
 
     def _write(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._state, ensure_ascii=False))
+        write_json(self._path, self._state)
 
     def advance(self, *_args, **fields) -> None:
         """Marks one more unit of work (one chunk group, or the single
@@ -147,10 +146,7 @@ def load_progress(stem: str, operation: str) -> dict | None:
     404-raising lookup) when nothing has ever run this operation for this
     document, or a prior run's file was never written, so the route can
     decide what an absent record means (e.g. "hasn't started yet")."""
-    path = document_dir_for(stem) / "progress" / f"{operation}.json"
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
+    return read_json(progress_path_for(stem, operation))
 
 # OpenRouter (like most LLM providers) rate-limits by concurrent in-flight
 # requests, so map_concurrently() caps how many run at once rather than
@@ -235,17 +231,12 @@ def _fingerprint(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _cache_path(stem: str, stage: str, index: int) -> Path:
-    return document_dir_for(stem) / "resume_cache" / f"{stage}_{index}.json"
-
-
 def _load_cached_result(stem: str, stage: str, index: int, fingerprint: str):
     """Returns (hit, result). A missing, unreadable or fingerprint-mismatched
     file is a miss -- never an error, since a cache is only ever an
     optimization."""
-    path = _cache_path(stem, stage, index)
     try:
-        stored = json.loads(path.read_text())
+        stored = read_json(resume_cache_path_for(stem, stage, index))
     except (OSError, ValueError):
         return False, None
     if (
@@ -258,16 +249,12 @@ def _load_cached_result(stem: str, stage: str, index: int, fingerprint: str):
 
 
 def _store_result(stem: str, stage: str, index: int, fingerprint: str, result) -> None:
-    path = _cache_path(stem, stage, index)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Written to a temp name then renamed, so a process killed mid-write
-    # leaves no half-written file for the next run to trip over. The temp
-    # name is unique per process and thread, since two runs of the same stage
-    # for one document (e.g. a double-clicked Run button) write this same
-    # path at the same time and would otherwise rename each other's file away.
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps({"fingerprint": fingerprint, "result": result}, ensure_ascii=False))
-    os.replace(tmp, path)
+    # write_json is atomic and safe for two runs of the same stage writing this
+    # path at once (a double-clicked Run button): see app.utils.store.
+    write_json(
+        resume_cache_path_for(stem, stage, index),
+        {"fingerprint": fingerprint, "result": result},
+    )
 
 
 def _load_chunk_items_for_run(stem: str, max_chars: int | None) -> list[dict]:

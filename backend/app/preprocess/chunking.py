@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 import re
 
-from app.utils.paths import data_dir, document_dir_for
+from app.utils.paths import chunk_path_for, data_dir, raw_path_for
+from app.utils.store import write_json
 
 DATA_DIR = data_dir()
 
@@ -166,16 +167,12 @@ def chunk_markdown_file(stem: str) -> dict:
     """Chunk the document's own raw.md (written by parse_to_markdown_file/
     convert_pdf_to_markdown_file, both in app.preprocess.parser) and save the
     result as chunks.json in that same document folder."""
-    doc_dir = document_dir_for(stem)
-    source_path = doc_dir / "raw.md"
+    source_path = raw_path_for(stem)
     if not source_path.is_file():
         raise FileNotFoundError(f"markdown file not found for document: {stem}")
 
     result = chunk_markdown(source_path.read_text(encoding="utf-8"), stem)
 
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    (doc_dir / "chunks.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json(chunk_path_for(stem), result, indent=2)
 
     return {"filename": "chunks.json", "path": f"data/documents/{stem}/chunks.json", **result}

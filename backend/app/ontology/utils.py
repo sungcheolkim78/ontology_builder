@@ -3,10 +3,10 @@ extract_graph.py/evolve_graph.py -- anything used by only one of those three
 lives in that file instead, per app.ontology's own "leaf every other
 submodule can import from" convention (see persistence.py, schema_validation.py)."""
 
-import json
 import os
 
-from app.utils.paths import document_dir_for
+from app.utils.paths import chunk_path_for, raw_path_for
+from app.utils.store import read_json
 
 # ~4 chars/token is a conservative rule of thumb. 200_000 was originally sized
 # for the default model (gpt-4o-mini, 128k-token context); real OPENROUTER_MODEL
@@ -43,15 +43,14 @@ def _dedupe_by_key(items: list, key) -> list:
 
 
 def _load_chunk_items(stem: str) -> list[dict] | None:
-    chunk_path = document_dir_for(stem) / "chunks.json"
-    if not chunk_path.is_file():
+    chunked = read_json(chunk_path_for(stem))
+    if chunked is None:
         return None
-    chunked = json.loads(chunk_path.read_text())
     return [chunked["preamble"], *chunked["chunks"]]
 
 
 def _require_document_text(stem: str) -> str:
-    doc_path = document_dir_for(stem) / "raw.md"
+    doc_path = raw_path_for(stem)
     if not doc_path.is_file():
         raise FileNotFoundError(f"document not found: {stem}")
     return doc_path.read_text()

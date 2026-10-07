@@ -29,7 +29,8 @@ from typing import Any
 
 import anydoc
 import pdfplumber
-from app.utils.paths import data_dir, document_dir_for
+from app.utils.paths import data_dir, raw0_path_for, raw_path_for
+from app.utils.store import write_text
 
 DATA_DIR = data_dir()
 
@@ -98,9 +99,7 @@ def parse_to_markdown_file(filename: str, data: bytes) -> dict:
     # The document folder is keyed by *this* stem (including "_raw"), since
     # that's what app.utils.paths.stem_for() later derives back from the returned filename.
     out_stem = f"{stem}_raw"
-    doc_dir = document_dir_for(out_stem)
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    (doc_dir / "raw.md").write_text(markdown)
+    write_text(raw_path_for(out_stem), markdown)
 
     return {"filename": f"{out_stem}.md", "path": f"data/documents/{out_stem}/raw.md"}
 
@@ -357,9 +356,7 @@ def convert_pdf_to_markdown_file(filename: str, data: bytes) -> dict:
     general_markdown = convert_general_pdf_to_markdown(data, stem)
 
     out_stem = f"{stem}_raw"
-    doc_dir = document_dir_for(out_stem)
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    (doc_dir / "raw.md").write_text(markdown)
-    (doc_dir / "raw0.md").write_text(general_markdown)
+    write_text(raw_path_for(out_stem), markdown)
+    write_text(raw0_path_for(out_stem), general_markdown)
 
     return {"filename": f"{out_stem}.md", "path": f"data/documents/{out_stem}/raw.md"}

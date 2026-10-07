@@ -8,7 +8,8 @@ import time
 
 import pytest
 
-from app.ontology import persistence
+from app.ontology import domain_schema, persistence
+from app.preprocess import goldenset
 from app.preprocess.parser import DATA_DIR
 
 STEM = "doc_raw"
@@ -38,6 +39,8 @@ def slow_reads(monkeypatch):
     an unprotected one loses an update every time instead of once in a while."""
     monkeypatch.setattr(persistence, "_load_versions_manifest", _slow(persistence._load_versions_manifest))
     monkeypatch.setattr(persistence, "load_document_manifest", _slow(persistence.load_document_manifest))
+    monkeypatch.setattr(goldenset, "_load_answers", _slow(goldenset._load_answers))
+    monkeypatch.setattr(domain_schema, "load_domain_pending_review", _slow(domain_schema.load_domain_pending_review))
 
 
 def _run_in_threads(fn, count):
@@ -75,3 +78,36 @@ def test_concurrent_manifest_updates_keep_every_field(slow_reads):
         f"field_{i}": i for i in range(8)
     }
     assert manifest["original_filename"] == "report.pdf"
+
+
+def test_concurrent_goldenset_answers_for_one_question_are_all_kept(slow_reads):
+    def record(i):
+        goldenset.record_goldenset_answer(
+            STEM, "q1", schema_version=1, hops=1, content=f"answer {i}",
+            node_types=[], edge_types=[], related_nodes=[], related_edges=[],
+        )
+
+    _run_in_threads(record, 8)
+
+    kept = goldenset._load_answers(STEM)["q1"]
+    assert sorted(r["content"] for r in kept) == sorted(f"answer {i}" for i in range(8))
+
+
+def test_concurrent_pending_review_resolutions_each_remove_their_own_changes(slow_reads):
+    schema = {"node_types": [{"name": "Person", "description": "p"}], "edge_types": []}
+    domain_schema.save_domain_schema("insurance", schema)
+    domain_schema._save_domain_pending_review(
+        "insurance", [{"change_id": f"c{i}"} for i in range(8)]
+    )
+
+    def resolve(i):
+        domain_schema.apply_domain_schema_changes("insurance", [{
+            "change_id": f"c{i}", "element_type": "node_type", "decision": "ADD",
+            "element": {"name": f"Type{i}", "description": "d"},
+        }])
+
+    _run_in_threads(resolve, 8)
+
+    assert domain_schema.load_domain_pending_review("insurance") == []
+    names = {t["name"] for t in domain_schema.load_domain_schema("insurance")["node_types"]}
+    assert names == {"Person"} | {f"Type{i}" for i in range(8)}

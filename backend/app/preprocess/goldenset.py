@@ -22,10 +22,10 @@ import json
 import logging
 import re
 from datetime import datetime
-from pathlib import Path
 
 from app.llm.calls import call_json
-from app.utils.paths import document_dir_for
+from app.utils.paths import goldenset_answers_path_for, goldenset_path_for  # noqa: F401 -- re-exported
+from app.utils.store import locked, read_json, write_json
 from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -225,23 +225,12 @@ def generate_goldenset(
     }
 
 
-def goldenset_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "goldenset.json"
-
-
 def save_goldenset(stem: str, report: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    goldenset_path_for(stem).write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json(goldenset_path_for(stem), report, indent=2)
 
 
 def load_goldenset(stem: str) -> dict | None:
-    path = goldenset_path_for(stem)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(goldenset_path_for(stem))
 
 
 # Generated-answer persistence -----------------------------------------------
@@ -259,23 +248,12 @@ def load_goldenset(stem: str) -> dict | None:
 # document's *current* active schema version specifically, since an answer
 # generated against a since-changed schema is no longer trustworthy as "the"
 # current answer for that question.
-def goldenset_answers_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "goldenset_answers.json"
-
-
 def _load_answers(stem: str) -> dict:
-    path = goldenset_answers_path_for(stem)
-    if not path.is_file():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(goldenset_answers_path_for(stem), {})
 
 
 def _save_answers(stem: str, answers: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    goldenset_answers_path_for(stem).write_text(
-        json.dumps(answers, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json(goldenset_answers_path_for(stem), answers, indent=2)
 
 
 def record_goldenset_answer(
@@ -294,7 +272,6 @@ def record_goldenset_answer(
     Never mutates or removes any prior record -- see the module-level note
     above for why history is kept even for schema versions no longer
     active."""
-    answers = _load_answers(stem)
     record = {
         "schema_version": schema_version,
         "hops": hops,
@@ -305,8 +282,10 @@ def record_goldenset_answer(
         "related_nodes": related_nodes,
         "related_edges": related_edges,
     }
-    answers.setdefault(question_id, []).append(record)
-    _save_answers(stem, answers)
+    with locked(stem):
+        answers = _load_answers(stem)
+        answers.setdefault(question_id, []).append(record)
+        _save_answers(stem, answers)
     return record
 
 

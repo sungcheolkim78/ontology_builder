@@ -1,11 +1,18 @@
 import shutil
 from datetime import datetime
-from pathlib import Path
 
 from app.graph import graphdb
 from app.llm.calls import embed
 from app.preprocess.embeddings import node_embedding_text
-from app.utils.paths import document_dir_for, documents_dir
+from app.utils.paths import (  # noqa: F401 -- re-exported: callers import these from here
+    discovery_path_for,
+    document_dir_for,
+    document_manifest_path,
+    documents_dir,
+    schema_path_for_version,
+    summary_path_for,
+    versions_path,
+)
 from app.utils.store import locked, read_json, write_json
 
 DOCUMENTS_DIR = documents_dir()
@@ -45,10 +52,6 @@ def _apply_schema_type_changes(schema: dict, changes: list) -> dict:
     return {"node_types": node_types, "edge_types": edge_types}
 
 
-def versions_path(stem: str) -> Path:
-    return document_dir_for(stem) / "versions.json"
-
-
 def _load_versions_manifest(stem: str) -> dict:
     # A fresh default on every call: callers append to its "versions" list.
     return read_json(versions_path(stem), {"active_version": None, "versions": []})
@@ -64,10 +67,6 @@ def list_versions(stem: str) -> list[dict]:
 
 def get_active_version(stem: str) -> int | None:
     return _load_versions_manifest(stem)["active_version"]
-
-
-def schema_path_for_version(stem: str, version: int) -> Path:
-    return document_dir_for(stem) / f"schema_v{version}.json"
 
 
 def save_schema(stem: str, version: int, schema: dict) -> None:
@@ -133,10 +132,6 @@ def save_document_manifest(stem: str, original_filename: str, converter: str = "
         )
 
 
-def document_manifest_path(stem: str) -> Path:
-    return document_dir_for(stem) / "manifest.json"
-
-
 def load_document_manifest(stem: str) -> dict | None:
     return read_json(document_manifest_path(stem))
 
@@ -168,10 +163,6 @@ def delete_document(stem: str) -> None:
     shutil.rmtree(document_dir_for(stem), ignore_errors=True)
 
 
-def discovery_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "discovery.json"
-
-
 def save_discovery(stem: str, report: dict) -> None:
     """One discovery report per document, not per schema version -- discovery
     is an exploratory, re-runnable read of the document itself, not tied to
@@ -182,10 +173,6 @@ def save_discovery(stem: str, report: dict) -> None:
 
 def load_discovery(stem: str) -> dict | None:
     return read_json(discovery_path_for(stem))
-
-
-def summary_path_for(stem: str) -> Path:
-    return document_dir_for(stem) / "summary.json"
 
 
 def save_document_summary(stem: str, summary: str) -> None:

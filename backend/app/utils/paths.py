@@ -39,10 +39,20 @@ def stem_for(filename: str) -> str:
     return Path(os.path.basename(filename)).stem
 
 
+def raw_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "raw.md"
+
+
+def raw0_path_for(stem: str) -> Path:
+    """The plain per-page-text conversion kept beside raw.md for comparison
+    (see app.preprocess.parser); not a document in its own right."""
+    return document_dir_for(stem) / "raw0.md"
+
+
 def document_path_for(filename: str) -> Path:
     """`raw.md` path for a `{stem}.md`-shaped filename, as every route
     that reads a document's own content wants it."""
-    return document_dir_for(stem_for(filename)) / "raw.md"
+    return raw_path_for(stem_for(filename))
 
 
 def chunk_path_for(stem: str) -> Path:
@@ -53,6 +63,64 @@ def pdf_path_for(stem: str) -> Path:
     return document_dir_for(stem) / "source.pdf"
 
 
+def versions_path(stem: str) -> Path:
+    return document_dir_for(stem) / "versions.json"
+
+
+def schema_path_for_version(stem: str, version: int) -> Path:
+    return document_dir_for(stem) / f"schema_v{version}.json"
+
+
+def document_manifest_path(stem: str) -> Path:
+    return document_dir_for(stem) / "manifest.json"
+
+
+def discovery_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "discovery.json"
+
+
+def summary_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "summary.json"
+
+
+def goldenset_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "goldenset.json"
+
+
+def goldenset_answers_path_for(stem: str) -> Path:
+    return document_dir_for(stem) / "goldenset_answers.json"
+
+
+def progress_path_for(stem: str, operation: str) -> Path:
+    return document_dir_for(stem) / "progress" / f"{operation}.json"
+
+
+def resume_cache_path_for(stem: str, stage: str, index: int) -> Path:
+    return document_dir_for(stem) / "resume_cache" / f"{stage}_{index}.json"
+
+
+def domain_schemas_dir() -> Path:
+    """Parent of every domain's folder: schemas that belong to a domain (e.g.
+    "insurance_policy"), not to any one document."""
+    return data_dir() / "domain_schemas"
+
+
+def domain_dir_for(domain: str) -> Path:
+    return domain_schemas_dir() / domain
+
+
+def domain_schema_path(domain: str) -> Path:
+    return domain_dir_for(domain) / "schema.json"
+
+
+def domain_manifest_path(domain: str) -> Path:
+    return domain_dir_for(domain) / "manifest.json"
+
+
+def domain_pending_review_path(domain: str) -> Path:
+    return domain_dir_for(domain) / "pending_review.json"
+
+
 def document_raw_files() -> list[tuple[str, Path]]:
     """(stem, raw.md path) for every registered document, newest first --
     the single place that knows a document is "a folder under documents_dir()
@@ -61,9 +129,9 @@ def document_raw_files() -> list[tuple[str, Path]]:
     if not documents_dir().is_dir():
         return []
     entries = [
-        (d.name, d / "raw.md")
+        (d.name, raw_path_for(d.name))
         for d in documents_dir().iterdir()
-        if d.is_dir() and not d.name.startswith(".") and (d / "raw.md").is_file()
+        if d.is_dir() and not d.name.startswith(".") and raw_path_for(d.name).is_file()
     ]
     return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)
 
@@ -82,11 +150,11 @@ def pdf_only_document_dirs() -> list[tuple[str, Path]]:
     if not documents_dir().is_dir():
         return []
     entries = [
-        (d.name, d / "source.pdf")
+        (d.name, pdf_path_for(d.name))
         for d in documents_dir().iterdir()
         if d.is_dir()
         and not d.name.startswith(".")
-        and not (d / "raw.md").is_file()
-        and (d / "source.pdf").is_file()
+        and not raw_path_for(d.name).is_file()
+        and pdf_path_for(d.name).is_file()
     ]
     return sorted(entries, key=lambda entry: entry[1].stat().st_mtime, reverse=True)

@@ -62,6 +62,7 @@ from app.ontology import (
     validate_ontology,
 )
 from app.utils.event_log import BOOT_ID, get_events, log_event
+from app.utils.store import read_json, write_bytes
 from app.utils.paths import (
     chunk_path_for,
     document_dir_for,
@@ -285,9 +286,7 @@ async def parse(file: UploadFile = File(...), converter: str = Form("table_aware
         # PDF viewer -- the conversion above is lossy (tables/headings are
         # reconstructed heuristically), so viewing the actual source is the
         # only way to check a given passage against the real document.
-        pdf_path = pdf_path_for(stem)
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(data)
+        write_bytes(pdf_path_for(stem), data)
     return result
 
 
@@ -335,9 +334,7 @@ def download_samsunglife_term(request: SamsungLifeDownloadRequest):
     original_filename = f"{record['name']}_약관.pdf"
     stem = raw_stem_for(original_filename)
     save_document_manifest(stem, original_filename, converter="table_aware")
-    pdf_path = pdf_path_for(stem)
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf_path.write_bytes(data)
+    write_bytes(pdf_path_for(stem), data)
     return {
         "filename": f"{stem}.md",
         "path": f"data/documents/{stem}/source.pdf",
@@ -498,10 +495,10 @@ def create_chunks(filename: str):
 
 @app.get("/api/documents/{filename}/chunk")
 def get_chunks(filename: str):
-    path = chunk_path_for(stem_for(filename))
-    if not path.is_file():
+    chunks = read_json(chunk_path_for(stem_for(filename)))
+    if chunks is None:
         raise HTTPException(status_code=404, detail="chunks not found")
-    return json.loads(path.read_text())
+    return chunks
 
 
 @app.post("/api/documents/{filename}/summary")

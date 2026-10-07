@@ -32,8 +32,8 @@ def write_text(path: Path, text: str) -> None:
     write_bytes(path, text.encode("utf-8"))
 
 
-def write_json(path: Path, value) -> None:
-    write_text(path, json.dumps(value, ensure_ascii=False))
+def write_json(path: Path, value, indent: int | None = None) -> None:
+    write_text(path, json.dumps(value, ensure_ascii=False, indent=indent))
 
 
 def read_json(path: Path, default=None):
