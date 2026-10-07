@@ -1,4 +1,3 @@
-import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +6,7 @@ from app.graph import graphdb
 from app.llm.calls import embed
 from app.preprocess.embeddings import node_embedding_text
 from app.utils.paths import document_dir_for, documents_dir
+from app.utils.store import locked, read_json, write_json
 
 DOCUMENTS_DIR = documents_dir()
 
@@ -50,16 +50,12 @@ def versions_path(stem: str) -> Path:
 
 
 def _load_versions_manifest(stem: str) -> dict:
-    path = versions_path(stem)
-    if not path.is_file():
-        return {"active_version": None, "versions": []}
-    return json.loads(path.read_text())
+    # A fresh default on every call: callers append to its "versions" list.
+    return read_json(versions_path(stem), {"active_version": None, "versions": []})
 
 
 def _save_versions_manifest(stem: str, manifest: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    versions_path(stem).write_text(json.dumps(manifest, ensure_ascii=False))
+    write_json(versions_path(stem), manifest)
 
 
 def list_versions(stem: str) -> list[dict]:
@@ -75,53 +71,51 @@ def schema_path_for_version(stem: str, version: int) -> Path:
 
 
 def save_schema(stem: str, version: int, schema: dict) -> None:
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    schema_path_for_version(stem, version).write_text(json.dumps(schema, ensure_ascii=False))
+    write_json(schema_path_for_version(stem, version), schema)
 
 
 def load_schema(stem: str, version: int) -> dict | None:
-    path = schema_path_for_version(stem, version)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
+    return read_json(schema_path_for_version(stem, version))
 
 
 def create_schema_version(stem: str, schema: dict, document_type: str = "general") -> int:
-    manifest = _load_versions_manifest(stem)
-    next_version = max((v["version"] for v in manifest["versions"]), default=0) + 1
-    save_schema(stem, next_version, schema)
-    manifest["versions"].append(
-        {
-            "version": next_version,
-            "document_type": document_type,
-            "created_at": datetime.now().isoformat(),
-        }
-    )
-    manifest["active_version"] = next_version
-    _save_versions_manifest(stem, manifest)
-    return next_version
+    with locked(stem):
+        manifest = _load_versions_manifest(stem)
+        next_version = max((v["version"] for v in manifest["versions"]), default=0) + 1
+        save_schema(stem, next_version, schema)
+        manifest["versions"].append(
+            {
+                "version": next_version,
+                "document_type": document_type,
+                "created_at": datetime.now().isoformat(),
+            }
+        )
+        manifest["active_version"] = next_version
+        _save_versions_manifest(stem, manifest)
+        return next_version
 
 
 def activate_version(stem: str, version: int) -> None:
-    manifest = _load_versions_manifest(stem)
-    if not any(v["version"] == version for v in manifest["versions"]):
-        raise ValueError(f"version {version} not found for {stem!r}")
-    manifest["active_version"] = version
-    _save_versions_manifest(stem, manifest)
+    with locked(stem):
+        manifest = _load_versions_manifest(stem)
+        if not any(v["version"] == version for v in manifest["versions"]):
+            raise ValueError(f"version {version} not found for {stem!r}")
+        manifest["active_version"] = version
+        _save_versions_manifest(stem, manifest)
 
 
 def delete_version(stem: str, version: int) -> None:
-    manifest = _load_versions_manifest(stem)
-    remaining = [v for v in manifest["versions"] if v["version"] != version]
-    if len(remaining) == len(manifest["versions"]):
-        raise ValueError(f"version {version} not found for {stem!r}")
-    schema_path_for_version(stem, version).unlink(missing_ok=True)
-    graphdb.delete_version_data(stem, version)
-    manifest["versions"] = remaining
-    if manifest["active_version"] == version:
-        manifest["active_version"] = max((v["version"] for v in remaining), default=None)
-    _save_versions_manifest(stem, manifest)
+    with locked(stem):
+        manifest = _load_versions_manifest(stem)
+        remaining = [v for v in manifest["versions"] if v["version"] != version]
+        if len(remaining) == len(manifest["versions"]):
+            raise ValueError(f"version {version} not found for {stem!r}")
+        schema_path_for_version(stem, version).unlink(missing_ok=True)
+        graphdb.delete_version_data(stem, version)
+        manifest["versions"] = remaining
+        if manifest["active_version"] == version:
+            manifest["active_version"] = max((v["version"] for v in remaining), default=None)
+        _save_versions_manifest(stem, manifest)
 
 
 def save_document_manifest(stem: str, original_filename: str, converter: str = "anydoc") -> None:
@@ -132,18 +126,19 @@ def save_document_manifest(stem: str, original_filename: str, converter: str = "
     "table_aware" -- see app.preprocess.parser). Schema and graph presence are
     deliberately NOT duplicated here -- load_schema and graphdb.has_graph
     already answer those live, so there's nothing to keep in sync."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "manifest.json").write_text(
-        json.dumps({"original_filename": original_filename, "converter": converter}, ensure_ascii=False)
-    )
+    with locked(stem):
+        write_json(
+            document_manifest_path(stem),
+            {"original_filename": original_filename, "converter": converter},
+        )
+
+
+def document_manifest_path(stem: str) -> Path:
+    return document_dir_for(stem) / "manifest.json"
 
 
 def load_document_manifest(stem: str) -> dict | None:
-    path = document_dir_for(stem) / "manifest.json"
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
+    return read_json(document_manifest_path(stem))
 
 
 def update_document_manifest(stem: str, **updates) -> dict:
@@ -153,12 +148,11 @@ def update_document_manifest(stem: str, **updates) -> dict:
     treated as "not provided", not "clear this field"), and writes the merged
     result back. Backs the manifest-edit route, which lets a user correct a
     field (e.g. original_filename) without resupplying the whole manifest."""
-    manifest = load_document_manifest(stem) or {}
-    manifest.update({k: v for k, v in updates.items() if v is not None})
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False))
-    return manifest
+    with locked(stem):
+        manifest = load_document_manifest(stem) or {}
+        manifest.update({k: v for k, v in updates.items() if v is not None})
+        write_json(document_manifest_path(stem), manifest)
+        return manifest
 
 
 def delete_document(stem: str) -> None:
@@ -183,16 +177,11 @@ def save_discovery(stem: str, report: dict) -> None:
     is an exploratory, re-runnable read of the document itself, not tied to
     any particular schema/extraction attempt, so overwriting on every run
     (rather than versioning it like schema_v{N}.json) is intentional."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    discovery_path_for(stem).write_text(json.dumps(report, ensure_ascii=False))
+    write_json(discovery_path_for(stem), report)
 
 
 def load_discovery(stem: str) -> dict | None:
-    path = discovery_path_for(stem)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())
+    return read_json(discovery_path_for(stem))
 
 
 def summary_path_for(stem: str) -> Path:
@@ -202,16 +191,12 @@ def summary_path_for(stem: str) -> Path:
 def save_document_summary(stem: str, summary: str) -> None:
     """One summary per document, overwritten on regeneration -- same
     exploratory-artifact model as discover_ontology/save_discovery above."""
-    d = document_dir_for(stem)
-    d.mkdir(parents=True, exist_ok=True)
-    summary_path_for(stem).write_text(json.dumps({"summary": summary}, ensure_ascii=False))
+    write_json(summary_path_for(stem), {"summary": summary})
 
 
 def load_document_summary(stem: str) -> str | None:
-    path = summary_path_for(stem)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text())["summary"]
+    stored = read_json(summary_path_for(stem))
+    return None if stored is None else stored["summary"]
 
 
 def embed_nodes(nodes: list) -> list:
