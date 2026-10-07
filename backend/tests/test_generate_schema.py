@@ -52,7 +52,7 @@ def _prompt_text(prompt):
 
 class SequencedChatModel:
     """Returns each response in order, one per invoke() call -- needed for
-    the *_from_chunks consolidation tests, which make one LLM call per
+    the multi-group schema tests, which make one LLM call per
     group plus one more for the consolidation pass. The map step of
     the schema stage/measure_schema_stability now calls invoke()
     concurrently from multiple threads, so the read-index-then-increment

@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 # total even though no single chunk does. Rather than keeping every group's
 # view of the ontology consistent with every other group's as it goes (which
 # would make each group depend on every earlier one and prevent groups from
-# being processed independently), each module's own *_from_chunks variant runs
-# its single-document function once per token-budget-sized group of
+# being processed independently), each stage's entry point (discover_for_document,
+# schema_for_document, extract_for_document) runs its single-document function once per token-budget-sized group of
 # consecutive chunks (map, via group_chunks_by_budget below), then folds every
 # group's result into one unified set (reduce) -- see each function's own
 # docstring for what exactly gets consolidated/merged and how.
@@ -117,7 +117,7 @@ class ChunkProgress:
     def advance(self, *_args, **fields) -> None:
         """Marks one more unit of work (one chunk group, or the single
         whole-document call) done, optionally merging `fields` into the
-        persisted state (e.g. extract_graph_from_chunks's running node/edge
+        persisted state (e.g. extract_for_document's running node/edge
         counts). Accepts and ignores a positional argument too, so it can be
         passed straight as map_concurrently's `on_item_done` callback,
         which calls it with that item's own result."""

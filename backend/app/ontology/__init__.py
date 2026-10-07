@@ -131,7 +131,6 @@ from .extract_graph import (
     _section_labels_in,
     extract_for_document,
     extract_graph,
-    extract_graph_from_chunks,
 )
 from .evolve_graph import (
     apply_evolution,

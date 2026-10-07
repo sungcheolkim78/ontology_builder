@@ -18,11 +18,11 @@ formatted string the way this module used to. This exists for two reasons:
   restating "Document:\n{document}" (and, for a few, "Ontology schema:\n
   {schema}", "Extracted graph:\n{graph}", etc.) inside the same block as the
   instructions -- now those live only in the human message, built in code.
-- app.ontology.generate_schema's *_from_chunks functions call their
+- The discover/schema/extract stages (app.ontology) call their
   single-document function once per chunk group with IDENTICAL instructions
   and only the group's own text differing -- putting the identical part in
   a stable system message (and, for generate_schema/extract_graph, folding
-  in whatever else is identical across an entire *_from_chunks call --
+  in whatever else is identical across an entire stage run --
   discovery's hint, extract's schema -- rather than just the literal prompt
   constant) maximizes how much of the request is a byte-identical prefix
   across those repeated calls, which is what lets a provider with prompt
@@ -89,7 +89,7 @@ SCHEMA_PROMPTS = {
 # ({schema}) rather than moving everything into the human message: a
 # document's active schema is per-document, not a document-independent
 # constant the way every other prompt's static instructions are, but it IS
-# identical across every group of one extract_graph_from_chunks call (unlike
+# identical across every group of one extract_for_document call (unlike
 # the group's own document text) -- filling it in here, so it lands in the
 # system message alongside the instructions, still gives every group of that
 # one call a byte-identical system message, maximizing the cacheable prefix

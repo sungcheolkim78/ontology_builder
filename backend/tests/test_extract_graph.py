@@ -4,12 +4,12 @@ import threading
 
 import pytest
 
-from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR
+from app.llm.chat import set_model_name
+from app.ontology import DEFAULT_SCHEMA, DOCUMENTS_DIR, create_schema_version
 from app.ontology.extract_graph import (
     _find_evidence_span,
     extract_for_document,
     extract_graph,
-    extract_graph_from_chunks,
 )
 from app.preprocess.parser import DATA_DIR
 from app.utils.paths import document_dir_for
@@ -282,22 +282,21 @@ def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(mo
     assert "source_section" not in result["nodes"][1]
 
 
-# --- extract_graph_from_chunks -----------------------------------------------
+@pytest.fixture
+def thirty_char_groups(monkeypatch):
+    """Makes two 30-character chunks fall into two chunk groups."""
+    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 30)
 
 
-def test_extract_graph_from_chunks_single_group_skips_merge(monkeypatch):
-    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
-    fake_model = RecordingChatModel(json.dumps(graph))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-
-    result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
-
-    assert result == graph
-    assert len(fake_model.prompts) == 1
+def _use_schema(schema, stem="doc_raw"):
+    """Makes `schema` the document's active schema version."""
+    return create_schema_version(stem, schema, document_type="general")
 
 
-def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeypatch):
+# --- extract_for_document over chunk groups ----------------------------------
+
+
+def test_extract_for_document_merges_coreferent_nodes_across_chunk_groups(monkeypatch, thirty_char_groups):
     schema = {
         "node_types": [{"name": "Person", "description": "a person"}, {"name": "Org", "description": "an org"}],
         "edge_types": [{"name": "WORKS_AT", "description": "works at", "source": "Person", "target": "Org"}],
@@ -323,27 +322,16 @@ def test_extract_graph_from_chunks_merges_coreferent_nodes_across_groups(monkeyp
     fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = extract_graph_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], schema, max_group_chars=30
-    )
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema(schema)
+
+    _, result, _ = extract_for_document("doc_raw")
 
     labels = {(n["type"], n["label"]) for n in result["nodes"]}
     assert labels == {("Person", "Alice"), ("Org", "Acme"), ("Person", "Bob")}
     assert len(result["nodes"]) == 3  # Alice/Acme deduped, not double-counted
     assert len(result["edges"]) == 2  # duplicate Alice->Acme edge collapses; Bob->Acme survives
-
-
-def test_extract_graph_from_chunks_without_stem_writes_no_progress_files(monkeypatch):
-    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
-    monkeypatch.setattr(
-        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
-    )
-
-    result = extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
-
-    assert result == graph
-    assert not DOCUMENTS_DIR.exists() or not any(DOCUMENTS_DIR.iterdir())
 
 
 # --- extract_for_document seam -----------------------------------------------
@@ -392,7 +380,7 @@ def _read_progress(stem, operation):
     return json.loads((document_dir_for(stem) / "progress" / f"{operation}.json").read_text())
 
 
-def test_extract_graph_from_chunks_reports_progress_with_running_node_edge_counts(monkeypatch):
+def test_extract_for_document_reports_progress_with_running_node_edge_counts(monkeypatch, thirty_char_groups):
     schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
     graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     graph2 = {
@@ -402,31 +390,16 @@ def test_extract_graph_from_chunks_reports_progress_with_running_node_edge_count
     fake_model = SequencedChatModel([json.dumps(graph1), json.dumps(graph2)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
     write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema(schema)
 
-    extract_graph_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
-        schema,
-        max_group_chars=30,
-        stem="doc_raw",
-    )
+    extract_for_document("doc_raw")
 
     state = _read_progress("doc_raw", "extract")
     assert state["status"] == "done"
     assert state["total"] == 2
     assert state["completed"] == 2
     assert state["nodes"] == 3  # 1 from group1 + 2 from group2, running total
-
-
-def test_extract_graph_from_chunks_writes_no_progress_without_stem(monkeypatch):
-    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
-    monkeypatch.setattr(
-        "app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(graph))
-    )
-    schema = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-
-    extract_graph_from_chunks([{"path": "p1", "text": "hello"}], schema, max_group_chars=1000)
-
-    assert not (DATA_DIR / "documents" / "doc_raw" / "progress").exists()
 
 
 def test_extract_for_document_reports_progress_for_whole_document(monkeypatch):
@@ -446,7 +419,7 @@ def test_extract_for_document_reports_progress_for_whole_document(monkeypatch):
     assert state["edges"] == 0
 
 
-# --- resume cache, observed through extract_graph_from_chunks ----------------
+# --- resume cache, observed through extract_for_document ---------------------
 
 
 class ScriptedChatModel:
@@ -476,10 +449,9 @@ class ScriptedChatModel:
 
 
 _PERSON_SCHEMA = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
-_TWO_GROUPS = [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}]
 
 
-def test_extract_graph_from_chunks_retry_reruns_only_the_failed_group(monkeypatch):
+def test_extract_for_document_retry_reruns_only_the_failed_group(monkeypatch, thirty_char_groups):
     graph1 = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     graph2 = {"nodes": [{"id": "n2", "label": "Bob", "type": "Person"}], "edges": []}
     model = ScriptedChatModel(
@@ -487,11 +459,13 @@ def test_extract_graph_from_chunks_retry_reruns_only_the_failed_group(monkeypatc
     )
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema(_PERSON_SCHEMA)
     with pytest.raises(RuntimeError):
-        extract_graph_from_chunks(_TWO_GROUPS, _PERSON_SCHEMA, max_group_chars=30, stem="doc_raw")
+        extract_for_document("doc_raw")
 
     model.fail_on = set()
-    result = extract_graph_from_chunks(_TWO_GROUPS, _PERSON_SCHEMA, max_group_chars=30, stem="doc_raw")
+    _, result, _ = extract_for_document("doc_raw")
 
     labels = {(n["type"], n["label"]) for n in result["nodes"]}
     assert labels == {("Person", "Alice"), ("Person", "Bob")}
@@ -499,7 +473,7 @@ def test_extract_graph_from_chunks_retry_reruns_only_the_failed_group(monkeypatc
     assert model.calls_for("b" * 30) == 2
 
 
-def test_extract_graph_from_chunks_does_not_reuse_results_across_different_schemas(monkeypatch):
+def test_extract_for_document_does_not_reuse_results_across_different_schemas(monkeypatch):
     # Regression: the resume cache used to be keyed by group index alone, so
     # re-extracting after activating a different schema version silently
     # reused the previous schema's nodes/edges for every group index.
@@ -507,26 +481,77 @@ def test_extract_graph_from_chunks_does_not_reuse_results_across_different_schem
     model = ScriptedChatModel({"hello": json.dumps(graph)})
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
-    chunks = [{"path": "p1", "text": "hello"}]
+    write_chunks("doc_raw", ["hello"])
     other_schema = {
         "node_types": [{"name": "Person", "description": "a person"}, {"name": "Org", "description": "an org"}],
         "edge_types": [],
     }
 
-    extract_graph_from_chunks(chunks, _PERSON_SCHEMA, max_group_chars=1000, stem="doc_raw")
-    extract_graph_from_chunks(chunks, other_schema, max_group_chars=1000, stem="doc_raw")
+    _use_schema(_PERSON_SCHEMA)
+    extract_for_document("doc_raw")
+    _use_schema(other_schema)
+    extract_for_document("doc_raw")
 
     assert len(model.prompts) == 2
 
 
-def test_extract_graph_from_chunks_reuses_results_when_the_schema_is_unchanged(monkeypatch):
+def test_extract_for_document_reuses_results_when_the_schema_is_unchanged(monkeypatch):
     graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
     model = ScriptedChatModel({"hello": json.dumps(graph)})
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_document()
-    chunks = [{"path": "p1", "text": "hello"}]
+    write_chunks("doc_raw", ["hello"])
+    _use_schema(_PERSON_SCHEMA)
 
-    extract_graph_from_chunks(chunks, _PERSON_SCHEMA, max_group_chars=1000, stem="doc_raw")
-    extract_graph_from_chunks(chunks, _PERSON_SCHEMA, max_group_chars=1000, stem="doc_raw")
+    extract_for_document("doc_raw")
+    extract_for_document("doc_raw")
 
     assert len(model.prompts) == 1
+
+
+# --- extract_for_document: an unchunked document is one chunk group ----------
+
+
+def test_extract_for_document_reuses_the_resume_cache_for_an_unchunked_document(monkeypatch):
+    write_document()
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    model = ScriptedChatModel({"Alice works at Acme.": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    _, first, _ = extract_for_document("doc_raw")
+    _, second, _ = extract_for_document("doc_raw")
+
+    assert first == second == graph
+    assert len(model.prompts) == 1
+
+
+def test_extract_for_document_does_not_reuse_results_across_a_model_change(monkeypatch):
+    write_document()
+    monkeypatch.setattr("app.llm.chat._selected_models", {})
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Entity"}], "edges": []}
+    model = ScriptedChatModel({"Alice works at Acme.": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    set_model_name("openai/gpt-5.4-mini", "extract_graph")
+    extract_for_document("doc_raw")
+    extract_for_document("doc_raw")  # same model: reused
+    assert len(model.prompts) == 1
+
+    set_model_name("anthropic/claude-sonnet-5", "extract_graph")
+    extract_for_document("doc_raw")
+    assert len(model.prompts) == 2
+
+
+def test_extract_for_document_evidence_offsets_are_relative_to_raw_md_for_an_unchunked_document(monkeypatch):
+    write_document(content="# Doc\nAlice works at Acme.")
+    graph = {
+        "nodes": [{"id": "n1", "label": "Alice", "type": "Entity", "evidence": "Alice works at Acme."}],
+        "edges": [],
+    }
+    model = ScriptedChatModel({"Alice works at Acme.": json.dumps(graph)})
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    _, result, _ = extract_for_document("doc_raw")
+
+    node = result["nodes"][0]
+    assert (node["start_offset"], node["end_offset"]) == (6, 26)

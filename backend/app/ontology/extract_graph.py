@@ -1,8 +1,8 @@
 """Instance-extraction stage of the ontology pipeline: given a document and an
 already-generated schema (see generate_schema.py), extract actual nodes/edges
-conforming to it (extract_graph), plus its chunk-grouped map-reduce variant
-for documents too large to send in one LLM call (extract_graph_from_chunks)
-and the extract_for_document seam main.py's /extract route calls. See
+conforming to it (extract_graph), plus the extract_for_document seam
+main.py's /extract route calls, which runs it over chunk groups through
+run_chunk_groups and merges the group graphs. See
 evolve_graph.py for validating/evolving what this stage produces."""
 
 import json
@@ -16,10 +16,9 @@ from app.llm.prompts import EXTRACT_PROMPT
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema
 from .schema_validation import normalize_schema
-from .chunk_groups import run_chunk_groups, start_progress
+from .chunk_groups import run_chunk_groups
 from .utils import (
     _dedupe_by_key,
-    _load_chunk_items,
     _require_document_text,
 )
 
@@ -128,7 +127,7 @@ def _normalize_extracted_item(
 def extract_graph(document_text: str, schema: dict) -> dict:
     normalized_schema = normalize_schema(schema)
     # The schema, not just the instructions, goes into the system message --
-    # it's identical across every group of one extract_graph_from_chunks
+    # it's identical across every group of one extract_for_document
     # call (unlike the group's own document text), so folding it in here
     # keeps that whole message byte-identical across the call's groups (see
     # EXTRACT_PROMPT's own comment in prompts.py).
@@ -206,65 +205,37 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
     return {"nodes": merged_nodes, "edges": merged_edges}
 
 
-def extract_graph_from_chunks(
-    chunk_items: list[dict], schema: dict, max_group_chars: int | None = None, stem: str | None = None
-) -> dict:
-    """Runs extract_graph() once per token-budget-sized group of consecutive
-    chunks, then merges every group's nodes/edges into one graph via
-    _merge_group_graphs. Unlike the discover/schema stages
-    (generate_schema.py), this never sends
-    extracted instances back through an LLM to merge -- a document's
-    node/edge count scales with its length, unlike a schema's small,
-    fixed-size type list, so an LLM consolidation pass here wouldn't fit the
-    same budget it does for types; exact (type, label) matching is used
-    instead. A document small enough to fit in one group skips
-    namespacing/merging entirely and returns that single group's graph
-    untouched, so the common case still costs exactly one LLM call.
+def extract_for_document(stem: str) -> tuple[dict, dict, int]:
+    """One seam for main.py's /extract route: runs extract_graph over the
+    document's chunk groups (or, with no chunks.json, over its whole text as
+    one group) through run_chunk_groups, which owns the progress file (with
+    running node/edge totals) and the resume cache either way, then merges
+    the group graphs with _merge_group_graphs. Also owns the
+    no-active-version fallback (create a DEFAULT_SCHEMA version) that route
+    used to do inline. Returns (schema, graph, version); the caller is still
+    responsible for persisting the graph (save_graph). Raises
+    FileNotFoundError if the document hasn't been parsed yet.
 
-    Grouping, concurrency, per-group logging, progress and the resume cache
-    all live in .chunk_groups.run_chunk_groups. Progress
-    (documents/{stem}/progress/extract.json) carries running node/edge
-    totals, which is what main.py's GET /progress route and the frontend
-    poll. A group's cached graph is reused on a retry only if `schema`,
+    A group's cached graph is reused on a retry only if the schema,
     EXTRACT_PROMPT and the group's text are all unchanged -- so activating a
     different schema version and re-extracting never picks up the previous
-    schema's output."""
-    return run_chunk_groups(
-        chunk_items,
+    schema's output. Unlike the discover/schema stages, merging never goes
+    back through an LLM -- a document's node/edge count scales with its
+    length, so exact (type, label) matching is used instead (see
+    _merge_group_graphs)."""
+    _require_document_text(stem)
+    version = get_active_version(stem)
+    if version is None:
+        version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
+    schema = load_schema(stem, version)
+    graph = run_chunk_groups(
         stage="extract",
         operation="extract_graph",
         stem=stem,
-        max_group_chars=max_group_chars,
         fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT},
         group_fn=lambda group_text: extract_graph(group_text, schema),
         reduce_fn=_merge_group_graphs,
         reduce_stage="merge",
         summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},
     )
-
-
-def extract_for_document(stem: str) -> tuple[dict, dict, int]:
-    """One seam for main.py's /extract route: owns the document-existence
-    check, the chunks.json-vs-whole-document routing, and the
-    no-active-version fallback (create a DEFAULT_SCHEMA version) that route
-    used to do inline. Returns (schema, graph, version); the caller is still
-    responsible for persisting the graph (save_graph), since that's a
-    separate concern (embeddings) from producing it. Raises
-    FileNotFoundError if the document hasn't been parsed yet. Also reports
-    progress for the whole-document (no chunks.json) branch itself --
-    extract_graph_from_chunks reports its own when there are chunks -- so a
-    poller always finds a progress record no matter which path this
-    document takes."""
-    document_text = _require_document_text(stem)
-    version = get_active_version(stem)
-    if version is None:
-        version = create_schema_version(stem, DEFAULT_SCHEMA, document_type="default")
-    schema = load_schema(stem, version)
-    chunk_items = _load_chunk_items(stem)
-    if chunk_items is not None:
-        graph = extract_graph_from_chunks(chunk_items, schema, stem=stem)
-    else:
-        with start_progress(stem, "extract", 1) as progress:
-            graph = extract_graph(document_text, schema)
-            progress.advance(nodes=len(graph["nodes"]), edges=len(graph["edges"]))
     return schema, graph, version
