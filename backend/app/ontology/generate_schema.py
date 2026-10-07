@@ -27,7 +27,7 @@ from app.llm.prompts import (
 from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
 from .chunk_groups import map_concurrently, run_chunk_groups
-from .persistence import save_discovery
+from .persistence import create_schema_version, load_discovery, save_discovery
 from .utils import (
     _check_document_length,
     _dedupe_by_key,
@@ -226,22 +226,25 @@ def schema_for_document(
     stem: str,
     document_type: str = "general",
     max_chars: int | None = None,
-    discovery: dict | None = None,
-) -> dict:
+    use_discovery: bool = False,
+) -> tuple[dict, int]:
     """One seam for main.py's /schema route: runs generate_schema over the
     document's chunk groups (or, with no chunks.json, over its whole text as
     one group) through run_chunk_groups, which owns the progress file and the
-    resume cache either way. Raises FileNotFoundError if the document hasn't
-    been parsed yet.
+    resume cache either way, then saves the schema as the document's next
+    version, activates it, and returns `(schema, version)`. Raises
+    FileNotFoundError if the document hasn't been parsed yet.
 
-    `discovery`, if given, is passed to every group's generate_schema() call
-    unchanged (it's already a document-level hint, not something to re-derive
-    per group). A group's cached schema is reused on a retry only if
+    With `use_discovery`, the document's saved discovery report (if there is
+    one -- a missing report just means no hint) is passed to every group's
+    generate_schema() call unchanged (it's already a document-level hint, not
+    something to re-derive per group). A group's cached schema is reused on a retry only if
     `document_type`, its schema prompt, `discovery` and the group's text are
     all unchanged. `max_chars` only caps a document with no chunks (see
     run_chunk_groups)."""
     _require_document_text(stem)
-    return run_chunk_groups(
+    discovery = load_discovery(stem) if use_discovery else None
+    schema = run_chunk_groups(
         stage="schema",
         operation="generate_schema",
         stem=stem,
@@ -256,6 +259,8 @@ def schema_for_document(
         ),
         reduce_fn=_consolidate_schema_types,
     )
+    version = create_schema_version(stem, schema, document_type=document_type)
+    return schema, version
 
 
 # [find_redundant_type_pairs 전용 보조 함수] 두 임베딩 벡터 사이의 코사인 유사도를

@@ -710,7 +710,7 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
     document_type = request.document_type if request else "general"
     max_chars = request.max_chars if request else None
     stem = stem_for(filename)
-    discovery = load_discovery(stem) if (request and request.use_discovery) else None
+    use_discovery = bool(request and request.use_discovery)
     try:
         with trace(
             "generate-schema",
@@ -718,8 +718,8 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
             metadata={"filename": filename},
             input=f"generate a {document_type} schema for {filename}",
         ) as span:
-            schema = schema_for_document(
-                stem, document_type=document_type, max_chars=max_chars, discovery=discovery
+            schema, version = schema_for_document(
+                stem, document_type=document_type, max_chars=max_chars, use_discovery=use_discovery
             )
             span.update(
                 output=(
@@ -731,7 +731,6 @@ def create_schema(filename: str, request: CreateSchemaRequest | None = None):
         raise HTTPException(status_code=404, detail="document not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    version = create_schema_version(stem, schema, document_type=document_type)
     return {**schema, "version": version}
 
 

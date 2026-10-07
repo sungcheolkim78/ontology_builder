@@ -189,7 +189,7 @@ def test_schema_for_document_uses_chunks_when_present(monkeypatch):
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
-    result = schema_for_document(stem)
+    result, _ = schema_for_document(stem)
 
     assert result["node_types"] == schema["node_types"]
 

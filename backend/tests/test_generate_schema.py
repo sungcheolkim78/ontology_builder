@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from app.llm.chat import set_model_name
-from app.ontology import load_discovery
+from app.ontology import get_active_version, list_versions, load_discovery, load_schema, save_discovery
 from app.ontology.generate_schema import (
     discover_for_document,
     discover_ontology,
@@ -271,7 +271,7 @@ def test_schema_for_document_single_chunk_group_skips_consolidation(monkeypatch)
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = schema_for_document("doc_raw")
+    result, _ = schema_for_document("doc_raw")
 
     assert result == schema
     assert len(fake_model.prompts) == 1
@@ -286,7 +286,7 @@ def test_schema_for_document_consolidates_multiple_chunk_groups(monkeypatch, thi
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = schema_for_document("doc_raw")
+    result, _ = schema_for_document("doc_raw")
 
     assert result == consolidated
     assert fake_model.calls == 3
@@ -356,7 +356,7 @@ def test_schema_for_document_uses_whole_document_when_no_chunks(monkeypatch):
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
-    result = schema_for_document("doc_raw")
+    result, _ = schema_for_document("doc_raw")
 
     assert result == schema
 
@@ -367,7 +367,7 @@ def test_schema_for_document_uses_chunks_when_present(monkeypatch):
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
 
-    result = schema_for_document("doc_raw")
+    result, _ = schema_for_document("doc_raw")
 
     assert result["node_types"] == schema["node_types"]
 
@@ -573,7 +573,7 @@ def test_schema_for_document_retry_reruns_only_the_failed_group(monkeypatch, thi
         schema_for_document("doc_raw")
 
     model.fail_on = set()
-    result = schema_for_document("doc_raw")
+    result, _ = schema_for_document("doc_raw")
 
     assert result == consolidated
     assert model.calls_for("a" * 30) == 1  # group 1 resumed from the resume cache
@@ -584,7 +584,7 @@ def test_schema_for_document_retry_reruns_only_the_failed_group(monkeypatch, thi
     "first_kwargs, second_kwargs",
     [
         ({"document_type": "general"}, {"document_type": "legal"}),
-        ({"discovery": None}, {"discovery": {"classes": [{"name": "Policy"}]}}),
+        ({"use_discovery": False}, {"use_discovery": True}),
     ],
 )
 def test_schema_for_document_does_not_reuse_results_across_different_inputs(
@@ -598,6 +598,7 @@ def test_schema_for_document_does_not_reuse_results_across_different_inputs(
     model = ScriptedChatModel({}, default=json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     write_chunks("doc_raw", ["hello"])
+    save_discovery("doc_raw", _discovery_report(classes=[{"name": "Policy"}]))
 
     schema_for_document("doc_raw", **first_kwargs)
     schema_for_document("doc_raw", **second_kwargs)
@@ -705,8 +706,8 @@ def test_schema_for_document_reuses_the_resume_cache_for_an_unchunked_document(m
     model = ScriptedChatModel({}, default=json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
 
-    first = schema_for_document("doc_raw")
-    second = schema_for_document("doc_raw")
+    first, _ = schema_for_document("doc_raw")
+    second, _ = schema_for_document("doc_raw")
 
     assert first == second == schema
     assert len(model.prompts) == 1
@@ -765,3 +766,48 @@ def test_discover_for_document_saves_the_report_it_returns(monkeypatch):
 
     assert result == report
     assert load_discovery("doc_raw") == report
+
+
+# --- schema_for_document creates the schema version it returns ---------------
+
+
+def test_schema_for_document_creates_and_activates_a_version_and_returns_it(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(schema)))
+
+    result_schema, version = schema_for_document("doc_raw", document_type="legal")
+
+    assert result_schema == schema
+    assert version == 1
+    assert get_active_version("doc_raw") == 1
+    assert load_schema("doc_raw", 1) == schema
+    assert [(v["version"], v["document_type"]) for v in list_versions("doc_raw")] == [(1, "legal")]
+
+
+def test_schema_for_document_feeds_the_saved_discovery_to_the_prompt_when_asked(monkeypatch):
+    write_document()
+    report = _discovery_report(
+        classes=[{"name": "Policy", "definition": "d", "category": "CONCEPT", "parent": "", "rationale": "", "confidence": "HIGH"}]
+    )
+    save_discovery("doc_raw", report)
+    schema = {"node_types": [], "edge_types": []}
+    model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    schema_for_document("doc_raw", use_discovery=True)
+
+    prompt = _prompt_text(model.prompts[0])
+    assert "Reference --" in prompt
+    assert '"name": "Policy"' in prompt
+
+
+def test_schema_for_document_without_a_saved_discovery_runs_with_no_hint(monkeypatch):
+    write_document()
+    schema = {"node_types": [], "edge_types": []}
+    model = RecordingChatModel(json.dumps(schema))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    schema_for_document("doc_raw", use_discovery=True)
+
+    assert "Reference --" not in _prompt_text(model.prompts[0])
