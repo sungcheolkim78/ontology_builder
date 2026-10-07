@@ -379,36 +379,6 @@ def test_discover_endpoint_uses_chunks_when_present(monkeypatch):
     assert response.json() == report
 
 
-def test_generate_schema_from_chunks_single_group_skips_consolidation(monkeypatch):
-    from app.ontology import generate_schema_from_chunks
-
-    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
-    fake_model = RecordingChatModel(json.dumps(schema))
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    result = generate_schema_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
-
-    assert result == schema
-    assert len(fake_model.prompts) == 1
-
-
-def test_generate_schema_from_chunks_consolidates_multiple_groups(monkeypatch):
-    from app.ontology import generate_schema_from_chunks
-
-    schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
-    schema2 = {"node_types": [{"name": "InsurancePolicy", "description": "d2"}], "edge_types": []}
-    consolidated = {"node_types": [{"name": "Policy", "description": "merged"}], "edge_types": []}
-    fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
-    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
-
-    result = generate_schema_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
-    )
-
-    assert result == consolidated
-    assert fake_model.calls == 3
-
-
 def test_schema_endpoint_uses_chunks_when_present(monkeypatch):
     write_document()
     stem = "doc_raw"
@@ -1771,7 +1741,7 @@ class SequencedChatModel:
     because converge_domain_schema makes multiple sequential LLM calls
     (extract/validate/propose_evolution, per document) within one function
     call, unlike the single-call tests above that get away with a fixed
-    FakeChatModel response. Also used by the generate_schema_from_chunks/
+    FakeChatModel response. Also used by the schema-stage/
     measure_schema_stability tests below, whose map step now calls invoke()
     concurrently from multiple threads -- the read-index-then-increment is
     lock-protected so two threads can't race and read the same index (or

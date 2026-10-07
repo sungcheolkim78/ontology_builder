@@ -10,7 +10,6 @@ from app.ontology.generate_schema import (
     discover_ontology,
     find_redundant_type_pairs,
     generate_schema,
-    generate_schema_from_chunks,
     measure_schema_stability,
     schema_for_document,
     summarize_document,
@@ -55,7 +54,7 @@ class SequencedChatModel:
     """Returns each response in order, one per invoke() call -- needed for
     the *_from_chunks consolidation tests, which make one LLM call per
     group plus one more for the consolidation pass. The map step of
-    generate_schema_from_chunks/measure_schema_stability now calls invoke()
+    the schema stage/measure_schema_stability now calls invoke()
     concurrently from multiple threads, so the read-index-then-increment
     below is lock-protected -- otherwise two threads could race and read the
     same index (or skip one)."""
@@ -264,27 +263,29 @@ def test_generate_schema_ignores_discovery_by_default(monkeypatch):
     assert "Reference --" not in _prompt_text(fake_model.prompts[0])
 
 
-def test_generate_schema_from_chunks_single_group_skips_consolidation(monkeypatch):
+def test_schema_for_document_single_chunk_group_skips_consolidation(monkeypatch):
+    write_document()
+    write_chunks("doc_raw", ["hello"])
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     fake_model = RecordingChatModel(json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = generate_schema_from_chunks([{"path": "p1", "text": "hello"}], max_group_chars=1000)
+    result = schema_for_document("doc_raw")
 
     assert result == schema
     assert len(fake_model.prompts) == 1
 
 
-def test_generate_schema_from_chunks_consolidates_multiple_groups(monkeypatch):
+def test_schema_for_document_consolidates_multiple_chunk_groups(monkeypatch, thirty_char_groups):
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
     schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
     schema2 = {"node_types": [{"name": "InsurancePolicy", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": [{"name": "Policy", "description": "merged"}], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    result = generate_schema_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}], max_group_chars=30
-    )
+    result = schema_for_document("doc_raw")
 
     assert result == consolidated
     assert fake_model.calls == 3
@@ -372,8 +373,8 @@ def test_schema_for_document_uses_chunks_when_present(monkeypatch):
 
 def test_schema_for_document_ignores_max_chars_for_group_budget(monkeypatch):
     """Regression: same bug as discover_for_document's -- schema_for_document
-    used to forward `max_chars` as generate_schema_from_chunks's own
-    `max_group_chars`, silently defeating MAX_CHUNK_GROUP_CHARS."""
+    used to forward `max_chars` as the chunk-group budget, silently defeating
+    MAX_CHUNK_GROUP_CHARS."""
     write_document()
     write_chunks("doc_raw", ["a" * 30, "b" * 30])
     monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 30)
@@ -476,19 +477,16 @@ def _read_progress(stem, operation):
     return json.loads((document_dir_for(stem) / "progress" / f"{operation}.json").read_text())
 
 
-def test_generate_schema_from_chunks_reports_progress_when_stem_given(monkeypatch):
+def test_schema_for_document_reports_progress_per_chunk_group(monkeypatch, thirty_char_groups):
     write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
     schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
     schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
     fake_model = SequencedChatModel([json.dumps(schema1), json.dumps(schema2), json.dumps(consolidated)])
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: fake_model)
 
-    generate_schema_from_chunks(
-        [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}],
-        max_group_chars=30,
-        stem="doc_raw",
-    )
+    schema_for_document("doc_raw")
 
     state = _read_progress("doc_raw", "schema")
     assert state["status"] == "done"
@@ -558,11 +556,9 @@ class ScriptedChatModel:
         return type("FakeResponse", (), {"content": self.default})()
 
 
-_TWO_GROUPS = [{"path": "p1", "text": "a" * 30}, {"path": "p2", "text": "b" * 30}]
-
-
-def test_generate_schema_from_chunks_retry_reruns_only_the_failed_group(monkeypatch):
+def test_schema_for_document_retry_reruns_only_the_failed_group(monkeypatch, thirty_char_groups):
     write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
     schema1 = {"node_types": [{"name": "Policy", "description": "d1"}], "edge_types": []}
     schema2 = {"node_types": [{"name": "Coverage", "description": "d2"}], "edge_types": []}
     consolidated = {"node_types": schema1["node_types"] + schema2["node_types"], "edge_types": []}
@@ -573,10 +569,10 @@ def test_generate_schema_from_chunks_retry_reruns_only_the_failed_group(monkeypa
     )
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
     with pytest.raises(RuntimeError):
-        generate_schema_from_chunks(_TWO_GROUPS, max_group_chars=30, stem="doc_raw")
+        schema_for_document("doc_raw")
 
     model.fail_on = set()
-    result = generate_schema_from_chunks(_TWO_GROUPS, max_group_chars=30, stem="doc_raw")
+    result = schema_for_document("doc_raw")
 
     assert result == consolidated
     assert model.calls_for("a" * 30) == 1  # group 1 resumed from the resume cache
@@ -590,7 +586,7 @@ def test_generate_schema_from_chunks_retry_reruns_only_the_failed_group(monkeypa
         ({"discovery": None}, {"discovery": {"classes": [{"name": "Policy"}]}}),
     ],
 )
-def test_generate_schema_from_chunks_does_not_reuse_results_across_different_inputs(
+def test_schema_for_document_does_not_reuse_results_across_different_inputs(
     monkeypatch, first_kwargs, second_kwargs
 ):
     # Regression: the resume cache used to be keyed by group index alone, so a
@@ -600,23 +596,23 @@ def test_generate_schema_from_chunks_does_not_reuse_results_across_different_inp
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
-    chunks = [{"path": "p1", "text": "hello"}]
+    write_chunks("doc_raw", ["hello"])
 
-    generate_schema_from_chunks(chunks, max_group_chars=1000, stem="doc_raw", **first_kwargs)
-    generate_schema_from_chunks(chunks, max_group_chars=1000, stem="doc_raw", **second_kwargs)
+    schema_for_document("doc_raw", **first_kwargs)
+    schema_for_document("doc_raw", **second_kwargs)
 
     assert len(model.prompts) == 2
 
 
-def test_generate_schema_from_chunks_reuses_results_when_inputs_are_unchanged(monkeypatch):
+def test_schema_for_document_reuses_results_when_inputs_are_unchanged(monkeypatch):
     write_document()
     schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
     model = ScriptedChatModel({}, default=json.dumps(schema))
     monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
-    chunks = [{"path": "p1", "text": "hello"}]
+    write_chunks("doc_raw", ["hello"])
 
-    generate_schema_from_chunks(chunks, max_group_chars=1000, stem="doc_raw")
-    generate_schema_from_chunks(chunks, max_group_chars=1000, stem="doc_raw")
+    schema_for_document("doc_raw")
+    schema_for_document("doc_raw")
 
     assert len(model.prompts) == 1
 
@@ -698,5 +694,57 @@ def test_discover_for_document_rejects_an_unchunked_document_over_max_chars(monk
 
     with pytest.raises(ValueError, match="too long"):
         discover_for_document("doc_raw", max_chars=10)
+
+    assert model.prompts == []
+
+
+def test_schema_for_document_reuses_the_resume_cache_for_an_unchunked_document(monkeypatch):
+    write_document()
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    model = ScriptedChatModel({}, default=json.dumps(schema))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    first = schema_for_document("doc_raw")
+    second = schema_for_document("doc_raw")
+
+    assert first == second == schema
+    assert len(model.prompts) == 1
+
+
+def test_schema_for_document_does_not_reuse_results_across_a_model_change(monkeypatch):
+    write_document()
+    monkeypatch.setattr("app.llm.chat._selected_models", {})
+    schema = {"node_types": [{"name": "Policy", "description": "d"}], "edge_types": []}
+    model = ScriptedChatModel({}, default=json.dumps(schema))
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    set_model_name("openai/gpt-5.4-mini", "generate_schema")
+    schema_for_document("doc_raw")
+    schema_for_document("doc_raw")  # same model: reused
+    assert len(model.prompts) == 1
+
+    set_model_name("anthropic/claude-sonnet-5", "generate_schema")
+    schema_for_document("doc_raw")
+    assert len(model.prompts) == 2
+
+
+def test_schema_for_document_rejects_an_unchunked_document_over_max_chars(monkeypatch):
+    write_document(content="x" * 50)
+    model = ScriptedChatModel({}, default="{}")
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    with pytest.raises(ValueError, match="too long"):
+        schema_for_document("doc_raw", max_chars=10)
+
+    assert model.prompts == []
+
+
+def test_schema_for_document_rejects_an_unknown_document_type(monkeypatch):
+    write_document()
+    model = ScriptedChatModel({}, default="{}")
+    monkeypatch.setattr("app.llm.json_call.get_chat_model", lambda operation=None: model)
+
+    with pytest.raises(ValueError, match="unknown document_type"):
+        schema_for_document("doc_raw", document_type="nonsense")
 
     assert model.prompts == []

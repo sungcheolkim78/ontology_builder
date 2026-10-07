@@ -116,7 +116,6 @@ from .generate_schema import (
     discover_ontology,
     find_redundant_type_pairs,
     generate_schema,
-    generate_schema_from_chunks,
     measure_schema_stability,
     schema_for_document,
     summarize_document,

@@ -26,11 +26,10 @@ from app.llm.prompts import (
 )
 from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 
-from .chunk_groups import map_concurrently, run_chunk_groups, start_progress
+from .chunk_groups import map_concurrently, run_chunk_groups
 from .utils import (
     _check_document_length,
     _dedupe_by_key,
-    _load_chunk_items,
     _require_document_text,
 )
 
@@ -135,9 +134,9 @@ def _reduce_discovery_reports(group_reports: list[dict]) -> dict:
 
 # [스키마 생성 파이프라인의 leaf 함수이자 이 파일에서 가장 많이 재사용되는 핵심 함수]
 # 문서(또는 그룹 텍스트) 전체를 한 번의 LLM 호출로 보내 node_types/edge_types 스키마를
-# 만든다. generate_schema_from_chunks(그룹마다), measure_schema_stability(반복 호출),
-# schema_for_document(청크가 없을 때)가 이 함수를 호출하고, app.ontology.domain_schema의
-# 도메인 스키마 시딩에서도 그대로 재사용된다.
+# 만든다. schema_for_document(그룹마다 -- 청크가 없는 문서는 전체 텍스트가 하나의
+# 그룹), measure_schema_stability(반복 호출)가 이 함수를 호출하고,
+# app.ontology.domain_schema의 도메인 스키마 시딩에서도 그대로 재사용된다.
 def generate_schema(
     document_text: str,
     document_type: str = "general",
@@ -155,7 +154,7 @@ def generate_schema(
         # optional hint layered on top of the existing prompt, not a
         # replacement for it. Still lands in the system message (not the
         # human message alongside the document) since it's identical across
-        # every chunk group of one generate_schema_from_chunks call, just
+        # every chunk group of one schema_for_document call, just
         # like the base prompt itself -- see prompts.py's module comment.
         system_prompt = system_prompt + (
             "\n\nReference -- a prior ontology-discovery pass over this document already "
@@ -169,7 +168,7 @@ def generate_schema(
     return call_json("generate_schema", messages)
 
 
-# [generate_schema_from_chunks 전용 보조 함수] 그룹별 스키마의 node_types/edge_types를
+# [schema_for_document 전용 보조 함수] 그룹별 스키마의 node_types/edge_types를
 # LLM에게 통합해 달라고 요청한다(reduce 단계 -- _consolidate_types의 스키마 버전).
 def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
     payload = [
@@ -187,48 +186,6 @@ def _consolidate_schema_types(group_schemas: list[dict]) -> dict:
         ),
     ]
     return call_json("consolidate_schema", messages)
-
-
-# [스키마 생성 파이프라인의 오케스트레이터] discover_for_document와 같은
-# 구조: 그룹 분할/병렬 실행/이어하기 캐시/진행 상황은 chunk_groups.run_chunk_groups가
-# 맡고, 이 함수는 그룹마다 호출할 generate_schema와 reduce 함수
-# (_consolidate_schema_types)만 넘긴다. schema_for_document가 chunks.json이 있는
-# 문서에 대해 이 함수를 호출한다.
-def generate_schema_from_chunks(
-    chunk_items: list[dict],
-    document_type: str = "general",
-    max_group_chars: int | None = None,
-    discovery: dict | None = None,
-    stem: str | None = None,
-) -> dict:
-    """Runs generate_schema() once per token-budget-sized group of
-    consecutive chunks, then consolidates every group's node_types/edge_types
-    into one unified schema via _consolidate_schema_types. A document small
-    enough to fit in one group skips consolidation entirely and returns that
-    single group's schema untouched. `discovery`, if given, is passed
-    through to every group's generate_schema() call unchanged (it's already
-    a document-level hint, not something that needs re-deriving per group).
-
-    Grouping, concurrency, progress (documents/{stem}/progress/schema.json)
-    and the resume cache live in .chunk_groups.run_chunk_groups. A group's
-    cached schema is reused on a retry only if `document_type`, its schema
-    prompt, `discovery` and the group's text are all unchanged."""
-    return run_chunk_groups(
-        chunk_items,
-        stage="schema",
-        operation="generate_schema",
-        stem=stem,
-        max_group_chars=max_group_chars,
-        fingerprint_inputs={
-            "document_type": document_type,
-            "prompt": SCHEMA_PROMPTS.get(document_type),
-            "discovery": discovery,
-        },
-        group_fn=lambda group_text: generate_schema(
-            group_text, document_type=document_type, discovery=discovery
-        ),
-        reduce_fn=_consolidate_schema_types,
-    )
 
 
 # [발견 파이프라인의 외부 진입점] main.py의 /discover 라우트가 호출하는 seam.
@@ -257,40 +214,44 @@ def discover_for_document(stem: str, max_chars: int | None = None) -> dict:
     )
 
 
-# [외부 진입점] main.py의 /schema 라우트가 호출하는 seam. discover_for_document와
-# 동일한 패턴으로, 문서 존재 여부를 확인한 뒤 chunks.json 유무에 따라
-# generate_schema_from_chunks 또는 generate_schema로 라우팅한다.
+# [스키마 생성 파이프라인의 외부 진입점] main.py의 /schema 라우트가 호출하는 seam.
+# discover_for_document와 같은 구조: 그룹 분할/병렬 실행/이어하기 캐시/진행 상황은
+# 모두 chunk_groups.run_chunk_groups가 맡고, 이 함수는 그룹마다 호출할
+# generate_schema와 reduce 함수(_consolidate_schema_types)만 넘긴다.
 def schema_for_document(
     stem: str,
     document_type: str = "general",
     max_chars: int | None = None,
     discovery: dict | None = None,
 ) -> dict:
-    """One seam for main.py's /schema route: same shape as
-    discover_for_document, for generate_schema/generate_schema_from_chunks --
-    including reporting progress for the whole-document branch itself, so a
-    poller always finds a progress record no matter which path this
-    document takes. Raises FileNotFoundError if the document hasn't been
-    parsed yet.
+    """One seam for main.py's /schema route: runs generate_schema over the
+    document's chunk groups (or, with no chunks.json, over its whole text as
+    one group) through run_chunk_groups, which owns the progress file and the
+    resume cache either way. Raises FileNotFoundError if the document hasn't
+    been parsed yet.
 
-    `max_chars` is NOT forwarded as generate_schema_from_chunks's own
-    `max_group_chars` -- see discover_for_document's own docstring for why
-    those are different budgets that happen to look alike, and what doing
-    so used to silently break (MAX_CHUNK_GROUP_CHARS having no effect,
-    since the frontend always sends a non-None max_chars far larger than
-    any sane group budget)."""
-    document_text = _require_document_text(stem)
-    chunk_items = _load_chunk_items(stem)
-    if chunk_items is not None:
-        return generate_schema_from_chunks(
-            chunk_items, document_type=document_type, discovery=discovery, stem=stem
-        )
-    with start_progress(stem, "schema", 1) as progress:
-        result = generate_schema(
-            document_text, document_type=document_type, max_chars=max_chars, discovery=discovery
-        )
-        progress.advance()
-        return result
+    `discovery`, if given, is passed to every group's generate_schema() call
+    unchanged (it's already a document-level hint, not something to re-derive
+    per group). A group's cached schema is reused on a retry only if
+    `document_type`, its schema prompt, `discovery` and the group's text are
+    all unchanged. `max_chars` only caps a document with no chunks (see
+    run_chunk_groups)."""
+    _require_document_text(stem)
+    return run_chunk_groups(
+        stage="schema",
+        operation="generate_schema",
+        stem=stem,
+        max_chars=max_chars,
+        fingerprint_inputs={
+            "document_type": document_type,
+            "prompt": SCHEMA_PROMPTS.get(document_type),
+            "discovery": discovery,
+        },
+        group_fn=lambda group_text: generate_schema(
+            group_text, document_type=document_type, discovery=discovery
+        ),
+        reduce_fn=_consolidate_schema_types,
+    )
 
 
 # [find_redundant_type_pairs 전용 보조 함수] 두 임베딩 벡터 사이의 코사인 유사도를
