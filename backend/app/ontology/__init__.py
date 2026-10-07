@@ -7,10 +7,12 @@ submodule's own docstring/comments for what it owns:
   save/load/embed functions. A dependency-free leaf every other submodule
   can import from.
 - generate_schema: the LLM-driven schema-generation stage -- discover_ontology/
-  generate_schema, their chunk-grouped map-reduce variants, summarize_document,
-  and the discover_for_document/schema_for_document seams main.py's routes
-  call, plus the schema-quality checks (find_redundant_type_pairs,
-  measure_schema_stability). Depends on utils.
+  generate_schema (each run once per chunk group by run_chunk_groups), their
+  reduce functions, summarize_document, and the discover_for_document/
+  schema_for_document seams main.py's routes call. Depends on utils.
+- schema_quality: standalone schema diagnostics (find_redundant_type_pairs,
+  measure_schema_stability), independent of the pipeline stages. Depends on
+  generate_schema.
 - extract_graph: the LLM-driven instance-extraction stage -- extract_graph,
   its chunk-grouped map-reduce variant, and the extract_for_document seam
   main.py's /extract route calls. Depends on persistence and utils.
@@ -93,17 +95,19 @@ from .utils import (
     _load_chunk_items,
     _require_document_text,
 )
+from .schema_quality import (
+    _cosine_similarity,
+    find_redundant_type_pairs,
+    measure_schema_stability,
+)
 from .generate_schema import (
     _consolidate_schema_types,
     _consolidate_types,
-    _cosine_similarity,
     _merge_domain_models,
     _reduce_discovery_reports,
     discover_for_document,
     discover_ontology,
-    find_redundant_type_pairs,
     generate_schema,
-    measure_schema_stability,
     schema_for_document,
     summarize_document,
 )
