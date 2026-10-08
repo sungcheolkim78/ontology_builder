@@ -213,7 +213,14 @@ def _existing_pairs(conn, rel_type: str) -> set:
 # in this codebase generates or compares them as dates yet, and a string
 # column is the simplest thing that can be widened later without another
 # migration once that need is concrete.
-_ENVELOPE_EXTRA_COLUMNS = [
+#
+# This list is the one definition of the envelope: the DDL, the row values
+# written, the CREATE field list, the RETURN fields and the read-back below are
+# all built from it, so a column added here is created, written and returned
+# without another edit (tests/test_graphdb.py's every-column test fails if one
+# of them stops being handled). `properties` is the one column that isn't a
+# scalar and keeps its own handling.
+_ENVELOPE_SCALAR_COLUMNS = [
     ("confidence", "STRING"),
     ("evidence_text", "STRING"),
     ("source_section", "STRING"),
@@ -221,8 +228,12 @@ _ENVELOPE_EXTRA_COLUMNS = [
     ("end_offset", "INT64"),
     ("valid_from", "STRING"),
     ("valid_to", "STRING"),
-    ("properties", "MAP(STRING, STRING)"),
 ]
+_ENVELOPE_EXTRA_COLUMNS = [*_ENVELOPE_SCALAR_COLUMNS, ("properties", "MAP(STRING, STRING)")]
+
+# A character offset only locates a quote, so it is read back only for a row
+# that has one (evidence_text); on its own it would point at nothing.
+_OFFSETS_NEED_EVIDENCE = {"start_offset", "end_offset"}
 
 
 def _existing_columns(conn, table_name: str) -> set:
@@ -246,13 +257,7 @@ def _property_lists(properties) -> tuple:
 def _envelope_extra_row_values(item: dict) -> dict:
     keys, values = _property_lists(item.get("properties"))
     return {
-        "confidence": item.get("confidence"),
-        "evidence_text": item.get("evidence_text"),
-        "source_section": item.get("source_section"),
-        "start_offset": item.get("start_offset"),
-        "end_offset": item.get("end_offset"),
-        "valid_from": item.get("valid_from"),
-        "valid_to": item.get("valid_to"),
+        **{name: item.get(name) for name, _ in _ENVELOPE_SCALAR_COLUMNS},
         "properties_keys": keys,
         "properties_values": values,
     }
@@ -267,12 +272,18 @@ def _envelope_extra_row_values(item: dict) -> dict:
 # struct field as STRING in this query shape, which doesn't implicitly cast
 # to the column's actual INT64 type. The CAST makes the target type explicit
 # regardless of what the engine inferred for a NULL value.
-_ENVELOPE_EXTRA_CREATE_FIELDS = (
-    "confidence: row.confidence, evidence_text: row.evidence_text, "
-    "source_section: row.source_section, start_offset: CAST(row.start_offset AS INT64), "
-    "end_offset: CAST(row.end_offset AS INT64), valid_from: row.valid_from, valid_to: row.valid_to, "
-    "properties: map(row.properties_keys, row.properties_values)"
+def _create_field(name: str, ddl_type: str) -> str:
+    value = f"row.{name}"
+    return f"{name}: CAST({value} AS INT64)" if ddl_type == "INT64" else f"{name}: {value}"
+
+
+_ENVELOPE_EXTRA_CREATE_FIELDS = ", ".join(
+    [
+        *(_create_field(name, ddl_type) for name, ddl_type in _ENVELOPE_SCALAR_COLUMNS),
+        "properties: map(row.properties_keys, row.properties_values)",
+    ]
 )
+
 
 def _envelope_return_fields(alias: str) -> str:
     """Builds `<alias>.confidence AS confidence, ...` for every envelope
@@ -286,28 +297,23 @@ def _envelope_return_fields(alias: str) -> str:
 
 
 def _apply_envelope_extras(item: dict, row: dict) -> dict:
-    """Adds properties/confidence/evidence*/source_section/valid_from/
-    valid_to to `item` only when the row actually has a value for them --
-    the same additive-only rule as app.ontology's extraction-side
-    normalization, so a legacy row (written before this feature, or simply
-    never given this metadata) round-trips with exactly its old shape."""
+    """Adds properties and every scalar envelope column to `item` only when
+    the row actually has a value for it -- the same additive-only rule as
+    app.ontology's extraction-side normalization, so a legacy row (written
+    before this feature, or simply never given this metadata) round-trips with
+    exactly its old shape."""
     properties = row.get("properties") or {}
     if properties:
         item["properties"] = properties
-    if row.get("confidence"):
-        item["confidence"] = row["confidence"]
-    if row.get("evidence_text"):
-        item["evidence_text"] = row["evidence_text"]
-        if row.get("start_offset") is not None:
-            item["start_offset"] = row["start_offset"]
-        if row.get("end_offset") is not None:
-            item["end_offset"] = row["end_offset"]
-    if row.get("source_section"):
-        item["source_section"] = row["source_section"]
-    if row.get("valid_from"):
-        item["valid_from"] = row["valid_from"]
-    if row.get("valid_to"):
-        item["valid_to"] = row["valid_to"]
+    for name, ddl_type in _ENVELOPE_SCALAR_COLUMNS:
+        value = row.get(name)
+        if ddl_type == "INT64":
+            # 0 is a valid offset, so "has a value" means "is not NULL" here.
+            present = value is not None and (name not in _OFFSETS_NEED_EVIDENCE or row.get("evidence_text"))
+        else:
+            present = bool(value)
+        if present:
+            item[name] = value
     return item
 
 

@@ -118,6 +118,45 @@ def test_write_and_load_graph_round_trips_structured_metadata():
     assert edge["end_offset"] == 45
 
 
+def _every_envelope_column_filled():
+    """A value for every envelope column, derived from the column list itself
+    (so a column added there is covered here without anyone remembering to
+    edit this test): STRING -> text, INT64 -> int, MAP -> a one-entry map."""
+    values = {}
+    for name, ddl_type in graphdb._ENVELOPE_EXTRA_COLUMNS:
+        if ddl_type == "STRING":
+            values[name] = f"value of {name}"
+        elif ddl_type == "INT64":
+            values[name] = 7
+        elif ddl_type.startswith("MAP"):
+            values[name] = {"key": "value"}
+        else:
+            raise AssertionError(f"extend this test for envelope column type {ddl_type!r}")
+    return values
+
+
+def test_every_envelope_column_survives_a_write_and_load_for_nodes_and_edges():
+    # Guards the several places that each list the envelope columns (the DDL,
+    # the row values, the CREATE field list, the read-back): a column added to
+    # _ENVELOPE_EXTRA_COLUMNS and missed in one of them would otherwise be
+    # created and silently never written or never returned.
+    filled = _every_envelope_column_filled()
+    nodes = [
+        {"id": "a", "label": "Alice", "type": "Person", **filled},
+        {"id": "b", "label": "Acme", "type": "Org"},
+    ]
+    edges = [{"source": "a", "target": "b", "type": "WORKS_AT", **filled}]
+
+    graphdb.write_graph("doc_all_columns", nodes, edges)
+    loaded = graphdb.load_graph("doc_all_columns")
+
+    node = next(n for n in loaded["nodes"] if n["id"] == "a")
+    edge = loaded["edges"][0]
+    for name, value in filled.items():
+        assert node[name] == value, f"node lost envelope column {name!r}"
+        assert edge[name] == value, f"edge lost envelope column {name!r}"
+
+
 def test_load_graph_omits_structured_fields_when_not_present():
     # Old-shape nodes/edges (Task 5's own NODES/EDGES fixtures, pre-dating
     # structured metadata) must round-trip with exactly their old shape --
