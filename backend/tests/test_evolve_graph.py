@@ -359,3 +359,52 @@ def test_evaluate_domain_schema_handles_empty_iterations():
 
     assert result["type_utilization"] == {}
     assert result["qa_success_rate"] is None
+
+
+# --- converge_domain_schema chooses its own seed -----------------------------
+
+
+def test_converge_domain_schema_without_a_seed_generates_it_from_the_first_document(monkeypatch):
+    from app.llm.prompts import SCHEMA_PROMPTS
+    from fakes import LoggingSequencedChatModel, prompt_text
+
+    seed = {"node_types": [{"name": "Norm", "description": "a rule"}], "edge_types": []}
+    empty_graph = {"nodes": [], "edges": []}
+    no_changes = {"changes": []}
+    model = LoggingSequencedChatModel(
+        [
+            json.dumps(seed),  # generate_schema over documents[0]
+            json.dumps(empty_graph), json.dumps(_minimal_validation_report()), json.dumps(no_changes),  # documents[1]
+        ]
+    )
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    result = converge_domain_schema(
+        [{"stem": "doc1_raw", "text": "doc1"}, {"stem": "doc2_raw", "text": "doc2"}],
+        document_type="legal",
+    )
+
+    assert result["seed_schema"] == seed
+    assert result["schema"] == seed
+    # documents[0] only seeded the schema; only documents[1] was folded in
+    assert [it["stem"] for it in result["iterations"]] == ["doc2_raw"]
+    # and the seed was generated with the document type asked for
+    assert SCHEMA_PROMPTS["legal"] in prompt_text(model.calls[0])
+
+
+def test_converge_domain_schema_raises_with_neither_a_seed_nor_a_document_to_make_one_from():
+    with pytest.raises(ValueError, match="no seed schema and no documents"):
+        converge_domain_schema([])
+
+
+def test_converge_domain_schema_with_a_seed_folds_every_document_and_returns_that_seed(monkeypatch):
+    seed = {"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []}
+    model = SequencedChatModel(
+        [json.dumps({"nodes": [], "edges": []}), json.dumps(_minimal_validation_report()), json.dumps({"changes": []})]
+    )
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    result = converge_domain_schema([{"stem": "doc1_raw", "text": "doc1"}], seed)
+
+    assert result["seed_schema"] == seed
+    assert [it["stem"] for it in result["iterations"]] == ["doc1_raw"]

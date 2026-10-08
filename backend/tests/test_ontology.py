@@ -1610,6 +1610,25 @@ def test_converge_domain_persisted_endpoint(monkeypatch):
     assert "evaluation" in body
 
 
+def test_converge_domain_persisted_endpoint_seeds_a_new_domain_with_the_requested_document_type(monkeypatch):
+    from app.llm.prompts import SCHEMA_PROMPTS
+    from fakes import prompt_text
+
+    write_document("doc_raw.md", "Alice works at Acme.")
+    seed_schema = {"node_types": [{"name": "Norm", "description": "a rule"}], "edge_types": []}
+    model = RecordingChatModel(json.dumps(seed_schema))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ontology/domain-schema/insurance_policy/converge",
+        json={"filenames": ["doc_raw.md"], "document_type": "legal"},
+    )
+
+    assert response.status_code == 200
+    assert SCHEMA_PROMPTS["legal"] in prompt_text(model.prompts[0])
+
+
 def test_converge_domain_persisted_endpoint_returns_400_for_empty_filenames():
     client = TestClient(app)
 

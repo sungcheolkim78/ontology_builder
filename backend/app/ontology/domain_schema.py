@@ -11,7 +11,6 @@ from app.utils.store import locked, read_json, write_json
 from .schema_validation import SCHEMA_CONTRACT_VERSION, summarize_validation_issues, validate_schema
 
 from .evolve_graph import converge_domain_schema
-from .generate_schema import generate_schema
 from .persistence import _apply_schema_type_changes, create_schema_version
 
 # Domain schema storage/reuse -----------------------------------------------
@@ -72,31 +71,32 @@ def _domain_lock(domain: str):
     return locked(f"domain:{domain}")
 
 
-def run_domain_convergence(domain: str, documents: list[dict], max_chars: int | None = None) -> dict:
+def run_domain_convergence(
+    domain: str,
+    documents: list[dict],
+    document_type: str = "general",
+    max_chars: int | None = None,
+) -> dict:
     """Runs converge_domain_schema() over `documents` and persists the
     result under backend/data/domain_schemas/{domain}/. If `domain` already
     has a stored schema, that schema is the seed and every document in
     `documents` is folded in -- calling this again later with newly
     calibrated documents keeps refining the same domain schema rather than
     starting over. If `domain` has no stored schema yet, `documents[0]`
-    seeds it (via generate_schema) and the rest are folded in, exactly like
-    a fresh converge_domain_schema() call.
+    seeds it (via generate_schema, with `document_type`'s prompt -- which
+    plays no part once a domain has a stored schema) and the rest are folded
+    in, exactly like a fresh converge_domain_schema() call.
 
     NEEDS_HUMAN_REVIEW changes accumulate in the domain's pending_review
     store across calls (not just this one) until apply_domain_schema_changes
     resolves them, since they were never applied to the schema."""
     with _domain_lock(domain):
-        existing_schema = load_domain_schema(domain)
-        if existing_schema is not None:
-            seed_schema = existing_schema
-            remaining = documents
-        else:
-            if not documents:
-                raise ValueError(f"no domain schema stored for {domain!r} and no documents to seed one from")
-            seed_schema = generate_schema(documents[0]["text"], max_chars=max_chars)
-            remaining = documents[1:]
-
-        result = converge_domain_schema(remaining, seed_schema, max_chars=max_chars)
+        result = converge_domain_schema(
+            documents,
+            seed_schema=load_domain_schema(domain),
+            document_type=document_type,
+            max_chars=max_chars,
+        )
         save_domain_schema(domain, result["schema"])
 
         manifest = _load_domain_manifest(domain)
@@ -121,7 +121,7 @@ def run_domain_convergence(domain: str, documents: list[dict], max_chars: int | 
             pending.extend(result["pending_review"])
             _save_domain_pending_review(domain, pending)
 
-        return {**result, "domain": domain, "seed_schema": seed_schema}
+        return {**result, "domain": domain}
 
 
 def apply_domain_schema_changes(domain: str, changes: list) -> dict:

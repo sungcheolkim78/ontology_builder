@@ -18,6 +18,7 @@ from app.llm.calls import call_json
 from app.llm.prompts import EVOLUTION_PROMPT, VALIDATION_PROMPT
 
 from .extract_graph import extract_graph
+from .generate_schema import generate_schema
 from .persistence import (
     _apply_schema_type_changes,
     _apply_type_change,
@@ -161,17 +162,32 @@ _AUTO_APPLICABLE_DECISIONS = {"ADD", "MODIFY", "MERGE", "DEPRECATE"}
 
 def converge_domain_schema(
     documents: list[dict],
-    seed_schema: dict,
+    seed_schema: dict | None = None,
+    document_type: str = "general",
     max_chars: int | None = None,
 ) -> dict:
-    """Evolves `seed_schema` across `documents` (each {"stem", "text"}, in the
+    """Evolves a schema across `documents` (each {"stem", "text"}, in the
     order they should be folded in) by running extract_graph/validate_ontology/
     propose_evolution against each document with the *current* schema, then
     folding in whatever type-level changes that pipeline judged safe before
-    moving to the next document. Returns the converged schema, a per-document
-    iteration log (for inspecting how the schema evolved and how many
-    validation issues each document raised), and the type-level changes that
-    still need a person to review before being applied by hand."""
+    moving to the next document. Returns the converged schema, the
+    `seed_schema` it started from, a per-document iteration log (for
+    inspecting how the schema evolved and how many validation issues each
+    document raised), and the type-level changes that still need a person to
+    review before being applied by hand.
+
+    It starts from `seed_schema` when given, and every document is folded in.
+    Without one, `documents[0]` seeds the schema (generate_schema, with
+    `document_type`'s prompt) and only the rest are folded in -- so a caller
+    never has to choose a seed itself, and the stateless and the persisted
+    domain-convergence routes can't disagree about how."""
+    if seed_schema is None:
+        if not documents:
+            raise ValueError("no seed schema and no documents to make one from")
+        seed_schema = generate_schema(
+            documents[0]["text"], document_type=document_type, max_chars=max_chars
+        )
+        documents = documents[1:]
     schema = seed_schema
     iterations = []
     pending_review = []
@@ -211,7 +227,12 @@ def converge_domain_schema(
             }
         )
         pending_review.extend({**c, "stem": stem} for c in review_changes)
-    return {"schema": schema, "iterations": iterations, "pending_review": pending_review}
+    return {
+        "schema": schema,
+        "seed_schema": seed_schema,
+        "iterations": iterations,
+        "pending_review": pending_review,
+    }
 
 
 def evaluate_domain_schema(schema: dict, iterations: list[dict]) -> dict:

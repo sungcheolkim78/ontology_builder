@@ -36,7 +36,6 @@ from app.ontology import (
     evaluate_domain_schema,
     extract_for_document,
     find_redundant_type_pairs,
-    generate_schema,
     get_active_version,
     list_domains,
     list_schema_stems,
@@ -883,21 +882,19 @@ def converge_domain(request: DomainConvergeRequest):
             raise HTTPException(status_code=404, detail=f"document not found: {filename}")
         docs.append({"stem": stem_for(filename), "text": doc_path.read_text()})
 
-    seed_schema = request.seed_schema
-    remaining = docs
     try:
-        if seed_schema is None:
-            seed_schema = generate_schema(
-                docs[0]["text"], document_type=request.document_type, max_chars=request.max_chars
-            )
-            remaining = docs[1:]
-        result = converge_domain_schema(remaining, seed_schema, max_chars=request.max_chars)
+        result = converge_domain_schema(
+            docs,
+            seed_schema=request.seed_schema,
+            document_type=request.document_type,
+            max_chars=request.max_chars,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # Free to compute -- evaluate_domain_schema only reads the iteration log
     # converge_domain_schema already produced, no extra LLM/embedding calls.
     evaluation = evaluate_domain_schema(result["schema"], result["iterations"])
-    return {"seed_schema": seed_schema, "evaluation": evaluation, **result}
+    return {"evaluation": evaluation, **result}
 
 
 class RedundantTypesRequest(BaseModel):
@@ -939,6 +936,8 @@ class DomainRunConvergeRequest(BaseModel):
     # domain's existing stored schema is the seed and every filename here is
     # folded in on top of it.
     filenames: list[str]
+    # Only used to seed a domain that has no stored schema yet.
+    document_type: str = "general"
     max_chars: int | None = None
 
 
@@ -953,7 +952,9 @@ def converge_domain_persisted(domain: str, request: DomainRunConvergeRequest):
             raise HTTPException(status_code=404, detail=f"document not found: {filename}")
         docs.append({"stem": stem_for(filename), "text": doc_path.read_text()})
     try:
-        result = run_domain_convergence(domain, docs, max_chars=request.max_chars)
+        result = run_domain_convergence(
+            domain, docs, document_type=request.document_type, max_chars=request.max_chars
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     evaluation = evaluate_domain_schema(result["schema"], result["iterations"])
