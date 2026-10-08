@@ -310,6 +310,14 @@ read and written:
   /api/documents/{filename}/goldenset/answers`) -- an answer generated
   against a since-changed schema is no longer shown as "the" current answer,
   though it stays in the file for later inspection.
+  A second consumer of the golden set is `app.ontology.retrieval_eval.score_golden_set`
+  (run by `scripts/evaluate_golden_set.py`, which refuses to run without
+  `ONTOLOGY_DATA_DIR` pointing at a *copy* of `backend/data`): it sends each answerable
+  golden question through `search_graph` and classes it a hit, a retrieval miss (the
+  graph cites the passage but the search did not return it) or an extraction miss (no
+  node cites it), matching nodes to golden evidence by the `evidence_text` quote rather
+  than the stored offsets. See `docs/ontology/golden_set_evaluation.md` for the method,
+  the first measurement and moving the data between machines (`samples/schema_eval/`).
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages; nothing outside
   `app.llm.calls` builds or invokes a chat model directly.

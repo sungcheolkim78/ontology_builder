@@ -87,6 +87,10 @@ redundancy가 올라감) 단일 스칼라로 합치면 정보 손실이 크다.
 /api/ontology/domain-schema/redundant-types`와 `POST
 /api/ontology/{filename}/schema/stability`가 각각 별도 엔드포인트다.
 
+> **골든셋 기반 평가(2026-10-08):** 위 지표는 모두 LLM 판정이거나 스키마 자체의 통계다. 스키마가
+> 실제 질문 검색에 도움이 되는지를 외부 기준(골든셋의 증거 인용문)으로 재는 방법과 첫 측정
+> 결과는 [`golden_set_evaluation.md`](golden_set_evaluation.md)에 있다.
+
 ## 4. 도메인 스키마 저장/재사용 구조
 
 현재는 스키마가 문서별로만 존재한다(`graph_dir_for(stem)/schema_v{N}.json`,

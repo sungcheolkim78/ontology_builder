@@ -148,5 +148,6 @@ podman-compose down
 - 온톨로지·그래프DB·GraphRAG·프론트/백엔드 구조를 쉽게 설명한 프레젠테이션: [`docs/presentation.html`](docs/presentation.html) (브라우저로 열기)
 - 온톨로지 설계 원칙: [`docs/ontology/ONTOLOGY_DESIGN_PRINCIPLES.md`](docs/ontology/ONTOLOGY_DESIGN_PRINCIPLES.md)
 - 전체 아키텍처, API 엔드포인트, 컴포넌트 구조: [`docs/SPEC.md`](docs/SPEC.md)
+- 골든셋으로 스키마/그래프의 검색 품질을 재는 방법, 첫 측정 결과, 다른 컴퓨터로 자료를 옮기는 방법: [`docs/ontology/golden_set_evaluation.md`](docs/ontology/golden_set_evaluation.md)
 - LLM 호출 추적(Langfuse) 설정: [`docs/features/langfuse/LANGFUSE-spec.md`](docs/features/langfuse/LANGFUSE-spec.md)
 - 개발 환경에서 자주 겪는 문제(podman/virtiofs 마운트 이슈, 그래프DB 메모리 이슈 등), 모듈 구조, 커맨드 모음: [`CLAUDE.md`](CLAUDE.md)
