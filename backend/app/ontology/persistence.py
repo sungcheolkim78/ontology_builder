@@ -115,6 +115,45 @@ def delete_version(stem: str, version: int) -> None:
         _save_versions_manifest(stem, manifest)
 
 
+class SchemaNotFound(LookupError):
+    """The document has no usable active schema: none was ever generated, or
+    the active version's file is gone."""
+
+
+class OntologyNotExtracted(LookupError):
+    """The document's active schema has no extracted graph yet."""
+
+
+def active_schema(stem: str) -> tuple[int, dict]:
+    """(version, schema) for the document's active schema version. Raises
+    SchemaNotFound if there is no active version or its schema file is
+    missing -- the one place that rule lives, so no caller can pass a
+    None schema on to a model call."""
+    version = get_active_version(stem)
+    schema = load_schema(stem, version) if version is not None else None
+    if schema is None:
+        raise SchemaNotFound(stem)
+    return version, schema
+
+
+def active_ontology(stem: str, load_graph: bool = True) -> tuple[int, dict, dict | None]:
+    """(version, schema, graph) for the document's active schema version and
+    the graph extracted against it. Raises SchemaNotFound (see active_schema)
+    or OntologyNotExtracted. With load_graph=False the graph's existence is
+    checked but it is not read and None is returned in its place -- for a
+    caller on a hot path (every chat message) that only needs to know whether
+    there is one."""
+    version, schema = active_schema(stem)
+    if load_graph:
+        graph = graphdb.load_graph(stem, version=version)
+        if graph is None:
+            raise OntologyNotExtracted(stem)
+        return version, schema, graph
+    if not graphdb.has_graph(stem, version=version):
+        raise OntologyNotExtracted(stem)
+    return version, schema, None
+
+
 def save_document_manifest(stem: str, original_filename: str, converter: str = "anydoc") -> None:
     """Records the per-document info the rest of this module's stem-based
     file layout loses: the filename as originally uploaded (e.g.

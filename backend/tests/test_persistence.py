@@ -100,3 +100,59 @@ def test_concurrent_pending_review_resolutions_each_remove_their_own_changes(slo
     assert domain_schema.load_domain_pending_review("insurance") == []
     names = {t["name"] for t in domain_schema.load_domain_schema("insurance")["node_types"]}
     assert names == {"Person"} | {f"Type{i}" for i in range(8)}
+
+
+# --- resolving a document's active schema / ontology -------------------------
+
+SCHEMA = {"node_types": [{"name": "Person", "description": "p"}], "edge_types": []}
+NODES = [{"id": "n1", "label": "Alice", "type": "Person"}]
+
+
+def test_active_schema_returns_the_active_version_and_its_schema():
+    persistence.create_schema_version(STEM, {"node_types": [], "edge_types": []})
+    version = persistence.create_schema_version(STEM, SCHEMA)
+
+    assert persistence.active_schema(STEM) == (version, SCHEMA)
+
+
+def test_active_schema_raises_when_the_document_has_no_schema():
+    with pytest.raises(persistence.SchemaNotFound):
+        persistence.active_schema(STEM)
+
+
+def test_active_schema_raises_when_the_active_versions_file_is_gone():
+    version = persistence.create_schema_version(STEM, SCHEMA)
+    persistence.schema_path_for_version(STEM, version).unlink()
+
+    with pytest.raises(persistence.SchemaNotFound):
+        persistence.active_schema(STEM)
+
+
+def test_active_ontology_returns_the_version_schema_and_extracted_graph():
+    version = persistence.create_schema_version(STEM, SCHEMA)
+    persistence.graphdb.write_graph(STEM, NODES, [], version=version)
+
+    got_version, schema, graph = persistence.active_ontology(STEM)
+
+    assert (got_version, schema) == (version, SCHEMA)
+    assert [n["label"] for n in graph["nodes"]] == ["Alice"]
+
+
+def test_active_ontology_without_loading_the_graph_still_checks_that_there_is_one():
+    version = persistence.create_schema_version(STEM, SCHEMA)
+    with pytest.raises(persistence.OntologyNotExtracted):
+        persistence.active_ontology(STEM, load_graph=False)
+
+    persistence.graphdb.write_graph(STEM, NODES, [], version=version)
+
+    assert persistence.active_ontology(STEM, load_graph=False) == (version, SCHEMA, None)
+
+
+def test_active_ontology_raises_schema_not_found_before_looking_for_a_graph():
+    with pytest.raises(persistence.SchemaNotFound):
+        persistence.active_ontology(STEM)
+
+
+def test_both_not_found_errors_are_lookup_errors():
+    assert issubclass(persistence.SchemaNotFound, LookupError)
+    assert issubclass(persistence.OntologyNotExtracted, LookupError)

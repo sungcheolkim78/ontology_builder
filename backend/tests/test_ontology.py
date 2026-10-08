@@ -1802,3 +1802,33 @@ def test_list_documents_reports_has_chunks_and_summary():
     doc = response.json()["documents"][0]
     assert doc["summary"] == "요약입니다."
     assert doc["has_chunks"] is True
+
+
+# --- an active version whose schema file is gone is "schema not found" --------
+
+
+def _seed_version_then_lose_its_schema_file():
+    from app.ontology import schema_path_for_version
+
+    write_document()
+    seed_schema_version("doc_raw", {"node_types": [{"name": "Person", "description": "p"}], "edge_types": []})
+    schema_path_for_version("doc_raw", 1).unlink()
+
+
+@pytest.mark.parametrize(
+    "method, url, body",
+    [
+        ("get", "/api/ontology/doc_raw.md/schema", None),
+        ("post", "/api/ontology/doc_raw.md/validate", None),
+        ("post", "/api/ontology/doc_raw.md/evolve", {"validation_report": {}}),
+        ("post", "/api/ontology/doc_raw.md/evolve/apply", {"changes": []}),
+    ],
+)
+def test_a_missing_active_schema_file_is_a_404_not_a_server_error(method, url, body):
+    _seed_version_then_lose_its_schema_file()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.request(method, url, json=body) if body is not None else client.request(method, url)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "schema not found"

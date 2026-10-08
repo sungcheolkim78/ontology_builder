@@ -420,6 +420,25 @@ read and written:
   the quote isn't in `raw.md` (chunking drops `---`/page-marker lines, so a
   quote can span one). A chunked document extracted before that re-anchoring
   stored group-frame offsets; re-running `/extract` fixes it.
+  A route that needs a document's *current* schema or graph never resolves
+  the active version itself: it asks `persistence.active_schema(stem)` for
+  `(version, schema)` or `active_ontology(stem, load_graph=True)` for
+  `(version, schema, graph)` (`load_graph=False` only checks that a graph
+  exists, which is what `/api/chat`, the goldenset answer and `/embed` do --
+  chat runs on every message and must not read the whole graph). They raise
+  `SchemaNotFound` (no active version, or its `schema_v{N}.json` is gone) or
+  `OntologyNotExtracted`, which two narrow handlers in `main.py` turn into
+  404 `"schema not found"`/`"ontology not extracted yet"`; `/api/chat` catches
+  them and falls back to a plain reply, and the goldenset answer turns them
+  into its Korean 400. Domain convergence chooses its own seed the same way in
+  one place: `converge_domain_schema(documents, seed_schema=None,
+  document_type=...)` starts from `seed_schema` when given, otherwise seeds from
+  `documents[0]` (`generate_schema` with that `document_type`'s prompt) and
+  folds in only the rest; the stateless `/domain-schema/converge` route and
+  `run_domain_convergence` (which passes the domain's stored schema as the
+  seed, so `document_type` only matters for a brand-new domain) both call it.
+  Domain convergence runs the whole-document functions, never the chunk-group
+  runner, so a document over `MAX_DOCUMENT_CHARS` fails it with a 400.
   `summarize_document()` is a separate, lighter LLM call (a 2-3 sentence
   plain-text summary, not JSON) cached at `documents/{stem}/summary.json`
   via `save_document_summary`/`load_document_summary`, following the same

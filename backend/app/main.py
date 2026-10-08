@@ -22,7 +22,11 @@ from app.llm.chat import (
 from app.graph.graphrag import answer_question, search_graph
 from app.ontology.schema_validation import normalize_schema
 from app.ontology import (
+    OntologyNotExtracted,
+    SchemaNotFound,
     activate_version,
+    active_ontology,
+    active_schema,
     apply_domain_schema_changes,
     apply_evolution,
     converge_domain_schema,
@@ -45,7 +49,6 @@ from app.ontology import (
     load_document_summary,
     load_domain_pending_review,
     load_domain_schema,
-    load_graph,
     load_progress,
     load_schema,
     measure_schema_stability,
@@ -158,6 +161,19 @@ async def log_events_middleware(request, call_next):
     return response
 
 
+@app.exception_handler(SchemaNotFound)
+def schema_not_found_handler(request, exc):
+    """A document without a usable active schema is a 404 wherever a route asks
+    for one (see app.ontology.active_schema); a route that wants a different
+    answer -- /api/chat falls back to a plain reply -- catches it itself."""
+    return JSONResponse(status_code=404, content={"detail": "schema not found"})
+
+
+@app.exception_handler(OntologyNotExtracted)
+def ontology_not_extracted_handler(request, exc):
+    return JSONResponse(status_code=404, content={"detail": "ontology not extracted yet"})
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -241,18 +257,21 @@ def chat(request: ChatRequest):
     ) as span:
         if request.filename and messages:
             stem = stem_for(request.filename)
-            version = get_active_version(stem)
-            schema = load_schema(stem, version) if version is not None else None
-            if schema and graphdb.has_graph(stem, version=version):
+            result = None
+            try:
+                version, schema, _ = active_ontology(stem, load_graph=False)
+            except (SchemaNotFound, OntologyNotExtracted):
+                pass  # nothing extracted to ground an answer in: fall through to a plain reply
+            else:
                 hops = max(1, min(5, request.hops))
                 try:
                     result = answer_question(messages, schema, stem, version=version, hops=hops)
                 except ValueError:
                     result = None
 
-                if result is not None:
-                    span.update(output=result["content"])
-                    return {"role": "assistant", **result}
+            if result is not None:
+                span.update(output=result["content"])
+                return {"role": "assistant", **result}
 
         content = call_text("answer_chat", to_langchain_messages(messages))
         span.update(output=content)
@@ -578,9 +597,9 @@ def create_goldenset_answer(
     if question is None:
         raise HTTPException(status_code=404, detail="question not found")
 
-    version = get_active_version(stem)
-    schema = load_schema(stem, version) if version is not None else None
-    if schema is None or not graphdb.has_graph(stem, version=version):
+    try:
+        version, schema, _ = active_ontology(stem, load_graph=False)
+    except (SchemaNotFound, OntologyNotExtracted):
         raise HTTPException(
             status_code=400, detail="스키마/그래프가 없어 GraphRAG 답변을 생성할 수 없습니다"
         )
@@ -750,16 +769,13 @@ def use_schema(filename: str, request: UseSchemaRequest):
 
 @app.get("/api/ontology/{filename}/schema")
 def get_schema(filename: str):
-    stem = stem_for(filename)
-    version = get_active_version(stem)
-    if version is None:
-        raise HTTPException(status_code=404, detail="schema not found")
+    _, schema = active_schema(stem_for(filename))
     # Normalized only at this API boundary -- the stored schema_v{N}.json
     # file itself is untouched, so a legacy schema with no typed properties
     # still returns with additive defaults filled in for any client that
     # relies on them being present (properties/category per type, a
     # top-level validation block).
-    return normalize_schema(load_schema(stem, version))
+    return normalize_schema(schema)
 
 
 @app.post("/api/ontology/{filename}/extract")
@@ -786,9 +802,7 @@ def create_extraction(filename: str):
 @app.post("/api/ontology/{filename}/embed")
 def create_embeddings(filename: str):
     stem = stem_for(filename)
-    version = get_active_version(stem)
-    if version is None or not graphdb.has_graph(stem, version=version):
-        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    version, _, _ = active_ontology(stem, load_graph=False)
     embedded = embed_graph(stem, version=version)
     return {"embedded": embedded}
 
@@ -802,14 +816,7 @@ def validate(filename: str, request: ValidateRequest | None = None):
     doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = stem_for(filename)
-    version = get_active_version(stem)
-    if version is None:
-        raise HTTPException(status_code=404, detail="schema not found")
-    schema = load_schema(stem, version)
-    graph = load_graph(stem, version=version)
-    if graph is None:
-        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    _, schema, graph = active_ontology(stem_for(filename))
     max_chars = request.max_chars if request else None
     try:
         report = validate_ontology(doc_path.read_text(), schema, graph, max_chars=max_chars)
@@ -828,14 +835,7 @@ def evolve(filename: str, request: EvolveRequest):
     doc_path = document_path_for(filename)
     if not doc_path.is_file():
         raise HTTPException(status_code=404, detail="document not found")
-    stem = stem_for(filename)
-    version = get_active_version(stem)
-    if version is None:
-        raise HTTPException(status_code=404, detail="schema not found")
-    schema = load_schema(stem, version)
-    graph = load_graph(stem, version=version)
-    if graph is None:
-        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    _, schema, graph = active_ontology(stem_for(filename))
     try:
         proposal = propose_evolution(
             doc_path.read_text(), schema, graph, request.validation_report, max_chars=request.max_chars
@@ -852,8 +852,7 @@ class EvolveApplyRequest(BaseModel):
 @app.post("/api/ontology/{filename}/evolve/apply")
 def evolve_apply(filename: str, request: EvolveApplyRequest):
     stem = stem_for(filename)
-    if get_active_version(stem) is None:
-        raise HTTPException(status_code=404, detail="schema not found")
+    active_schema(stem)  # 404 (SchemaNotFound) if there is nothing to evolve
     try:
         result = apply_evolution(stem, request.changes)
     except ValueError as e:
@@ -1015,13 +1014,7 @@ def schema_stability(filename: str, request: StabilityRequest | None = None):
 
 @app.get("/api/ontology/{filename}")
 def get_ontology(filename: str):
-    stem = stem_for(filename)
-    version = get_active_version(stem)
-    if version is None:
-        raise HTTPException(status_code=404, detail="ontology not extracted yet")
-    graph = load_graph(stem, version=version)
-    if graph is None:
-        raise HTTPException(status_code=404, detail="ontology not extracted yet")
+    _, _, graph = active_ontology(stem_for(filename))
     return graph
 
 
