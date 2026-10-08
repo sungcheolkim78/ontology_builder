@@ -182,6 +182,120 @@ def _build_context_text(nodes: list, edges: list) -> str | None:
     return "\n".join(parts)
 
 
+class _SearchContext:
+    """What one search_graph call's node-matching tiers share: the document and
+    version being searched, the question, and what analyze_question extracted
+    from it. The question's embedding is computed on first use and then reused,
+    so it is requested at most once per search however many types reach a tier
+    that needs it -- and not at all when an earlier tier found something."""
+
+    def __init__(self, question: str, stem: str, version: int, keywords: dict, property_filters: dict):
+        self.question = question
+        self.stem = stem
+        self.version = version
+        self.keywords = keywords
+        self.property_filters = property_filters
+        self._query_embedding = None
+
+    @property
+    def query_embedding(self) -> list:
+        if self._query_embedding is None:
+            self._query_embedding = embed_query(self.question)
+        return self._query_embedding
+
+
+class _OrderedIds:
+    """The matched node ids, kept in the order they were matched (not just as a
+    set), so the relevance signal each tier already carries -- keyword hits,
+    then embedding-similarity rank for the fallback case -- survives into
+    related_nodes' order instead of being discarded by a plain set's undefined
+    iteration order."""
+
+    def __init__(self):
+        self.ordered: list = []
+        self.members: set = set()
+
+    def add(self, node_id) -> None:
+        if node_id not in self.members:
+            self.members.add(node_id)
+            self.ordered.append(node_id)
+
+    def __bool__(self) -> bool:
+        return bool(self.ordered)
+
+
+# The node-matching tiers, tried in this order for each relevant type until one
+# finds something. Each takes (context, node_type) and returns matching node ids.
+def _by_keyword(ctx: _SearchContext, node_type: str) -> list:
+    """The keywords extracted for this type, against this type's own node labels."""
+    return graphdb.find_relevant_nodes(
+        ctx.stem, {node_type: ctx.keywords.get(node_type, [])}, [node_type], version=ctx.version
+    )
+
+
+def _by_property_filter(ctx: _SearchContext, node_type: str) -> list:
+    """Keyword matching found nothing, but the question implies a comparison
+    against one of this type's own declared typed properties (e.g. "50% 이상인
+    보장") -- neither a label substring match nor embedding similarity can answer
+    a threshold/exact-value question like this, so it is tried before falling
+    further to the embedding tier (design spec section 7.1)."""
+    filt = ctx.property_filters.get(node_type)
+    if filt is None:
+        return []
+    return graphdb.find_nodes_by_property(
+        ctx.stem, node_type, filt["property"], filt["operator"], filt["value"], version=ctx.version
+    )
+
+
+def _by_embedding(ctx: _SearchContext, node_type: str) -> list:
+    """No keyword was extracted for this type, or the extracted keyword didn't
+    match any instance -- either the question names nothing concrete (a category
+    question like "what are the responsibilities?") or the question/document
+    languages don't literally overlap. The type analysis step already
+    established this type is relevant, so rank that type's own nodes by
+    embedding similarity to the question instead of dumping every instance of it
+    into the context."""
+    return graphdb.find_similar_nodes(
+        ctx.stem, node_type, ctx.query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K, version=ctx.version
+    )
+
+
+def _all_of_type(ctx: _SearchContext, node_type: str) -> list:
+    """No embedding was stored for this type either -- most likely it was
+    extracted before embeddings existed, so there's nothing to rank. Last
+    resort: every instance of just this type, the same fallback embeddings were
+    meant to narrow (see EMBEDDING_FALLBACK_TOP_K above)."""
+    return graphdb.all_nodes_of_types(ctx.stem, [node_type], version=ctx.version)
+
+
+_NODE_MATCH_TIERS = (_by_keyword, _by_property_filter, _by_embedding, _all_of_type)
+
+
+def _match_nodes_of_type(ctx: _SearchContext, node_type: str) -> list:
+    for tier in _NODE_MATCH_TIERS:
+        node_ids = tier(ctx, node_type)
+        if node_ids:
+            return node_ids
+    return []
+
+
+def _match_edges(ctx: _SearchContext, edge_types: list, matched: _OrderedIds) -> None:
+    """Edges of the determined types connected to an already-matched node pull
+    both their endpoints in."""
+    for edge in graphdb.find_matching_edges(ctx.stem, edge_types, matched.members, version=ctx.version):
+        matched.add(edge["source"])
+        matched.add(edge["target"])
+
+    if not matched:
+        # No node was matched at all (node_types was empty, or every determined
+        # node type turned out to have zero real instances) -- fall back to every
+        # edge of the determined type rather than reporting "not found" when the
+        # graph actually has data.
+        for edge in graphdb.all_edges_of_types(ctx.stem, edge_types, version=ctx.version):
+            matched.add(edge["source"])
+            matched.add(edge["target"])
+
+
 def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops: int = 1) -> dict:
     """Schema-aware graph search: determine which node/edge types (from the
     document's own schema) are relevant to the question, then search actual
@@ -194,8 +308,6 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
     analysis = analyze_question(question, schema)
     node_types = analysis["node_types"]
     edge_types = analysis["edge_types"]
-    keywords = analysis["keywords"]
-    property_filters = analysis["property_filters"]
 
     if not node_types and not edge_types:
         return {
@@ -206,86 +318,19 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
             "related_edges": [],
         }
 
-    # Ordered (not just a set) so the relevance signal each match tier
-    # already carries -- keyword hits, then embedding-similarity rank for
-    # the fallback case -- survives into related_nodes' order below, instead
-    # of being discarded by a plain set's undefined iteration order.
-    matched_node_ids = []
-    matched_node_id_set = set()
-
-    def _add_matched(node_id):
-        if node_id not in matched_node_id_set:
-            matched_node_id_set.add(node_id)
-            matched_node_ids.append(node_id)
-
-    if node_types:
-        query_embedding = None
-        for node_type in node_types:
-            type_ids = graphdb.find_relevant_nodes(
-                stem, {node_type: keywords.get(node_type, [])}, [node_type], version=version
-            )
-            if not type_ids and node_type in property_filters:
-                # Keyword matching found nothing, but the question implies a
-                # comparison against one of this type's own declared typed
-                # properties (e.g. "50% 이상인 보장") -- neither a label
-                # substring match nor embedding similarity can answer a
-                # threshold/exact-value question like this, so it's tried
-                # before falling further to the embedding fallback below
-                # (design spec section 7.1).
-                filt = property_filters[node_type]
-                type_ids = graphdb.find_nodes_by_property(
-                    stem, node_type, filt["property"], filt["operator"], filt["value"],
-                    version=version,
-                )
-            if not type_ids:
-                # No keyword was extracted for this type, or the extracted
-                # keyword didn't match any instance -- either the question
-                # names nothing concrete (a category question like "what are
-                # the responsibilities?") or the question/document languages
-                # don't literally overlap. The type analysis step already
-                # established this type is relevant, so rank that type's
-                # own nodes by embedding similarity to the question instead
-                # of dumping every instance of it into the context.
-                if query_embedding is None:
-                    query_embedding = embed_query(question)
-                type_ids = graphdb.find_similar_nodes(
-                    stem, node_type, query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K,
-                    version=version,
-                )
-            if not type_ids:
-                # No embedding was stored for this type either -- most
-                # likely it was extracted before embeddings existed, so
-                # there's nothing to rank. Last resort: every instance of
-                # just this type, same fallback embeddings were meant to
-                # narrow (see EMBEDDING_FALLBACK_TOP_K above).
-                type_ids = graphdb.all_nodes_of_types(stem, [node_type], version=version)
-            for node_id in type_ids:
-                _add_matched(node_id)
-
+    ctx = _SearchContext(question, stem, version, analysis["keywords"], analysis["property_filters"])
+    matched = _OrderedIds()
+    for node_type in node_types:
+        for node_id in _match_nodes_of_type(ctx, node_type):
+            matched.add(node_id)
     if edge_types:
-        matched_edges = graphdb.find_matching_edges(
-            stem, edge_types, matched_node_id_set, version=version
-        )
-        for edge in matched_edges:
-            _add_matched(edge["source"])
-            _add_matched(edge["target"])
+        _match_edges(ctx, edge_types, matched)
 
-        if not matched_node_ids:
-            # No node was matched at all (node_types was empty, or every
-            # determined node type turned out to have zero real instances) --
-            # fall back to every edge of the determined type rather than
-            # reporting "not found" when the graph actually has data.
-            for edge in graphdb.all_edges_of_types(stem, edge_types, version=version):
-                _add_matched(edge["source"])
-                _add_matched(edge["target"])
-
-    related_nodes, related_edges = graphdb.expand_hops(
-        stem, matched_node_id_set, hops, version=version
-    )
+    related_nodes, related_edges = graphdb.expand_hops(stem, matched.members, hops, version=version)
     # Put directly-matched nodes first, in the relevance order they were
     # matched in above; nodes only pulled in by hop expansion (never
     # directly matched) sort after, in whatever order the DB returned them.
-    match_rank = {node_id: rank for rank, node_id in enumerate(matched_node_ids)}
+    match_rank = {node_id: rank for rank, node_id in enumerate(matched.ordered)}
     related_nodes.sort(key=lambda n: match_rank.get(n["id"], len(match_rank)))
     context = _build_context_text(related_nodes, related_edges)
     return {

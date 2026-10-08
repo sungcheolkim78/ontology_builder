@@ -459,3 +459,43 @@ def test_search_graph_scoped_to_active_version(monkeypatch):
     result = search_graph("Who is Grace Hopper?", SCHEMA, STEM, version=2, hops=0)
 
     assert {n["label"] for n in result["related_nodes"]} == {"Grace Hopper"}
+
+
+# --- the search ladder embeds the question only when, and as often as, needed --
+
+
+def _model_for(node_types, keywords):
+    return LoggingSequencedChatModel(
+        [json.dumps({"node_types": node_types, "edge_types": [], "keywords": keywords})]
+    )
+
+
+def test_search_graph_does_not_embed_the_question_when_a_keyword_matches(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES)
+    embedding_model = FakeEmbeddingModel()
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: _model_for(["Person"], {"Person": ["Ada Lovelace"]}))
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: embedding_model)
+
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=0)
+
+    assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace"}
+    assert embedding_model.calls == []  # the first tier found something, so the later ones never ran
+
+
+def test_search_graph_embeds_the_question_once_however_many_types_reach_the_embedding_tier(monkeypatch):
+    graphdb.write_graph(STEM, NODES, EDGES)
+    embedding_model = FakeEmbeddingModel()
+    monkeypatch.setattr(
+        "app.llm.calls.get_chat_model",
+        lambda operation=None: _model_for(["Person", "Concept"], {}),
+    )
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: embedding_model)
+
+    result = search_graph("tell me about everything", SCHEMA, STEM, hops=0)
+
+    # no keyword matched and no node has a stored embedding, so both types fell
+    # all the way through to "every instance" -- after asking for the vector once
+    assert {n["label"] for n in result["related_nodes"]} == {
+        "Ada Lovelace", "Charles Babbage", "Analytical Engine",
+    }
+    assert len(embedding_model.calls) == 1

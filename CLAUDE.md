@@ -372,7 +372,16 @@ read and written:
   extracted before this column existed); `find_similar_nodes()` ranks a
   single type's own nodes by `array_cosine_similarity()` against a
   query vector, filtering out `NULL` rows rather than sorting them
-  arbitrarily.
+  arbitrarily. Every node and edge table also carries the optional
+  *envelope* columns (`confidence`, `evidence_text`, `source_section`, the
+  two offsets, `valid_from`/`valid_to`, and the open `properties` map), added
+  by `ALTER TABLE ADD` so a table from before they existed ends up the same.
+  They are defined once, in `_ENVELOPE_SCALAR_COLUMNS`: the DDL, the row values
+  written, the CREATE field list (with the `CAST ... AS INT64` the engine needs
+  for the offsets), the RETURN fields and the read-back are all built from
+  that list, so adding a column is one line there --
+  `test_every_envelope_column_survives_a_write_and_load_for_nodes_and_edges`
+  fails if a new one isn't written or returned.
 - `prompts.py` (`app/llm/prompts.py`) — every LLM prompt template this app sends, as plain string
   constants (with the design-rationale comments explaining why each one asks
   for what it does), kept separate from `ontology.py`'s extraction/storage
@@ -492,22 +501,30 @@ read and written:
   both short-circuits immediately with no further LLM calls. Stage 2:
   `extract_keywords()` returns terms grouped by node type (e.g.
   `{"Person": ["Ada Lovelace"]}`, not a flat list), then for *each*
-  relevant node type independently, three tiers are tried in order until
-  one produces a match: (a) `find_relevant_nodes()` — that type's own
-  keywords against that type's node labels; (b) `find_similar_nodes()` —
-  if (a) found nothing, rank that type's own nodes by embedding
-  similarity (`embed_query()`, computed lazily at most once per
-  `search_graph()` call, reused across every type that needs it) against
-  the question, keeping the top `EMBEDDING_FALLBACK_TOP_K` (5); (c)
-  `all_nodes_of_types()` — if (b) also found nothing (most likely a
-  document extracted before embeddings existed, so its nodes have no
-  vector to rank by), every instance of just that type. This exists
-  because keyword-substring matching only ever finds a *specific named*
-  instance, so category questions ("what are the responsibilities?") or
-  a question/document language mismatch would otherwise always miss even
-  when the type is genuinely relevant and the graph clearly has matching
-  data -- embedding similarity (b) catches most of these by meaning
-  before falling all the way through to "every instance" (c). Edges
+  relevant node type independently, four tiers are tried in order until
+  one produces a match -- declared once, as the ordered tuple
+  `_NODE_MATCH_TIERS` of small functions over a per-search
+  `_SearchContext`, so adding a tier is one function plus one entry:
+  (a) `_by_keyword` (`find_relevant_nodes()`) — that type's own keywords
+  against that type's node labels; (b) `_by_property_filter`
+  (`find_nodes_by_property()`) — only when `analyze_question()` extracted a
+  typed-property comparison for the type ("50% 이상인 보장"), which neither a
+  label match nor similarity can answer; (c) `_by_embedding`
+  (`find_similar_nodes()`) — rank that type's own nodes by embedding
+  similarity to the question, keeping the top `EMBEDDING_FALLBACK_TOP_K` (5);
+  the question's embedding (`embed_query()`) is computed lazily by the
+  context, at most once per `search_graph()` call however many types reach
+  this tier, and not at all when an earlier tier matched (both pinned by
+  tests); (d) `_all_of_type` (`all_nodes_of_types()`) — if (c) also found
+  nothing (most likely a document extracted before embeddings existed, so
+  its nodes have no vector to rank by), every instance of just that type.
+  This exists because keyword-substring matching only ever finds a
+  *specific named* instance, so category questions ("what are the
+  responsibilities?") or a question/document language mismatch would
+  otherwise always miss even when the type is genuinely relevant and the
+  graph clearly has matching data -- embedding similarity (c) catches most
+  of these by meaning before falling all the way through to "every
+  instance" (d). Edges
   follow the same shape one level up: `find_matching_edges()` picks up
   edges of the determined `edge_types` connected to an already-matched
   node, falling back to `all_edges_of_types()` only if node matching
