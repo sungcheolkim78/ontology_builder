@@ -1,0 +1,595 @@
+{
+  "source_file": "삼성올백(ALL100)종신보험(2601)(무배당,무해약환급금형)_약관_raw.md",
+  "source_sha256": "e5645476196dc27882092f32892f4c9658ffa009d8285e656c8c02bb28d93823",
+  "questions": [
+    {
+      "id": "q001",
+      "question": "삼성올백(ALL100)종신보험 주계약 제3조에서 정한 보험금 지급사유는 무엇인가?",
+      "question_type": "attribute",
+      "importance": "high",
+      "rationale": "주계약의 핵심 보장 내용(지급사유)을 확인하기 위함",
+      "answerable": true,
+      "answer": "피보험자가 보험기간(종신) 중 사망하였을 때입니다.",
+      "answer_facts": [
+        {
+          "subject": "회사",
+          "predicate": "보험금 지급 사유",
+          "object": "피보험자가 보험기간(종신) 중 사망하였을 때"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "회사는 피보험자가 보험기간(종신) 중 사망하였을 경우에는 보험수익자에게",
+          "line_start": 1300,
+          "line_end": 1300
+        }
+      ],
+      "notes": "주계약 제3조에서 정한 지급사유는 피보험자가 보험기간(종신) 중 사망하였을 때입니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q002",
+      "question": "계약자가 보험증권을 받은 날부터 며칠 이내에 청약을 철회할 수 있는가?",
+      "question_type": "attribute",
+      "importance": "high",
+      "rationale": "청약철회 가능 기간(제17조)에 대한 정확한 수치 정보를 묻는 질문",
+      "answerable": true,
+      "answer": "계약자는 보험증권을 받은 날부터 15일 이내에 청약을 철회할 수 있습니다.",
+      "answer_facts": [
+        {
+          "subject": "계약자",
+          "predicate": "청약 철회 가능 기간",
+          "object": "보험증권을 받은 날부터 15일 이내"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "계약자는 보험증권을 받은 날부터 15일 이내에 그 청약을 철회(撤回",
+          "line_start": 1639,
+          "line_end": 1639
+        }
+      ],
+      "notes": "제17조 제1항에 따라 15일 이내에 청약 철회가 가능합니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q003",
+      "question": "삼성올백(ALL100)종신보험 제11조에 따라 계약자가 보험수익자를 지정하지 않은 경우 보험수익자는 누구로 정해지는가?",
+      "question_type": "relation",
+      "importance": "medium",
+      "rationale": "보험수익자 미지정 시 피보험자와의 법적 상속 관계 규정을 파악하기 위함",
+      "answerable": true,
+      "answer": "피보험자의 법정상속인으로 정해집니다.",
+      "answer_facts": [
+        {
+          "subject": "미지정 시 보험수익자",
+          "predicate": "지정 규정",
+          "object": "피보험자의 법정상속인"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 계약에서 계약자가 보험수익자를 지정하지 않은 때에는 보험수익자를 피보험자의 법정상속인으로",
+          "line_start": 1522,
+          "line_end": 1522
+        }
+      ],
+      "notes": "제11조에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q004",
+      "question": "주계약 제34조에 따르면 이 계약에서 계약자배당금이 지급되지 않는 이유는 무엇인가?",
+      "question_type": "attribute",
+      "importance": "medium",
+      "rationale": "무배당보험의 성격과 배당금 유무 규정을 확인",
+      "answerable": true,
+      "answer": "이 계약이 무배당보험이기 때문입니다.",
+      "answer_facts": [
+        {
+          "subject": "이 계약",
+          "predicate": "계약자배당금이 없는 이유",
+          "object": "무배당보험이므로"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 계약은 무배당보험이므로 계약자배당금이 없습니다.",
+          "line_start": 2134,
+          "line_end": 2134
+        }
+      ],
+      "notes": "제34조에 무배당보험이라 배당금이 없다고 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q005",
+      "question": "계약승계특약에서 승계후계약의 피보험자가 될 수 있는 사람의 자격 요건은 무엇인가?",
+      "question_type": "attribute",
+      "importance": "high",
+      "rationale": "계약승계특약 제4조에 명시된 승계후계약 피보험자의 범위를 묻는 질문",
+      "answerable": true,
+      "answer": "승계전계약의 피보험자의 배우자 또는 자녀입니다.",
+      "answer_facts": [
+        {
+          "subject": "승계후계약의 피보험자 범위",
+          "predicate": "자격 요건",
+          "object": "승계전계약의 피보험자의 「배우자 또는 자녀」"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "승계후계약의 피보험자는 승계전계약의 피보험자의 「배우자 또는 자녀」",
+          "line_start": 3349,
+          "line_end": 3349
+        }
+      ],
+      "notes": "계약승계특약 제4조에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q006",
+      "question": "계약승계특약에서 회사가 승계후계약을 승낙한 경우, 보장개시일은 언제로 정해지는가?",
+      "question_type": "attribute",
+      "importance": "medium",
+      "rationale": "승계후계약의 보장개시일(제3조)을 명확히 식별",
+      "answerable": true,
+      "answer": "계약자가 계약승계를 신청한 날입니다.",
+      "answer_facts": [
+        {
+          "subject": "승계후계약의 보장개시일",
+          "predicate": "개시일자",
+          "object": "계약자가 계약승계를 신청한 날"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "회사가 승계후계약을 승낙한 경우 승계후계약의 보장개시일은 계약자가 계약승계를 신청한 날로 합니다.",
+          "line_start": 3346,
+          "line_end": 3346
+        }
+      ],
+      "notes": "계약승계특약 제3조에 규정되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q007",
+      "question": "선지급서비스특약을 부가하기 위해 주계약의 계약자와 피보험자 사이에 요구되는 관계 조건은 무엇인가?",
+      "question_type": "relation",
+      "importance": "high",
+      "rationale": "선지급서비스특약 제10조(피보험자의 범위: 계약자와 피보험자가 동일) 조건 파악",
+      "answerable": true,
+      "answer": "계약자와 피보험자가 동일해야 합니다.",
+      "answer_facts": [
+        {
+          "subject": "선지급서비스특약을 부가하는 주계약",
+          "predicate": "계약자와 피보험자 관계 요건",
+          "object": "계약자와 피보험자가 동일"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 특약을 부가하는 주계약은 계약자와 피보험자가 동일한 보험계약이어야 합니다.",
+          "line_start": 3683,
+          "line_end": 3683
+        }
+      ],
+      "notes": "선지급서비스특약 제10조에 규정되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q008",
+      "question": "선지급서비스특약에서 보험금을 지급하기 위한 피보험자의 남은 생존기간 조건은 몇 개월(또는 몇 년) 이내인가?",
+      "question_type": "attribute",
+      "importance": "high",
+      "rationale": "선지급서비스특약의 핵심 지급 요건(남은 생존기간 1년 이내) 검증",
+      "answerable": true,
+      "answer": "1년 이내입니다.",
+      "answer_facts": [
+        {
+          "subject": "선지급서비스특약",
+          "predicate": "지급을 위한 피보험자 남은 생존기간 조건",
+          "object": "1년 이내"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "※ 이 특약은 피보험자의 남은 생존기간이 1년 이내일 경우 주계약",
+          "line_start": 3550,
+          "line_end": 3550
+        }
+      ],
+      "notes": "선지급서비스특약 머리말(안내문구)에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q009",
+      "question": "지정대리청구서비스특약 제1조에 따를 때 이 특약이 적용되기 위해 계약자, 피보험자, 보험수익자 간에 충족해야 하는 조건은 무엇인가?",
+      "question_type": "relation",
+      "importance": "high",
+      "rationale": "지정대리청구서비스특약의 적용 대상 요건(계약자, 피보험자, 수익자 동일) 파악",
+      "answerable": true,
+      "answer": "보험계약자, 피보험자 및 보험수익자가 모두 동일해야 합니다.",
+      "answer_facts": [
+        {
+          "subject": "지정대리청구서비스특약 적용 대상",
+          "predicate": "조건",
+          "object": "보험계약자, 피보험자 및 보험수익자가 모두 동일"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 특약은 보험계약자, 피보험자 및 보험수익자가 모두 동일한 주된 보험",
+          "line_start": 3925,
+          "line_end": 3925
+        }
+      ],
+      "notes": "지정대리청구서비스특약 제1조에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q010",
+      "question": "사후정리특약과 선지급서비스특약의 특약 보험료 납입에 관한 공통된 규정은 무엇인가?",
+      "question_type": "multi_hop",
+      "importance": "medium",
+      "rationale": "두 가지 독립된 제도성 특약(사후정리특약 제8조, 선지급서비스특약 제11조)의 보험료 규정을 종합 비교",
+      "answerable": true,
+      "answer": "두 특약 모두 별도의 특약 보험료가 없습니다(보험료는 없습니다).",
+      "answer_facts": [
+        {
+          "subject": "사후정리특약",
+          "predicate": "보험료",
+          "object": "없음"
+        },
+        {
+          "subject": "선지급서비스특약",
+          "predicate": "보험료",
+          "object": "없음"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 특약의 보험료는 없습니다.",
+          "line_start": 3456,
+          "line_end": 3456
+        },
+        {
+          "quote": "이 특약의 보험료는 없습니다.",
+          "line_start": 3456,
+          "line_end": 3456
+        }
+      ],
+      "notes": "사후정리특약 제8조 및 선지급서비스특약 제11조 공통 내용입니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q011",
+      "question": "건강우대특약에서 보험기간 중 피보험자가 며칠 이상 흡연을 한 경우 흡연상태 변경통지를 하여야 하는가?",
+      "question_type": "attribute",
+      "importance": "medium",
+      "rationale": "건강우대특약 제6조의 흡연상태 변경 기준 일수(30일 이상) 확인",
+      "answerable": true,
+      "answer": "30일 이상 흡연을 한 경우입니다.",
+      "answer_facts": [
+        {
+          "subject": "피보험자",
+          "predicate": "흡연상태 변경통지 기준 흡연 일수",
+          "object": "30일 이상"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 특약의 보험기간 중 피보험자가 30일 이상 흡연을 한 경우에는",
+          "line_start": 3251,
+          "line_end": 3251
+        }
+      ],
+      "notes": "건강우대특약 제6조 제1항에 규정되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q012",
+      "question": "이 약관의 관할법원 규정(제36조)에 따라 소송 및 민사조정을 관할하는 기준 법원은 어디인가?",
+      "question_type": "attribute",
+      "importance": "low",
+      "rationale": "분쟁 발생 시 관할법원 기준(계약자의 주소지) 확인",
+      "answerable": true,
+      "answer": "계약자의 주소지를 관할하는 법원입니다.",
+      "answer_facts": [
+        {
+          "subject": "소송 및 민사조정 관할법원",
+          "predicate": "기준",
+          "object": "계약자의 주소지를 관할하는 법원"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 계약에 관한 소송 및 민사조정은 계약자의 주소지를 관할하는 법원으로",
+          "line_start": 2148,
+          "line_end": 2148
+        }
+      ],
+      "notes": "제36조(관할법원)에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q013",
+      "question": "민법 제28조에 따르면 실종선고를 받은 자는 언제 사망한 것으로 보는가?",
+      "question_type": "attribute",
+      "importance": "medium",
+      "rationale": "약관 부록의 관련 법률(민법 실종선고 효과) 규정 인출",
+      "answerable": true,
+      "answer": "실종 기간(전조의 기간)이 만료한 때입니다.",
+      "answer_facts": [
+        {
+          "subject": "실종선고를 받은 자",
+          "predicate": "사망 간주 시점",
+          "object": "전조의 기간(실종기간)이 만료한 때"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "실종선고를 받은 자는 전조의 기간이 만료한 때에 사망한 것으로 본다.",
+          "line_start": 5303,
+          "line_end": 5303
+        }
+      ],
+      "notes": "민법 제28조(실종선고의 효과)에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q014",
+      "question": "지역보건법 제12조에 따라 병원의 요건을 갖춘 보건소가 사용할 수 있는 별도의 명칭은 무엇인가?",
+      "question_type": "entity",
+      "importance": "medium",
+      "rationale": "부록 법령(지역보건법 제12조)에 정의된 특정 기관 명칭 확인",
+      "answerable": true,
+      "answer": "보건의료원",
+      "answer_facts": [
+        {
+          "subject": "병원의 요건을 갖춘 보건소",
+          "predicate": "사용 가능한 명칭",
+          "object": "보건의료원"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "보건소 중 「의료법」 제3조제2항제3호가목에 따른 병원의 요건을 갖춘 보건소는 보건의료원이라는 명칭을 사용할\n수 있다.",
+          "line_start": 6763,
+          "line_end": 6764
+        }
+      ],
+      "notes": "지역보건법 제12조(보건의료원)에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q015",
+      "question": "형법 제287조에 규정된 미성년자의 약취, 유인죄에 대한 법정형은 무엇인가?",
+      "question_type": "attribute",
+      "importance": "low",
+      "rationale": "약관 부록 관련 법령 형법 조항의 법정형 확인",
+      "answerable": true,
+      "answer": "10년 이하의 징역입니다.",
+      "answer_facts": [
+        {
+          "subject": "미성년자의 약취, 유인죄",
+          "predicate": "법정형",
+          "object": "10년 이하의 징역"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "미성년자를 약취 또는 유인한 사람은 10년 이하의 징역에 처한다.",
+          "line_start": 6885,
+          "line_end": 6885
+        }
+      ],
+      "notes": "형법 제287조에 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q016",
+      "question": "사후정리특약 또는 선지급서비스특약을 계약자가 임의해지할 경우 해약환급금이 지급되는가?",
+      "question_type": "boolean",
+      "importance": "high",
+      "rationale": "사후정리특약 제10조 및 선지급서비스특약 제13조의 무환급금 규정 진위 확인",
+      "answerable": true,
+      "answer": "지급되지 않습니다 (해약환급금은 없습니다).",
+      "answer_facts": [
+        {
+          "subject": "사후정리특약 및 선지급서비스특약 임의해지 시",
+          "predicate": "해약환급금 지급 여부",
+          "object": "해약환급금 없음(지급되지 않음)"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "계약자는 이 특약이 소멸하기 전에 언제든지 이 특약을 해지할 수 있으며, 이 경우 해약환급금은 없습니다.",
+          "line_start": 3470,
+          "line_end": 3470
+        },
+        {
+          "quote": "계약자는 이 특약이 소멸하기 전에 언제든지 이 특약을 해지할 수 있으며, 이 경우 해약환급금은 없습니다.",
+          "line_start": 3470,
+          "line_end": 3470
+        }
+      ],
+      "notes": "사후정리특약 제10조 및 선지급서비스특약 제13조에 '해약환급금은 없습니다'라고 명시되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q017",
+      "question": "약관 제21조에 따르면 피보험자의 나이를 계산할 때 어떤 나이를 기준으로 적용하는가?",
+      "question_type": "entity",
+      "importance": "high",
+      "rationale": "보험계약 상 연령 계산 기준 개념(보험나이) 확인",
+      "answerable": true,
+      "answer": "보험나이를 기준으로 적용합니다.",
+      "answer_facts": [
+        {
+          "subject": "피보험자의 나이 계산",
+          "predicate": "기준",
+          "object": "보험나이"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "이 약관에서의 피보험자의 나이는 보험나이를 기준으로 합니다.",
+          "line_start": 1794,
+          "line_end": 1794
+        }
+      ],
+      "notes": "제21조 제1항에 규정되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q018",
+      "question": "약관 제37조에 명시된 소멸시효의 대상이 되는 권리들에는 어떤 것들이 있는가?",
+      "question_type": "list",
+      "importance": "medium",
+      "rationale": "소멸시효 조항에 명시된 청구권 항목 리스트 열거",
+      "answerable": true,
+      "answer": "보험금 청구권, 보험료 반환청구권, 해약환급금 청구권, 계약자적립액 반환청구권입니다.",
+      "answer_facts": [
+        {
+          "subject": "제37조 소멸시효 대상 권리",
+          "predicate": "포함 항목 1",
+          "object": "보험금 청구권"
+        },
+        {
+          "subject": "제37조 소멸시효 대상 권리",
+          "predicate": "포함 항목 2",
+          "object": "보험료 반환청구권"
+        },
+        {
+          "subject": "제37조 소멸시효 대상 권리",
+          "predicate": "포함 항목 3",
+          "object": "해약환급금 청구권"
+        },
+        {
+          "subject": "제37조 소멸시효 대상 권리",
+          "predicate": "포함 항목 4",
+          "object": "계약자적립액 반환청구권"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "보험금 청구권, 보험료 반환청구권, 해약환급금 청구권 및 계약자적립액",
+          "line_start": 2152,
+          "line_end": 2152
+        }
+      ],
+      "notes": "제37조(소멸시효)에 열거되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q019",
+      "question": "계약승계특약을 적용하여 승계후계약의 보험료로 납입할 수 있는 승계전계약의 재원 3가지는 무엇인가?",
+      "question_type": "list",
+      "importance": "high",
+      "rationale": "계약승계특약 제5조에 명시된 보험료 재원 항목(해약환급금, 만기보험금, 사망보험금) 열거",
+      "answerable": true,
+      "answer": "해약환급금, 만기보험금, 사망보험금입니다.",
+      "answer_facts": [
+        {
+          "subject": "승계후계약의 보험료 납입 재원",
+          "predicate": "항목 1",
+          "object": "해약환급금"
+        },
+        {
+          "subject": "승계후계약의 보험료 납입 재원",
+          "predicate": "항목 2",
+          "object": "만기보험금"
+        },
+        {
+          "subject": "승계후계약의 보험료 납입 재원",
+          "predicate": "항목 3",
+          "object": "사망보험금"
+        }
+      ],
+      "evidence": [
+        {
+          "quote": "승계후계약의 보험료는 승계전계약의 「해약환급금, 만기보험금 또는 사망보",
+          "line_start": 3360,
+          "line_end": 3360
+        }
+      ],
+      "notes": "계약승계특약 제5조에 규정되어 있습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    },
+    {
+      "id": "q020",
+      "question": "주계약의 피보험자가 만 40세 남성인 경우 월 납입해야 하는 기본 보험료는 얼마인가?",
+      "question_type": "unanswerable",
+      "importance": "high",
+      "rationale": "약관 본문에는 보험료 산출 수식이나 약정 규정만 있고 특정 연령대별 구체적 보험료 수치는 포함되어 있지 않음을 식별할 수 있는지 테스트",
+      "answerable": false,
+      "answer": null,
+      "answer_facts": [],
+      "evidence": [],
+      "notes": "문서에는 만 40세 남성의 구체적인 월 납입 보험료 수치 정보가 포함되어 있지 않습니다.",
+      "validation": {
+        "evidence_quotes_verified": true,
+        "status": "valid"
+      }
+    }
+  ],
+  "warnings": []
+}

@@ -57,4 +57,24 @@ unpack_kind "$samples_dir/data_raw_md.tar.gz" "md" ".md" "raw.md"
 unpack_kind "$samples_dir/data_chunks.tar.gz" "chunks" ".json" "chunks.json"
 unpack_kind "$samples_dir/goldenset.tar.gz" "goldenset" ".golden.json" "goldenset.json"
 
+# samples/schema_eval/ holds documents kept with a golden set for measuring how well a
+# schema serves retrieval (scripts/evaluate_golden_set.py): {stem}.md and
+# {stem}.golden.json side by side. The golden set is only meaningful against this exact
+# markdown (it records the markdown's sha256 and verbatim quotes), so they travel together.
+if [ -d "$samples_dir/schema_eval" ]; then
+  count=0
+  for md in "$samples_dir/schema_eval"/*.md; do
+    [ -e "$md" ] || continue
+    base="$(basename "$md" .md)"
+    dest_dir="$documents_dir/${base}_raw"
+    mkdir -p "$dest_dir"
+    cp "$md" "$dest_dir/raw.md"
+    if [ -f "$samples_dir/schema_eval/$base.golden.json" ]; then
+      cp "$samples_dir/schema_eval/$base.golden.json" "$dest_dir/goldenset.json"
+    fi
+    count=$((count + 1))
+  done
+  echo "schema_eval/: $count document(s) -> documents/{stem}_raw/raw.md (+ goldenset.json)"
+fi
+
 echo "Done. $documents_dir now has $(ls "$documents_dir" | wc -l | tr -d ' ') document folder(s)."
