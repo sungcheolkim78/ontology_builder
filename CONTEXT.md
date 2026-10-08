@@ -12,6 +12,18 @@ _Avoid_: document directory, document store
 One kind of file inside a document folder (or a domain folder): `raw.md`, `chunks.json`, `versions.json`, a `schema_v{N}.json`, and so on. Where each one lives is decided in one place, `app.utils.paths`.
 _Avoid_: output, cache file (a resume cache entry is an artifact too)
 
+**Golden set**:
+Questions about one document, each with its answer and the verbatim passages that prove it, generated from the whole document rather than from its chunks. It is the ground truth a schema is measured against.
+_Avoid_: test set, benchmark
+
+**Retrieval outcome**:
+How a golden question fares against an extracted graph: a *hit* (the retrieved nodes and edges cite the passage that answers it), a *retrieval miss* (the graph has a node citing that passage, but the search did not return it) or an *extraction miss* (no node in the graph cites that passage at all). Only the last two say where to look: a schema can often repair a retrieval miss or an extraction miss caused by a missing type, but not an extraction that is simply too sparse.
+_Avoid_: pass/fail, accuracy
+
+**Trial stem**:
+A temporary document name under which a candidate schema's extracted graph is written in the shared graph database so it can be scored, and deleted when the run ends. It has no document folder, so it never appears as a document.
+_Avoid_: scratch document, test document
+
 **Chunk group**:
 A budgeted run of consecutive chunks sent to the LLM in a single call. A document with no chunks is a single chunk group holding its whole text.
 _Avoid_: batch, candidate group
