@@ -24,6 +24,22 @@ _Avoid_: pass/fail, accuracy
 A temporary document name under which a candidate schema's extracted graph is written in the shared graph database so it can be scored, and deleted when the run ends. It has no document folder, so it never appears as a document.
 _Avoid_: scratch document, test document
 
+**Refinement**:
+Merging the types of a finished schema to make it smaller, then scoring the result against the golden set to show what the merge cost or gained. Distinct from generating a schema (which proposes types from the document) and from evolving it (which changes types in response to extracted instances). A person approves every refinement before it becomes a schema version.
+_Avoid_: simplification, cleanup
+
+**Merge mapping**:
+The table from each old type name to the type that replaces it, applied identically to a schema and to the graph extracted under it.
+_Avoid_: merge decision (that is evolution's term for a proposed change)
+
+**Candidate schema**:
+The schema a refinement produces by applying a merge mapping. It is not a schema version until a person approves it.
+_Avoid_: draft schema, trial schema
+
+**Refinement report**:
+One candidate schema scored against the schema it would replace: the change in type counts and, per golden question, the change in Retrieval outcome (questions gained, questions lost).
+_Avoid_: evaluation result
+
 **Chunk group**:
 A budgeted run of consecutive chunks sent to the LLM in a single call. A document with no chunks is a single chunk group holding its whole text.
 _Avoid_: batch, candidate group
