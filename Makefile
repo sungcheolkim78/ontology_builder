@@ -9,12 +9,23 @@ QUESTION_CONTEXT_CHARS ?= 24000
 LOG_FILE ?=
 MAX_PROC_FILEN ?=
 
+# Golden-set evaluation of one extracted document (scripts/evaluate_golden_set.py).
+# It always works on a COPY of backend/data (EVAL_DATA_DIR), never the live one.
+EVAL_STEM ?= 삼성올백(ALL100)종신보험(2601)(무배당,무해약환급금형)_약관_raw
+EVAL_DATA_DIR ?= backups/eval_data
+EVAL_QUESTIONS ?= 50
+EVAL_CONTEXT_CHARS ?= 40000
+EVAL_HOPS ?= 1
+EVAL_RUNS_DIR ?= backups/eval_runs
+EVAL_SCRIPT := scripts/evaluate_golden_set.py
+EVAL_ENV := ONTOLOGY_DATA_DIR="$(abspath $(EVAL_DATA_DIR))"
+
 GOLDENSET_SCRIPT := scripts/prepare_goldenset/prepare_goldenset.py
 MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-data eval-data-reset eval-check golden-eval golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -49,7 +60,20 @@ help:
 	@echo "  make chunk-terms-test"
 	@echo "      Run unit tests for the Markdown article chunker."
 	@echo ""
+	@echo "  make eval-data"
+	@echo "      Copy backend/data to EVAL_DATA_DIR (backups/eval_data) for golden-set evaluation."
+	@echo "  make eval-data-reset"
+	@echo "      Delete that copy and copy backend/data again."
+	@echo "  make eval-check"
+	@echo "      Check the evaluation setup (no LLM call)."
+	@echo "  make golden-eval"
+	@echo "      Score the document's existing golden set (1 LLM call per answerable question)."
+	@echo "  make golden-eval-generate"
+	@echo "      Generate a new golden set (EVAL_QUESTIONS), score it, and re-extract the groups behind the misses."
+	@echo ""
 	@echo "Optional variables:"
+	@echo "  EVAL_STEM=<document folder name> EVAL_QUESTIONS=50 EVAL_CONTEXT_CHARS=40000 EVAL_HOPS=1"
+	@echo "  EVAL_DATA_DIR=backups/eval_data EVAL_RUNS_DIR=backups/eval_runs (each run's report is saved there)"
 	@echo "  OUTPUT_DIR=./goldenset QUESTIONS_PER_DOCUMENT=10 MODEL=openai/gpt-4o-mini"
 	@echo "  QUESTION_CONTEXT_CHARS=24000 LOG_FILE=./goldenset/run.log"
 	@echo "  MAX_PROC_FILEN=10"
@@ -115,3 +139,27 @@ chunk-terms:
 chunk-terms-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest \
 		scripts/data_prep/test_chunk_terms_markdown.py -q
+
+eval-data:
+	@if [ -e "$(EVAL_DATA_DIR)" ]; then \
+		echo "$(EVAL_DATA_DIR) already exists (make eval-data-reset copies backend/data again)"; \
+	else \
+		if [ -n "$$(podman ps -q 2>/dev/null)" ]; then \
+			echo "warning: containers are running; stop them first (make podman-down) for a consistent copy of the graph database" >&2; \
+		fi; \
+		mkdir -p "$(dir $(EVAL_DATA_DIR))" && cp -R backend/data "$(EVAL_DATA_DIR)" && echo "copied backend/data -> $(EVAL_DATA_DIR)"; \
+	fi
+
+eval-data-reset:
+	@test "$(abspath $(EVAL_DATA_DIR))" != "$(abspath backend/data)" || (echo "EVAL_DATA_DIR must not be backend/data" >&2; exit 2)
+	rm -rf "$(EVAL_DATA_DIR)"
+	@$(MAKE) --no-print-directory eval-data
+
+eval-check: eval-data
+	@$(EVAL_ENV) $(PYTHON) scripts/check_eval_setup.py "$(EVAL_STEM)"
+
+golden-eval: eval-check
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"
+
+golden-eval-generate: eval-check
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --generate $(EVAL_QUESTIONS) --context-chars $(EVAL_CONTEXT_CHARS) --hops $(EVAL_HOPS) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"

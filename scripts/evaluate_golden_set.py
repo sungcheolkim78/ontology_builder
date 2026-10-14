@@ -6,22 +6,32 @@ that answers it -- and if not, was the passage never extracted, or extracted but
 not retrieved?
 
     ONTOLOGY_DATA_DIR=/path/to/a/COPY/of/backend/data \\
-        scripts/evaluate_golden_set.py "<document stem>" [--generate 20] [--version 3] [--hops 1] [--json]
+        scripts/evaluate_golden_set.py "<document stem>" [--generate 50 [--context-chars 60000]] [--version 3] [--hops 1] [--probe-misses] [--json]
 
 ONTOLOGY_DATA_DIR is required and there is no default, on purpose: this opens the
 graph database and, with --generate, writes goldenset.json, so pointing it at the
 live backend/data while the backend container is up could corrupt that database.
 Work on a copy (scripts/backup_data.sh makes a snapshot).
 
---generate N writes a fresh N-question golden set first (two LLM calls). Scoring
+--generate N writes a fresh N-question golden set first: two LLM calls per batch of up to
+10 questions, each batch shown a different window of the document (--context-chars sets
+how much of it one call sees; a bigger view means fewer, better-grounded windows). A golden
+set it replaces is kept beside it as goldenset.{time}.json. Scoring
 costs one LLM call per answerable question (the question analysis). The API key and
 model are read from backend/.env (OPENROUTER_* entries only; nothing is printed).
+
+--probe-misses then re-extracts, under the same schema, only the chunk groups that hold
+a passage an extraction miss needed (one LLM call per such group; see
+backend/app/ontology/reextraction_probe.py) and says whether the second extraction
+cites it: `recovered` means the schema could hold the fact and the first run left it
+out, `still_missed` means this schema and prompt do not get it out of the text.
 """
 
 import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
@@ -71,12 +81,36 @@ def print_report(report: dict) -> None:
         print(f"  {question['id']}  {question['outcome']:16} recall={recall}")
 
 
+def print_probe(probe: dict) -> None:
+    summary = probe["summary"]
+    print(
+        f"\nre-extraction of the groups behind {summary['probed']} extraction miss(es) "
+        f"({summary['llm_calls']} LLM call(s)): {summary['recovered']} recovered, "
+        f"{summary['still_missed']} still missed, {summary['not_locatable']} not locatable"
+    )
+    for question in probe["questions"]:
+        print(f"  {question['id']}  {question['outcome']:14} groups={question['groups']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("stem", help="the document's stem (its folder name under documents/)")
     parser.add_argument("--generate", type=int, metavar="N", help="generate an N-question golden set first")
+    parser.add_argument(
+        "--context-chars", type=int, default=None, metavar="N",
+        help="characters of the document one generation call sees (default: the module's own, 24000)",
+    )
     parser.add_argument("--version", type=int, help="schema version to score (default: the active one)")
     parser.add_argument("--hops", type=int, default=1, help="graph expansion hops, as in chat (default 1)")
+    parser.add_argument(
+        "--probe-misses",
+        action="store_true",
+        help="re-extract the chunk groups behind the extraction misses and report which passages come back",
+    )
+    parser.add_argument(
+        "--save-dir", metavar="DIR",
+        help="also write the full report (scores, probe, the options used) to DIR/<time>.json",
+    )
     parser.add_argument("--json", action="store_true", help="print the full report as JSON instead")
     args = parser.parse_args()
 
@@ -90,21 +124,43 @@ def main() -> int:
     load_openrouter_settings()
 
     from app.ontology.retrieval_eval import score_golden_set
-    from app.preprocess.goldenset import generate_goldenset, save_goldenset
+    from app.preprocess.goldenset import DEFAULT_CONTEXT_CHARS, generate_goldenset, save_goldenset
     from app.utils.paths import raw_path_for
 
     if args.generate:
         report = generate_goldenset(
-            raw_path_for(args.stem).read_text(), source_name=f"{args.stem}.md", question_count=args.generate
+            raw_path_for(args.stem).read_text(),
+            source_name=f"{args.stem}.md",
+            question_count=args.generate,
+            question_context_chars=args.context_chars or DEFAULT_CONTEXT_CHARS,
         )
         save_goldenset(args.stem, report)
         print(f"generated {len(report['questions'])} golden questions", file=sys.stderr)
 
     report = score_golden_set(args.stem, version=args.version, hops=args.hops)
+    probe = None
+    if args.probe_misses:
+        from app.ontology.reextraction_probe import probe_extraction_misses
+
+        probe = probe_extraction_misses(args.stem, report)
+    full = {**report, "probe": probe} if probe else report
+    if args.save_dir:
+        save_dir = Path(args.save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        saved = save_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        saved.write_text(
+            json.dumps(
+                {"saved_at": datetime.now().isoformat(), "options": vars(args), **full},
+                ensure_ascii=False, indent=2,
+            )
+        )
+        print(f"\nsaved the full report to {saved}", file=sys.stderr)
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps(full, ensure_ascii=False, indent=2))
     else:
         print_report(report)
+        if probe:
+            print_probe(probe)
     return 0
 
 
