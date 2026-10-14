@@ -283,3 +283,91 @@ def test_a_nodes_stored_offsets_are_ignored_because_they_may_be_in_the_wrong_fra
     question = score_golden_set(STEM, hops=0)["questions"][0]
 
     assert question["outcome"] == "hit"
+
+
+# --- semantic rule: a node that says what the passage says counts as citing it -
+
+
+class MappedEmbeddings:
+    """Embeds a text to the vector `vectors` gives it (anything else: a vector
+    orthogonal to all of them), and records every text it was asked to embed."""
+
+    def __init__(self, vectors):
+        self.vectors = vectors
+        self.texts = []
+
+    def embed_documents(self, texts):
+        self.texts.extend(texts)
+        return [self.vectors.get(text, [0.0, 0.0, 1.0]) for text in texts]
+
+
+QUOTE = "Alice works at Acme."
+
+
+def _semantic_setup(monkeypatch, node_vector, search_returns=None):
+    """Alice's node cites no passage (so strictly the question is an extraction miss);
+    its text embeds to `node_vector`, the golden quote to [1, 0, 0]."""
+    _setup(
+        monkeypatch,
+        [_question("q001", QUOTE, 2)],
+        [_node("n1", "Alice"), _node("n2", "Bob", evidence="Bob works at Initech.")],
+        search_returns=search_returns,
+    )
+    model = MappedEmbeddings({QUOTE: [1.0, 0.0, 0.0], "Alice": node_vector})
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: model)
+    return model
+
+
+def test_a_retrieved_node_that_says_what_the_passage_says_is_a_semantic_hit_though_a_strict_miss(monkeypatch):
+    _semantic_setup(monkeypatch, [0.9, 0.1, 0.0])
+
+    question = score_golden_set(STEM, hops=0)["questions"][0]
+
+    assert (question["outcome"], question["recall"]) == ("extraction_miss", 0.0)
+    assert question["semantic"] == {"outcome": "hit", "recall": 1.0}
+
+
+def test_a_node_that_says_it_but_was_not_retrieved_is_a_semantic_retrieval_miss(monkeypatch):
+    _semantic_setup(
+        monkeypatch, [0.9, 0.1, 0.0],
+        search_returns={"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Bob"]}},
+    )
+
+    question = score_golden_set(STEM, hops=0)["questions"][0]
+
+    assert question["semantic"]["outcome"] == "retrieval_miss"
+
+
+def test_no_node_close_to_the_passage_leaves_it_a_semantic_extraction_miss(monkeypatch):
+    _semantic_setup(monkeypatch, [0.1, 0.9, 0.0])  # nearly orthogonal to the quote
+
+    question = score_golden_set(STEM, hops=0)["questions"][0]
+
+    assert question["semantic"]["outcome"] == "extraction_miss"
+
+
+def test_the_summary_reports_the_semantic_outcomes_beside_the_strict_ones(monkeypatch):
+    _semantic_setup(monkeypatch, [0.9, 0.1, 0.0])
+
+    summary = score_golden_set(STEM, hops=0)["summary"]
+
+    assert summary["hit_rate"] == 0.0
+    assert summary["semantic"]["threshold"] == 0.75
+    assert summary["semantic"]["outcomes"]["hit"] == 1
+    assert summary["semantic"]["hit_rate"] == 1.0
+
+
+def test_a_lower_threshold_accepts_a_node_a_higher_one_rejects(monkeypatch):
+    _semantic_setup(monkeypatch, [0.6, 0.8, 0.0])  # cosine 0.6 with the quote
+
+    assert score_golden_set(STEM, hops=0, semantic_threshold=0.75)["questions"][0]["semantic"]["outcome"] == "extraction_miss"
+    assert score_golden_set(STEM, hops=0, semantic_threshold=0.5)["questions"][0]["semantic"]["outcome"] == "hit"
+
+
+def test_switching_the_semantic_rule_off_scores_strictly_and_embeds_nothing(monkeypatch):
+    model = _semantic_setup(monkeypatch, [0.9, 0.1, 0.0])
+
+    report = score_golden_set(STEM, hops=0, semantic_threshold=None)
+
+    assert "semantic" not in report["questions"][0] and "semantic" not in report["summary"]
+    assert model.texts == []
