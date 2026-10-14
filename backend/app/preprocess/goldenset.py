@@ -17,14 +17,20 @@ document still gets a whole-document-shaped view (every section
 represented) rather than an independent per-chunk one.
 """
 
+import contextvars
 import hashlib
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from app.llm.calls import call_json
-from app.utils.paths import goldenset_answers_path_for, goldenset_path_for  # noqa: F401 -- re-exported
+from app.utils.paths import (  # noqa: F401 -- goldenset_answers_path_for, goldenset_path_for re-exported
+    goldenset_answers_path_for,
+    goldenset_archive_path_for,
+    goldenset_path_for,
+)
 from app.utils.store import locked, read_json, write_json
 from app.llm.prompts import ANSWER_PROMPT, QUESTION_PROMPT
 
@@ -37,9 +43,20 @@ QUESTION_TYPES = {
 DEFAULT_QUESTION_COUNT = 10
 DEFAULT_CONTEXT_CHARS = 24_000
 
+# A request for more questions than this is split into batches, each shown a
+# different window of the document (see compact_document_for_questions):
+# one view of a long document is a small fraction of it, so asking that view
+# for more and more questions only repeats the same few passages, and one
+# reply holding every question's answer and evidence quotes would be very long.
+MAX_QUESTIONS_PER_CALL = 10
+MAX_CONCURRENT_BATCHES = 4
 
-def compact_document_for_questions(document: str, max_chars: int) -> str:
-    """Keep every Markdown section while fitting the question prompt budget."""
+
+def compact_document_for_questions(document: str, max_chars: int, window: int = 0) -> str:
+    """Keep every Markdown section while fitting the question prompt budget.
+    A section too long for its share of the budget shows one slice of its
+    body: `window` 0 the start, 1 the next slice, and so on, so a long
+    document can be viewed in turns, each still showing every section."""
     if max_chars < 1:
         raise ValueError("question context budget must be at least 1 character")
     if len(document) <= max_chars:
@@ -77,11 +94,14 @@ def compact_document_for_questions(document: str, max_chars: int) -> str:
         heading = section[0] if re.match(r"^#{1,6}\s+", section[0]) else ""
         body = "\n".join(section[1:] if heading else section)
         budget = base_budget + (1 if index < remainder else 0)
-        if len(body) > budget:
+        if len(body) > budget or window:
             if budget <= len(marker):
                 body = body[:budget]
             else:
-                body = body[: budget - len(marker)] + marker
+                usable = budget - len(marker)
+                start = window * usable
+                shown = body[start : start + usable]
+                body = shown + marker if start + usable < len(body) else shown
         rendered.append("\n".join(part for part in (heading, body) if part))
     return separator.join(rendered)[:max_chars]
 
@@ -100,7 +120,7 @@ def _locate_quote(lines: list[str], quote: str) -> tuple[int, int] | None:
     return line_start, line_end
 
 
-def _validate_questions(payload: dict, expected_count: int) -> list[dict]:
+def _validate_questions(payload: dict, expected_count: int, first_number: int = 1) -> list[dict]:
     questions = payload.get("questions")
     if not isinstance(questions, list) or len(questions) != expected_count:
         raise ValueError(f"expected exactly {expected_count} questions")
@@ -108,7 +128,7 @@ def _validate_questions(payload: dict, expected_count: int) -> list[dict]:
     for index, question in enumerate(questions, 1):
         if not isinstance(question, dict) or not question.get("question"):
             raise ValueError(f"question {index} is missing text")
-        question["id"] = f"q{index:03d}"
+        question["id"] = f"q{first_number + index - 1:03d}"
         qtype = question.get("question_type")
         if qtype not in QUESTION_TYPES:
             raise ValueError(f"question {index} has invalid question_type: {qtype!r}")
@@ -193,29 +213,49 @@ def generate_goldenset(
     if question_count < 1:
         raise ValueError("question_count must be at least 1")
 
-    question_context = compact_document_for_questions(document_text, question_context_chars)
     answer_budget = question_context_chars if answer_context_chars is None else answer_context_chars
-    answer_context = compact_document_for_questions(document_text, answer_budget)
+    windows = max(1, -(-len(document_text) // question_context_chars))  # how many views cover the document
+    batch_count = min(-(-question_count // MAX_QUESTIONS_PER_CALL), windows)
+    base, extra = divmod(question_count, batch_count)
+    batches = []  # (window, first question number, question count)
+    first_number = 1
+    for index in range(batch_count):
+        count = base + (1 if index < extra else 0)
+        batches.append((index * windows // batch_count, first_number, count))
+        first_number += count
 
-    questions = _validate_questions(
-        call_json(
-            "generate_goldenset_questions",
-            QUESTION_PROMPT.format(
-                question_count=question_count, source_file=source_name, document=question_context
+    def run_batch(batch):
+        window, first, count = batch
+        questions = _validate_questions(
+            call_json(
+                "generate_goldenset_questions",
+                QUESTION_PROMPT.format(
+                    question_count=count,
+                    source_file=source_name,
+                    document=compact_document_for_questions(document_text, question_context_chars, window),
+                ),
             ),
-        ),
-        question_count,
-    )
+            count,
+            first,
+        )
+        answers = call_json(
+            "generate_goldenset_answers",
+            ANSWER_PROMPT.format(
+                questions=json.dumps(questions, ensure_ascii=False, indent=2),
+                source_file=source_name,
+                document=compact_document_for_questions(document_text, answer_budget, window),
+            ),
+        )
+        return _merge_and_validate_answers(questions, answers, document_text)
 
-    answers = call_json(
-        "generate_goldenset_answers",
-        ANSWER_PROMPT.format(
-            questions=json.dumps(questions, ensure_ascii=False, indent=2),
-            source_file=source_name,
-            document=answer_context,
-        ),
-    )
-    records, warnings = _merge_and_validate_answers(questions, answers, document_text)
+    if len(batches) == 1:
+        results = [run_batch(batches[0])]
+    else:
+        # one context copy per batch, so each call's telemetry nests under the request's trace
+        with ThreadPoolExecutor(max_workers=min(len(batches), MAX_CONCURRENT_BATCHES)) as executor:
+            futures = [executor.submit(contextvars.copy_context().run, run_batch, b) for b in batches]
+            results = [future.result() for future in futures]
+    records, warnings = _combine_batches(results)
 
     return {
         "source_file": source_name,
@@ -225,8 +265,46 @@ def generate_goldenset(
     }
 
 
+def _combine_batches(results: list[tuple[list[dict], list[str]]]) -> tuple[list[dict], list[str]]:
+    """Joins the batches' records in order. A question another batch already
+    asked (same text, ignoring case and spacing) is dropped with a warning, and
+    the survivors are renumbered q001... so the ids stay contiguous."""
+    if len(results) == 1:
+        return results[0]
+    seen: set[str] = set()
+    renamed: dict[str, str] = {}
+    records: list[dict] = []
+    warnings: list[str] = []
+    for batch_records, batch_warnings in results:
+        dropped: set[str] = set()
+        for record in batch_records:
+            key = " ".join(record["question"].lower().split())
+            if key in seen:
+                dropped.add(record["id"])
+                warnings.append(f"{record['id']}: dropped as a duplicate: another batch asked the same question")
+                continue
+            seen.add(key)
+            renamed[record["id"]] = f"q{len(records) + 1:03d}"
+            records.append({**record, "id": renamed[record["id"]]})
+        for warning in batch_warnings:
+            old_id, _, rest = warning.partition(":")
+            if old_id in renamed:
+                warnings.append(f"{renamed[old_id]}:{rest}")
+            elif old_id not in dropped:
+                warnings.append(warning)
+    return records, warnings
+
+
 def save_goldenset(stem: str, report: dict) -> None:
-    write_json(goldenset_path_for(stem), report, indent=2)
+    """Writes the golden set. One it replaces is kept beside it as
+    goldenset.{time}.json: it is the ground truth a schema was measured
+    against, so scores taken with it stay comparable to nothing else once it
+    is gone. Saving the same content again keeps nothing."""
+    with locked(stem):
+        previous = load_goldenset(stem)
+        if previous is not None and previous != report:
+            write_json(goldenset_archive_path_for(stem, datetime.now().strftime("%Y%m%dT%H%M%S%f")), previous, indent=2)
+        write_json(goldenset_path_for(stem), report, indent=2)
 
 
 def load_goldenset(stem: str) -> dict | None:

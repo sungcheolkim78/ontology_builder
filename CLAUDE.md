@@ -289,7 +289,13 @@ read and written:
   against the full, uncompacted document text before being accepted, exactly
   like the standalone script. Result is cached at
   `documents/{stem}/goldenset.json` (`save_goldenset`/`load_goldenset`,
-  regenerate-on-demand like `discovery.json`/`summary.json`); `list_documents`
+  regenerate-on-demand like `discovery.json`/`summary.json`). A request for more
+  than 10 questions is split into batches of at most 10, each shown a different
+  *window* of the compacted document (`compact_document_for_questions(...,
+  window=)`: every section still appears, each showing another slice of its
+  body) and run concurrently; a question another batch already asked is dropped
+  with a warning and the ids renumbered. `save_goldenset` keeps a set it
+  replaces as `goldenset.{time}.json`. `list_documents`
   reports it as `has_goldenset` alongside `has_chunks`/`has_schema`/
   `has_graph`. The prompts (`QUESTION_PROMPT`/`ANSWER_PROMPT`) live in
   `prompts.py`, ported verbatim from the standalone script's own

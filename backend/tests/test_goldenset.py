@@ -295,3 +295,123 @@ def test_goldenset_answers_endpoint_returns_empty_map_when_none_generated():
 
     assert response.status_code == 200
     assert response.json()["answers"] == {}
+
+
+# --- many questions: batches over different windows of the document ----------
+
+
+class PromptAwareModel:
+    """A chat model for concurrent batches, where call order is not fixed: it
+    reads what each prompt asks for (a question count, or the ids to answer)
+    and answers that. Question texts come from `texts`, a per-call function of
+    (batch_call_number, index) so a test can make batches distinct or identical."""
+
+    def __init__(self, texts):
+        import re
+        import threading
+
+        self._re = re
+        self.texts = texts
+        self.question_prompts = []
+        self.answer_prompts = []
+        self._lock = threading.Lock()
+
+    def invoke(self, prompt):
+        text = prompt if isinstance(prompt, str) else "\n".join(m.content for m in prompt)
+        count = self._re.search(r"exactly (\d+) important", text)
+        if count:
+            with self._lock:
+                self.question_prompts.append(text)
+                call = len(self.question_prompts)
+            questions = [
+                {"id": f"q{i:03d}", "question": self.texts(call, i), "question_type": "entity",
+                 "importance": "high", "rationale": "r"}
+                for i in range(1, int(count.group(1)) + 1)
+            ]
+            return type("R", (), {"content": json.dumps({"questions": questions})})()
+        with self._lock:
+            self.answer_prompts.append(text)
+        ids = self._re.findall(r'"id": "(q\d+)"', text.split("Questions:")[1])
+        return type("R", (), {"content": json.dumps(_answer_payload(ids))})()
+
+
+LONG_DOCUMENT = "".join(f"# S{n}\nAlice works at Acme. " + ("filler words " * 30) + "\n" for n in range(3))
+
+
+def test_a_later_window_of_a_long_document_shows_other_text_but_every_heading():
+    from app.preprocess.goldenset import compact_document_for_questions
+
+    document = "# A\n" + "".join(f"a{n:03d} " for n in range(100)) + "\n# B\n" + "".join(f"b{n:03d} " for n in range(100))
+
+    first = compact_document_for_questions(document, max_chars=200)
+    second = compact_document_for_questions(document, max_chars=200, window=1)
+
+    assert first != second
+    assert "a000" in first and "a000" not in second
+    assert "# A" in second and "# B" in second
+    assert len(second) <= 200
+
+
+def test_asking_for_many_questions_makes_batches_of_at_most_ten_each_over_its_own_window(monkeypatch):
+    from app.preprocess.goldenset import generate_goldenset
+
+    model = PromptAwareModel(lambda call, i: f"batch {call} question {i}?")
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    result = generate_goldenset(LONG_DOCUMENT, "doc_raw.md", question_count=25, question_context_chars=150)
+
+    assert len(model.question_prompts) == 3 and len(model.answer_prompts) == 3
+    views = [prompt.split("<document>")[1] for prompt in model.question_prompts]
+    assert len(set(views)) == 3, "each batch must be shown a different window of the document"
+    assert [q["id"] for q in result["questions"]] == [f"q{i:03d}" for i in range(1, 26)]
+    assert all(q["answerable"] for q in result["questions"])
+
+
+def test_a_question_repeated_by_another_batch_is_dropped_with_a_warning_and_ids_stay_contiguous(monkeypatch):
+    from app.preprocess.goldenset import generate_goldenset
+
+    model = PromptAwareModel(lambda call, i: f"same question {i}?")  # every batch asks the same ones
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    result = generate_goldenset(LONG_DOCUMENT, "doc_raw.md", question_count=12, question_context_chars=150)
+
+    assert len(result["questions"]) == 6
+    assert [q["id"] for q in result["questions"]] == [f"q{i:03d}" for i in range(1, 7)]
+    assert sum("duplicate" in w for w in result["warnings"]) == 6
+
+
+def test_a_small_request_is_still_one_question_call_and_one_answer_call(monkeypatch):
+    from app.preprocess.goldenset import generate_goldenset
+
+    model = PromptAwareModel(lambda call, i: f"question {i}?")
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    generate_goldenset(LONG_DOCUMENT, "doc_raw.md", question_count=10, question_context_chars=150)
+
+    assert (len(model.question_prompts), len(model.answer_prompts)) == (1, 1)
+
+
+def test_saving_a_golden_set_over_an_existing_one_keeps_the_old_one(monkeypatch):
+    from app.preprocess.goldenset import load_goldenset, save_goldenset
+    from app.utils.paths import document_dir_for
+
+    write_document()
+    save_goldenset("doc_raw", {"questions": [{"id": "q001"}], "warnings": []})
+    save_goldenset("doc_raw", {"questions": [{"id": "q001"}, {"id": "q002"}], "warnings": []})
+
+    assert len(load_goldenset("doc_raw")["questions"]) == 2
+    archived = sorted(document_dir_for("doc_raw").glob("goldenset.*.json"))
+    assert len(archived) == 1
+    assert len(json.loads(archived[0].read_text())["questions"]) == 1
+
+
+def test_saving_the_same_golden_set_again_archives_nothing():
+    from app.preprocess.goldenset import save_goldenset
+    from app.utils.paths import document_dir_for
+
+    write_document()
+    report = {"questions": [{"id": "q001"}], "warnings": []}
+    save_goldenset("doc_raw", report)
+    save_goldenset("doc_raw", report)
+
+    assert list(document_dir_for("doc_raw").glob("goldenset.*.json")) == []

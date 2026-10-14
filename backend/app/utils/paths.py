@@ -87,6 +87,11 @@ def goldenset_path_for(stem: str) -> Path:
     return document_dir_for(stem) / "goldenset.json"
 
 
+def goldenset_archive_path_for(stem: str, stamp: str) -> Path:
+    """A golden set replaced by a newer one, kept beside it under the time it was replaced."""
+    return document_dir_for(stem) / f"goldenset.{stamp}.json"
+
+
 def goldenset_answers_path_for(stem: str) -> Path:
     return document_dir_for(stem) / "goldenset_answers.json"
 
