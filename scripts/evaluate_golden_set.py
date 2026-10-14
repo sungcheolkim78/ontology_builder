@@ -6,7 +6,7 @@ that answers it -- and if not, was the passage never extracted, or extracted but
 not retrieved?
 
     ONTOLOGY_DATA_DIR=/path/to/a/COPY/of/backend/data \\
-        scripts/evaluate_golden_set.py "<document stem>" [--generate 50 [--context-chars 60000]] [--version 3] [--hops 1] [--probe-misses] [--json]
+        scripts/evaluate_golden_set.py "<document stem>" [--generate 50 [--context-chars 60000]] [--version 3] [--hops 1] [--probe-misses [group|chunk]] [--json]
 
 ONTOLOGY_DATA_DIR is required and there is no default, on purpose: this opens the
 graph database and, with --generate, writes goldenset.json, so pointing it at the
@@ -75,21 +75,38 @@ def print_report(report: dict) -> None:
             print(f"  {question_type:12} {entry['hits']}/{entry['scored']} hit")
     else:
         print("nothing could be scored")
-    print("\nper question:")
+    semantic = summary.get("semantic")
+    if semantic:
+        print(
+            f"\nsemantic reading (a node or edge within cosine {semantic['threshold']} of the passage counts as citing it):"
+        )
+        print("outcomes:", ", ".join(f"{name}={count}" for name, count in semantic["outcomes"].items()))
+        if semantic["scored"]:
+            print(
+                f"hit rate {semantic['hit_rate']:.0%} (strict {summary['hit_rate']:.0%}), "
+                f"mean evidence recall {semantic['mean_recall']:.0%} (strict {summary['mean_recall']:.0%})"
+            )
+    print("\nper question:" + ("   strict  |  semantic" if semantic else ""))
     for question in report["questions"]:
         recall = "-" if question["recall"] is None else f"{question['recall']:.2f}"
-        print(f"  {question['id']}  {question['outcome']:16} recall={recall}")
+        line = f"  {question['id']}  {question['outcome']:16} recall={recall}"
+        if "semantic" in question:
+            other = question["semantic"]
+            line += f"  |  {other['outcome']:16} recall={'-' if other['recall'] is None else format(other['recall'], '.2f')}"
+        print(line)
 
 
 def print_probe(probe: dict) -> None:
     summary = probe["summary"]
     print(
-        f"\nre-extraction of the groups behind {summary['probed']} extraction miss(es) "
-        f"({summary['llm_calls']} LLM call(s)): {summary['recovered']} recovered, "
-        f"{summary['still_missed']} still missed, {summary['not_locatable']} not locatable"
+        f"\nre-extraction, by {probe['granularity']}, of the text behind {summary['probed']} extraction miss(es) "
+        f"({summary['llm_calls']} LLM call(s)): {summary['recovered']} recovered (a new node quotes the passage), "
+        f"{summary['still_missed']} still missed, {summary['not_locatable']} not locatable; "
+        f"{summary['semantic_recovered']} have a new node or edge that says it (semantic)"
     )
     for question in probe["questions"]:
-        print(f"  {question['id']}  {question['outcome']:14} groups={question['groups']}")
+        said = "says it" if question["semantic"] else "-"
+        print(f"  {question['id']}  {question['outcome']:14} {said:8} {probe['granularity']}s={question['groups']}")
 
 
 def main() -> int:
@@ -103,9 +120,17 @@ def main() -> int:
     parser.add_argument("--version", type=int, help="schema version to score (default: the active one)")
     parser.add_argument("--hops", type=int, default=1, help="graph expansion hops, as in chat (default 1)")
     parser.add_argument(
+        "--semantic-threshold", type=float, default=None, metavar="COSINE",
+        help="cosine similarity at which a node or edge counts as citing a passage it does not quote "
+        "(default 0.75; 0 or less turns the semantic reading off)",
+    )
+    parser.add_argument(
         "--probe-misses",
-        action="store_true",
-        help="re-extract the chunk groups behind the extraction misses and report which passages come back",
+        choices=["group", "chunk"],
+        nargs="?",
+        const="group",
+        help="re-extract the text behind the extraction misses -- the chunk group (default) or only the "
+        "chunk(s) quoting the passage -- and report which passages come back",
     )
     parser.add_argument(
         "--save-dir", metavar="DIR",
@@ -137,12 +162,15 @@ def main() -> int:
         save_goldenset(args.stem, report)
         print(f"generated {len(report['questions'])} golden questions", file=sys.stderr)
 
-    report = score_golden_set(args.stem, version=args.version, hops=args.hops)
+    threshold = {} if args.semantic_threshold is None else {
+        "semantic_threshold": args.semantic_threshold if args.semantic_threshold > 0 else None
+    }
+    report = score_golden_set(args.stem, version=args.version, hops=args.hops, **threshold)
     probe = None
     if args.probe_misses:
         from app.ontology.reextraction_probe import probe_extraction_misses
 
-        probe = probe_extraction_misses(args.stem, report)
+        probe = probe_extraction_misses(args.stem, report, granularity=args.probe_misses)
     full = {**report, "probe": probe} if probe else report
     if args.save_dir:
         save_dir = Path(args.save_dir)

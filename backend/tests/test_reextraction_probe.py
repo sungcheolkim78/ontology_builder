@@ -78,7 +78,9 @@ def test_a_missed_passage_that_a_second_extraction_cites_is_recovered(monkeypatc
     result = probe_extraction_misses(STEM, _report(q001="extraction_miss"))
 
     assert [(q["id"], q["outcome"]) for q in result["questions"]] == [("q001", "recovered")]
-    assert result["summary"] == {"probed": 1, "recovered": 1, "still_missed": 0, "not_locatable": 0, "llm_calls": 1}
+    assert result["summary"] == {
+        "probed": 1, "recovered": 1, "still_missed": 0, "not_locatable": 0, "semantic_recovered": 0, "llm_calls": 1,
+    }
 
 
 def test_a_missed_passage_no_node_of_the_second_extraction_cites_is_still_missed(monkeypatch):
@@ -121,3 +123,32 @@ def test_a_passage_that_is_in_no_chunk_cannot_be_probed(monkeypatch):
 
     assert [(q["id"], q["outcome"]) for q in result["questions"]] == [("q001", "not_locatable")]
     assert model.calls == []
+
+
+def test_by_chunk_only_the_chunk_holding_the_passage_is_extracted_not_its_whole_group(monkeypatch):
+    model = _setup(monkeypatch, [_graph(_person("n1", "Bob", "Bob works at Initech."))])
+    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 12_000)  # one group holds all three chunks
+
+    result = probe_extraction_misses(STEM, _report(q002="extraction_miss"), granularity="chunk")
+
+    assert len(model.calls) == 1
+    sent = str(model.calls[0])
+    assert "Bob works at Initech." in sent and "Alice works at Acme." not in sent
+    assert [(q["id"], q["outcome"]) for q in result["questions"]] == [("q002", "recovered")]
+    assert result["granularity"] == "chunk"
+
+
+def test_a_node_that_says_the_passage_without_quoting_it_is_a_semantic_recovery(monkeypatch):
+    class Embeddings:
+        def embed_documents(self, texts):
+            vectors = {"Alice works at Acme.": [1.0, 0.0], "Alice: works at Acme": [0.9, 0.1]}
+            return [vectors.get(text, [0.0, 1.0]) for text in texts]
+
+    _setup(monkeypatch, [json.dumps({"nodes": [{"id": "n1", "label": "Alice", "type": "Person", "detail": "works at Acme"}], "edges": []})])
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: Embeddings())
+
+    result = probe_extraction_misses(STEM, _report(q001="extraction_miss"))
+
+    assert result["questions"][0]["outcome"] == "still_missed"  # no quoted evidence
+    assert result["questions"][0]["semantic"] is True
+    assert result["summary"]["semantic_recovered"] == 1

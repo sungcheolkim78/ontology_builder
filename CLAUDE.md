@@ -322,7 +322,14 @@ read and written:
   golden question through `search_graph` and classes it a hit, a retrieval miss (the
   graph cites the passage but the search did not return it) or an extraction miss (no
   node cites it), matching nodes to golden evidence by the `evidence_text` quote rather
-  than the stored offsets. See `docs/ontology/golden_set_evaluation.md` for the method,
+  than the stored offsets. That strict reading misses a node that states a fact while
+  quoting the clause beside it, so each question and the summary also carry a
+  `semantic` reading, where a node or edge within `SEMANTIC_THRESHOLD` (cosine 0.75) of
+  the passage -- embedded on the fly, nothing stored -- counts as citing it too; the
+  two are reported side by side, never merged. `app.ontology.reextraction_probe`
+  re-extracts the text behind the extraction misses (a chunk group, or just the
+  chunk) under the same schema to tell a schema that cannot hold a fact from an
+  extraction that lost it. See `docs/ontology/golden_set_evaluation.md` for the method,
   the first measurement and moving the data between machines (`samples/schema_eval/`).
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages; nothing outside
