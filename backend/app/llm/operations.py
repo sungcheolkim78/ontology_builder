@@ -129,6 +129,9 @@ _ENTRIES = (
         "analyze_question", "analyze-question", 8_000,
         required={"node_types": list, "edge_types": list},
     ),
+    # Scoring a golden set: does the context the search returned hold what a
+    # question's reference answer rests on (app.ontology.retrieval_eval, "judge").
+    Operation("judge_answerability", "judge-answerability", 4_000, required={"answerable": bool}),
     Operation("generate_goldenset_questions", "generate-goldenset-questions", 16_000),
     Operation("generate_goldenset_answers", "generate-goldenset-answers", 40_000),
     # Prose replies: no JSON mode, no ceiling of their own, the shared "default"

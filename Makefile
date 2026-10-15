@@ -17,6 +17,8 @@ EVAL_QUESTIONS ?= 50
 EVAL_CONTEXT_CHARS ?= 40000
 EVAL_HOPS ?= 1
 GROUP_CHARS ?= 3000
+EVAL_VERSION ?=
+EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
 EVAL_ENV := ONTOLOGY_DATA_DIR="$(abspath $(EVAL_DATA_DIR))"
@@ -26,7 +28,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -75,6 +77,8 @@ help:
 	@echo "      Extract the document again at that group size under a copy of the active schema (new version)."
 	@echo "  make golden-density GROUP_CHARS=3000"
 	@echo "      eval-reextract, then score the new version's graph against the existing golden set."
+	@echo "  make golden-judge"
+	@echo "      Score the active version with every reading, including the LLM judge (EVAL_VERSION=N picks a version)."
 	@echo "  make golden-probe-chunks"
 	@echo "      Score the existing golden set, then re-extract only the chunks quoting each missed passage."
 	@echo "  make golden-eval-generate"
@@ -178,10 +182,14 @@ eval-reextract-dry: eval-check
 golden-density: eval-reextract golden-eval
 
 golden-eval: eval-check
-	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"
 
 # Re-extract only the chunk(s) quoting each missed passage (no new golden set): does extraction
 # lose facts when given a whole chunk group, rather than the schema being unable to hold them?
+# Scores with all readings including the LLM judge (one extra call per answerable question), no probe.
+golden-judge: eval-check
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) --judge --save-dir "$(EVAL_RUNS_DIR)"
+
 golden-probe-chunks: eval-check
 	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) --probe-misses chunk --save-dir "$(EVAL_RUNS_DIR)"
 

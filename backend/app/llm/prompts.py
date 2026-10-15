@@ -332,3 +332,25 @@ Document:
 {document}
 </document>
 """
+
+
+# Scores a golden question by what the chatbot would actually be shown: the same
+# context text, the question, and the reference answer with the facts it rests
+# on. The judge may use nothing else -- a fact it knows but the context lacks
+# does not make the context sufficient. Wording and particles may differ;
+# figures, units, conditions and exceptions may not.
+JUDGE_ANSWERABILITY_PROMPT = """You are checking whether a retrieved context is enough to answer a question.
+
+Question: {question}
+
+Reference answer (correct): {golden_answer}
+
+Facts the reference answer rests on:
+{answer_facts}
+
+Retrieved context (the only information available):
+{context}
+
+Decide using ONLY the retrieved context, never outside knowledge: does it state every fact the reference answer rests on, with the same meaning? Wording, word order and particles may differ; numbers, units, conditions, exceptions and list items must match. If any fact is absent, contradicted or only vaguely implied, answerable is false.
+
+Output a single JSON object, no other text: {{"answerable": true or false, "missing": [each fact the context does not state, copied from the list above]}}"""

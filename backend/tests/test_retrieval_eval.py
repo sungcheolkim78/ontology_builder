@@ -371,3 +371,151 @@ def test_switching_the_semantic_rule_off_scores_strictly_and_embeds_nothing(monk
 
     assert "semantic" not in report["questions"][0] and "semantic" not in report["summary"]
     assert model.texts == []
+
+
+# --- answer reading: does what the search returned contain the facts of the answer? ---
+
+from app.ontology.retrieval_eval import fact_in_text  # noqa: E402
+
+
+def test_a_fact_with_a_figure_needs_that_figure():
+    assert fact_in_text("140mmHg 미만", "수축기혈압 140mmHg 미만 및 이완기혈압 90mmHg 미만")
+    assert not fact_in_text("140mmHg 미만", "수축기혈압 150mmHg 미만")
+
+
+def test_a_figure_alone_is_not_enough_when_the_rest_of_the_fact_is_elsewhere():
+    assert fact_in_text("보험증권을 받은 날부터 15일 이내", "보험증권을 받은 날부터 15일 이내에 청약을 철회할 수 있습니다")
+    assert not fact_in_text("보험증권을 받은 날부터 15일 이내", "서류의 제출 기한은 15일입니다")
+
+
+def test_a_paraphrase_with_other_particles_still_counts():
+    fact = "피보험자가 심신상실 등으로 자유로운 의사결정을 할 수 없는 상태에서 자신을 해친 경우"
+    assert fact_in_text(fact, "면책의 예외: 피보험자가 심신상실 등으로 자유로운 의사결정을 할 수 없는 상태에서 자신을 해친 경우에는 지급")
+    assert not fact_in_text(fact, "피보험자가 사망한 경우 보험수익자에게 사망보험금을 지급한다")
+
+
+def test_a_short_fact_without_a_figure_must_appear_verbatim():
+    assert fact_in_text("해지", "계약이 해지됩니다")
+    assert not fact_in_text("해지", "계약이 취소됩니다")
+
+
+def _fact_question(obj):
+    question = _question("q001", QUOTE, 2)
+    question["answer_facts"] = [{"subject": "Alice", "predicate": "employer", "object": obj}]
+    return question
+
+
+def _answer_setup(monkeypatch, nodes, search_returns=None):
+    _setup(monkeypatch, [_fact_question("works at Acme in Seoul")], nodes, search_returns=search_returns)
+
+
+def test_a_retrieved_node_that_holds_the_fact_is_an_answer_hit_though_a_strict_miss(monkeypatch):
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
+
+    question = score_golden_set(STEM, hops=0, semantic_threshold=None)["questions"][0]
+
+    assert question["outcome"] == "extraction_miss"
+    assert question["answer"] == {"outcome": "hit", "recall": 1.0}
+
+
+def test_a_node_that_holds_the_fact_but_was_not_retrieved_is_an_answer_retrieval_miss(monkeypatch):
+    _answer_setup(
+        monkeypatch,
+        [_node("n1", "Alice", detail="Alice works at Acme in Seoul"), _node("n2", "Bob")],
+        search_returns={"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Bob"]}},
+    )
+
+    assert score_golden_set(STEM, hops=0, semantic_threshold=None)["questions"][0]["answer"]["outcome"] == "retrieval_miss"
+
+
+def test_no_node_holding_the_fact_is_an_answer_extraction_miss(monkeypatch):
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice likes tea")])
+
+    question = score_golden_set(STEM, hops=0, semantic_threshold=None)["questions"][0]
+
+    assert question["answer"]["outcome"] == "extraction_miss"
+
+
+def test_the_summary_reports_the_answer_reading(monkeypatch):
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
+
+    summary = score_golden_set(STEM, hops=0, semantic_threshold=None)["summary"]
+
+    assert summary["answer"]["outcomes"]["hit"] == 1 and summary["answer"]["hit_rate"] == 1.0
+
+
+# --- judge reading: an LLM says whether the retrieved context can answer the question ---
+
+
+def _judging_model(monkeypatch, verdict, analysis=None):
+    analysis = analysis or {"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Alice"]}}
+    calls = []
+
+    def get_chat_model(operation=None):
+        calls.append(operation)
+        reply = verdict if operation == "judge_answerability" else analysis
+        return FakeChatModel(json.dumps(reply))
+
+    monkeypatch.setattr("app.llm.calls.get_chat_model", get_chat_model)
+    return calls
+
+
+def test_the_judge_reading_is_off_unless_asked_for(monkeypatch):
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
+    calls = _judging_model(monkeypatch, {"answerable": True, "missing": []})
+
+    report = score_golden_set(STEM, hops=0, semantic_threshold=None)
+
+    assert "judge" not in report["questions"][0] and "judge" not in report["summary"]
+    assert "judge_answerability" not in calls
+
+
+def test_the_judge_says_whether_the_retrieved_context_can_answer_the_question(monkeypatch):
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
+    calls = _judging_model(monkeypatch, {"answerable": True, "missing": []})
+
+    report = score_golden_set(STEM, hops=0, semantic_threshold=None, judge=True)
+
+    assert report["questions"][0]["judge"] == {"answerable": True, "missing": []}
+    assert report["summary"]["judge"] == {"answerable": 1, "scored": 1, "rate": 1.0}
+    assert calls.count("judge_answerability") == 1
+
+
+def test_the_judge_is_shown_what_the_chatbot_would_be_shown_and_the_golden_answer(monkeypatch):
+    from fakes import prompt_text
+
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
+    seen = []
+
+    class Recording(FakeChatModel):
+        def invoke(self, prompt):
+            seen.append(prompt_text(prompt))
+            return super().invoke(prompt)
+
+    monkeypatch.setattr(
+        "app.llm.calls.get_chat_model",
+        lambda operation=None: Recording(json.dumps(
+            {"answerable": False, "missing": ["x"]} if operation == "judge_answerability"
+            else {"node_types": ["Person"], "edge_types": [], "keywords": {"Person": ["Alice"]}}
+        )),
+    )
+
+    score_golden_set(STEM, hops=0, semantic_threshold=None, judge=True)
+
+    judged = [text for text in seen if "Alice works at Acme in Seoul" in text and "question q001" in text]
+    assert judged, "the judge prompt holds the question and the retrieved context"
+
+
+def test_nothing_retrieved_is_not_answerable_and_costs_no_judge_call(monkeypatch):
+    _answer_setup(
+        monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")],
+        search_returns={"node_types": [], "edge_types": [], "keywords": {}},
+    )
+    calls = _judging_model(
+        monkeypatch, {"answerable": True, "missing": []}, analysis={"node_types": [], "edge_types": [], "keywords": {}}
+    )
+
+    question = score_golden_set(STEM, hops=0, semantic_threshold=None, judge=True)["questions"][0]
+
+    assert question["judge"]["answerable"] is False
+    assert "judge_answerability" not in calls

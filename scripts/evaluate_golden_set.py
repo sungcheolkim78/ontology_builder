@@ -6,7 +6,7 @@ that answers it -- and if not, was the passage never extracted, or extracted but
 not retrieved?
 
     ONTOLOGY_DATA_DIR=/path/to/a/COPY/of/backend/data \\
-        scripts/evaluate_golden_set.py "<document stem>" [--generate 50 [--context-chars 60000]] [--version 3] [--hops 1] [--probe-misses [group|chunk]] [--json]
+        scripts/evaluate_golden_set.py "<document stem>" [--generate 50 [--context-chars 60000]] [--version 3] [--hops 1] [--probe-misses [group|chunk]] [--judge] [--json]
 
 ONTOLOGY_DATA_DIR is required and there is no default, on purpose: this opens the
 graph database and, with --generate, writes goldenset.json, so pointing it at the
@@ -86,13 +86,28 @@ def print_report(report: dict) -> None:
                 f"hit rate {semantic['hit_rate']:.0%} (strict {summary['hit_rate']:.0%}), "
                 f"mean evidence recall {semantic['mean_recall']:.0%} (strict {summary['mean_recall']:.0%})"
             )
-    print("\nper question:" + ("   strict  |  semantic" if semantic else ""))
+    answer = summary.get("answer")
+    if answer and answer["scored"]:
+        print("\nanswer reading (do the nodes the search returned state the facts of the golden answer?):")
+        print("outcomes:", ", ".join(f"{name}={count}" for name, count in answer["outcomes"].items()))
+        print(f"hit rate {answer['hit_rate']:.0%}, mean fact recall {answer['mean_recall']:.0%}")
+    judge = summary.get("judge")
+    if judge and judge["scored"]:
+        print(
+            f"\njudge reading (an LLM, shown only what the chatbot would be shown): "
+            f"{judge['answerable']}/{judge['scored']} answerable ({judge['rate']:.0%})"
+        )
+    header = "   strict" + ("  |  semantic" if semantic else "") + ("  |  answer" if answer else "") + ("  |  judge" if judge else "")
+    print("\nper question:" + header)
     for question in report["questions"]:
         recall = "-" if question["recall"] is None else f"{question['recall']:.2f}"
-        line = f"  {question['id']}  {question['outcome']:16} recall={recall}"
-        if "semantic" in question:
-            other = question["semantic"]
-            line += f"  |  {other['outcome']:16} recall={'-' if other['recall'] is None else format(other['recall'], '.2f')}"
+        line = f"  {question['id']}  {question['outcome']:16} {recall:>4}"
+        for key in ("semantic", "answer"):
+            if key in question and (key != "semantic" or semantic) and (key != "answer" or answer):
+                other = question[key]
+                line += f"  |  {other['outcome']:16} {'-' if other['recall'] is None else format(other['recall'], '.2f'):>4}"
+        if "judge" in question:
+            line += f"  |  {'answerable' if question['judge']['answerable'] else 'NOT answerable'}"
         print(line)
 
 
@@ -133,6 +148,12 @@ def main() -> int:
         "chunk(s) quoting the passage -- and report which passages come back",
     )
     parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="also ask an LLM, per answerable question, whether the context the search returned can answer it "
+        "(one extra LLM call each)",
+    )
+    parser.add_argument(
         "--save-dir", metavar="DIR",
         help="also write the full report (scores, probe, the options used) to DIR/<time>.json",
     )
@@ -165,7 +186,7 @@ def main() -> int:
     threshold = {} if args.semantic_threshold is None else {
         "semantic_threshold": args.semantic_threshold if args.semantic_threshold > 0 else None
     }
-    report = score_golden_set(args.stem, version=args.version, hops=args.hops, **threshold)
+    report = score_golden_set(args.stem, version=args.version, hops=args.hops, judge=args.judge, **threshold)
     probe = None
     if args.probe_misses:
         from app.ontology.reextraction_probe import probe_extraction_misses

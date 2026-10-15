@@ -4,10 +4,12 @@ and edges that cite the passage that answers it? See CONTEXT.md ("Golden set",
 "Retrieval outcome")."""
 
 import math
+import re
 
 from app.graph import graphdb
 from app.graph.graphrag import search_graph
-from app.llm.calls import embed
+from app.llm.calls import call_json, embed
+from app.llm.prompts import JUDGE_ANSWERABILITY_PROMPT
 from app.preprocess.embeddings import node_embedding_text
 from app.preprocess.goldenset import load_goldenset
 from app.utils.paths import raw_path_for
@@ -139,6 +141,73 @@ class _SemanticIndex:
             return False
         return sum(x * y for x, y in zip(a, b)) >= self.threshold
 
+# The answer reading (see fact_in_text) -------------------------------------------
+
+_FIGURE = re.compile(r"[a-z]*\d[\d,.]*[a-z가-힣%]*")
+
+
+def _squash(text: str) -> str:
+    return "".join(text.lower().split())
+
+
+def _bigrams(text: str) -> set[str]:
+    return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+def fact_in_text(fact: str, text: str) -> bool:
+    """Whether `text` states `fact`, a value from a golden answer ("140mmHg 미만",
+    "보험증권을 받은 날부터 15일 이내"). A figure in the fact (a number with its
+    unit, a code like X57) must appear in the text. Beyond that most of the
+    fact's characters must too, judged by two-character overlap so that other
+    particles or endings do not matter: half of them when the fact has a figure
+    (a figure alone is rarely the fact), four fifths when it has none, and a fact
+    too short for that must appear verbatim. A heuristic screen, not a judgement:
+    it can pass a text that mentions the words without stating the fact, which is
+    what the judge reading is for."""
+    squashed_fact, squashed_text = _squash(fact), _squash(text)
+    figures = [_squash(f) for f in _FIGURE.findall(fact.lower())]
+    if any(f not in squashed_text for f in figures):
+        return False
+    grams = _bigrams(squashed_fact)
+    if len(grams) < 3:
+        return squashed_fact in squashed_text
+    coverage = len(grams & _bigrams(squashed_text)) / len(grams)
+    return coverage >= (0.5 if figures else 0.8)
+
+
+def _item_text(item: dict, labels: dict) -> str:
+    """What a node or edge says, as one string: a node its label and detail, an
+    edge its detail (or its two ends and its type), and either its property values."""
+    if "source" in item:
+        text = item.get("detail") or f"{labels.get(item['source'], '')} {item['type']} {labels.get(item['target'], '')}"
+    else:
+        text = node_embedding_text(item)
+    return " ".join([text, *(str(v) for v in (item.get("properties") or {}).values())])
+
+
+def _answer_facts(question: dict) -> list[str]:
+    facts = [f["object"] for f in question.get("answer_facts") or [] if f.get("object")]
+    return facts or ([question["answer"]] if question.get("answer") else [])
+
+
+def _judge(question: dict, context: str | None) -> dict:
+    """The judge reading of one question: an LLM says whether the context the
+    search returned holds what the reference answer rests on. With nothing
+    retrieved there is nothing to judge, so no call is made."""
+    if not context:
+        return {"answerable": False, "missing": _answer_facts(question)}
+    facts = "\n".join(
+        f"- {f.get('subject', '')} / {f.get('predicate', '')}: {f.get('object', '')}"
+        for f in question.get("answer_facts") or []
+    ) or f"- {question.get('answer')}"
+    reply = call_json(
+        "judge_answerability",
+        JUDGE_ANSWERABILITY_PROMPT.format(
+            question=question["question"], golden_answer=question.get("answer"), answer_facts=facts, context=context
+        ),
+    )
+    return {"answerable": bool(reply["answerable"]), "missing": reply.get("missing") or []}
+
 
 def _classify(passages, cited_by_returned, in_graph) -> dict:
     """Hit / retrieval miss / extraction miss for one question, given two
@@ -156,7 +225,11 @@ def _classify(passages, cited_by_returned, in_graph) -> dict:
 
 
 def score_golden_set(
-    stem: str, version: int | None = None, hops: int = 1, semantic_threshold: float | None = SEMANTIC_THRESHOLD
+    stem: str,
+    version: int | None = None,
+    hops: int = 1,
+    semantic_threshold: float | None = SEMANTIC_THRESHOLD,
+    judge: bool = False,
 ) -> dict:
     """Runs every answerable golden question of `stem` through search_graph
     against the graph extracted under `version` (default: the active one) and
@@ -166,6 +239,12 @@ def score_golden_set(
     and the summary also carry a "semantic" reading, where a node or edge whose
     text is within that cosine similarity of the passage counts as citing it
     too (see _SemanticIndex; costs a few embedding calls, no chat calls).
+    Every question also carries an "answer" reading, free and deterministic:
+    the same three outcomes, but asking whether the text of what the search
+    returned (and, for the retrieval/extraction split, of anything in the graph)
+    states the facts of the golden *answer* (see fact_in_text) rather than
+    citing the passage. With `judge`, an LLM is also asked per question whether
+    the context the chatbot would be shown can answer it (one call each).
     Raises ValueError if the document has no golden set, SchemaNotFound if it
     has no such schema version."""
     goldenset = load_goldenset(stem)
@@ -184,6 +263,8 @@ def score_golden_set(
         raise OntologyNotExtracted(stem)
     all_items = [*graph["nodes"], *graph["edges"]]
     in_graph = _cited_spans(raw_text, all_items)
+    labels = {node["id"]: node["label"] for node in graph["nodes"]}
+    graph_texts = [_item_text(item, labels) for item in all_items]
 
     passages_by_question = {
         question["id"]: _passages(raw_text, question["evidence"])
@@ -195,10 +276,13 @@ def score_golden_set(
         quotes = [quote for passages in passages_by_question.values() for _, quote in passages]
         index = _SemanticIndex(graph, quotes, semantic_threshold) if quotes else None
 
-    def record(question_id, strict, semantic=None):
+    def record(question_id, strict, semantic=None, answer=None, judged=None):
         entry = {"id": question_id, **strict}
         if semantic_threshold is not None:
             entry["semantic"] = semantic if semantic is not None else dict(strict)
+        entry["answer"] = answer if answer is not None else dict(strict)
+        if judged is not None:
+            entry["judge"] = judged
         return entry
 
     questions = []
@@ -228,6 +312,14 @@ def score_golden_set(
             return any(spans_overlap(passage[0], c) for c in in_graph)
 
         strict = _classify(passages, strict_cited, strict_in_graph)
+        facts = _answer_facts(question)
+        returned_texts = [_item_text(item, labels) for item in returned]
+        answer = _classify(
+            facts,
+            lambda fact: any(fact_in_text(fact, text) for text in returned_texts),
+            lambda fact: any(fact_in_text(fact, text) for text in graph_texts),
+        ) if facts else {"outcome": "unscorable", "recall": None}
+        judged = _judge(question, found["context"]) if judge else None
         semantic = None
         if index is not None:
             semantic = _classify(
@@ -235,8 +327,17 @@ def score_golden_set(
                 lambda p: strict_cited(p) or any(index.says(item, p[1]) for item in returned),
                 lambda p: strict_in_graph(p) or any(index.says(item, p[1]) for item in all_items),
             )
-        questions.append(record(question["id"], strict, semantic))
+        questions.append(record(question["id"], strict, semantic, answer, judged))
     summary = _summarize(goldenset["questions"], questions, graph, repeated_passages)
+    answer_summary = _summarize(goldenset["questions"], [q["answer"] for q in questions], graph, repeated_passages)
+    summary["answer"] = {
+        key: answer_summary[key] for key in ("outcomes", "scored", "hit_rate", "mean_recall", "by_question_type")
+    }
+    if judge:
+        judged = [q["judge"]["answerable"] for q in questions if "judge" in q]
+        summary["judge"] = {
+            "answerable": sum(judged), "scored": len(judged), "rate": sum(judged) / len(judged) if judged else None,
+        }
     if semantic_threshold is not None:
         semantic_summary = _summarize(
             goldenset["questions"], [q["semantic"] for q in questions], graph, repeated_passages

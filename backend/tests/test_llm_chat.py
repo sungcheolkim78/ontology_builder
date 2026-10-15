@@ -15,7 +15,7 @@ from app.llm.chat import (
 JSON_OPERATIONS = (
     "discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution",
     "consolidate_discovery", "consolidate_schema",
-    "analyze_question", "generate_goldenset_questions", "generate_goldenset_answers",
+    "analyze_question", "generate_goldenset_questions", "generate_goldenset_answers", "judge_answerability",
 )
 
 
@@ -151,6 +151,7 @@ def test_the_json_operations_listed_here_are_exactly_the_registry_json_operation
         ("analyze_question", 8_000),
         ("generate_goldenset_questions", 16_000),
         ("generate_goldenset_answers", 40_000),
+        ("judge_answerability", 4_000),
     ],
 )
 def test_graphrag_and_goldenset_operations_have_their_own_token_ceilings(operation, ceiling):

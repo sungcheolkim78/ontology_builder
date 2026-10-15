@@ -325,8 +325,14 @@ read and written:
   than the stored offsets. That strict reading misses a node that states a fact while
   quoting the clause beside it, so each question and the summary also carry a
   `semantic` reading, where a node or edge within `SEMANTIC_THRESHOLD` (cosine 0.75) of
-  the passage -- embedded on the fly, nothing stored -- counts as citing it too; the
-  two are reported side by side, never merged. `app.ontology.reextraction_probe`
+  the passage -- embedded on the fly, nothing stored -- counts as citing it too. A third,
+  `answer` reading asks instead whether the text of what the search returned (and of
+  anything in the graph, for the retrieval/extraction split) states the facts of the
+  golden *answer* (`fact_in_text`: figures must match, the rest by character overlap) --
+  free and deterministic, and the one closest to whether the chatbot could answer. With
+  `judge=True` an LLM (`judge_answerability`, shown the very context the chatbot would
+  get) also says per question whether it can. The readings are reported side by side,
+  never merged. `app.ontology.reextraction_probe`
   re-extracts the text behind the extraction misses (a chunk group, or just the
   chunk) under the same schema to tell a schema that cannot hold a fact from an
   extraction that lost it. See `docs/ontology/golden_set_evaluation.md` for the method,
