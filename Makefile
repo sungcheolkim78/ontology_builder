@@ -16,6 +16,7 @@ EVAL_DATA_DIR ?= backups/eval_data
 EVAL_QUESTIONS ?= 50
 EVAL_CONTEXT_CHARS ?= 40000
 EVAL_HOPS ?= 1
+GROUP_CHARS ?= 3000
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
 EVAL_ENV := ONTOLOGY_DATA_DIR="$(abspath $(EVAL_DATA_DIR))"
@@ -25,7 +26,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help eval-data eval-data-reset eval-check golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -68,6 +69,12 @@ help:
 	@echo "      Check the evaluation setup (no LLM call)."
 	@echo "  make golden-eval"
 	@echo "      Score the document's existing golden set (1 LLM call per answerable question)."
+	@echo "  make eval-reextract-dry GROUP_CHARS=3000"
+	@echo "      Report how many chunk groups (LLM calls) extraction would make at that group size."
+	@echo "  make eval-reextract GROUP_CHARS=3000"
+	@echo "      Extract the document again at that group size under a copy of the active schema (new version)."
+	@echo "  make golden-density GROUP_CHARS=3000"
+	@echo "      eval-reextract, then score the new version's graph against the existing golden set."
 	@echo "  make golden-probe-chunks"
 	@echo "      Score the existing golden set, then re-extract only the chunks quoting each missed passage."
 	@echo "  make golden-eval-generate"
@@ -159,6 +166,16 @@ eval-data-reset:
 
 eval-check: eval-data
 	@$(EVAL_ENV) $(PYTHON) scripts/check_eval_setup.py "$(EVAL_STEM)"
+
+# Does smaller chunk groups (GROUP_CHARS, default 3000) raise the score? Extracts the document again under a
+# copy of the active schema as a new version (the old version keeps its graph), in the eval copy only.
+eval-reextract: eval-check
+	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS)
+
+eval-reextract-dry: eval-check
+	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --dry-run
+
+golden-density: eval-reextract golden-eval
 
 golden-eval: eval-check
 	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"
