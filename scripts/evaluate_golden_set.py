@@ -52,9 +52,9 @@ def load_openrouter_settings() -> None:
             os.environ[key] = value.strip().strip('"').strip("'")
 
 
-def print_report(report: dict) -> None:
+def print_report(report: dict, label: str | None = None) -> None:
     summary = report["summary"]
-    print(f"\n{report['stem']}  schema v{report['version']}  hops={report['hops']}")
+    print(f"\n{report['stem']}  schema v{report['version']}  hops={report['hops']}" + (f"  [{label}]" if label else ""))
     graph = summary["graph"]
     node_share = graph["nodes_with_evidence"] / graph["nodes"] if graph["nodes"] else 0
     edge_share = graph["edges_with_evidence"] / graph["edges"] if graph["edges"] else 0
@@ -153,6 +153,7 @@ def main() -> int:
         help="also ask an LLM, per answerable question, whether the context the search returned can answer it "
         "(one extra LLM call each)",
     )
+    parser.add_argument("--label", help="a note saved with the report, e.g. the chunk-group size the graph was extracted at")
     parser.add_argument(
         "--save-dir", metavar="DIR",
         help="also write the full report (scores, probe, the options used) to DIR/<time>.json",
@@ -207,7 +208,7 @@ def main() -> int:
     if args.json:
         print(json.dumps(full, ensure_ascii=False, indent=2))
     else:
-        print_report(report)
+        print_report(report, args.label)
         if probe:
             print_probe(probe)
     return 0

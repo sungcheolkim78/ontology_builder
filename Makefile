@@ -17,6 +17,7 @@ EVAL_QUESTIONS ?= 50
 EVAL_CONTEXT_CHARS ?= 40000
 EVAL_HOPS ?= 1
 GROUP_CHARS ?= 3000
+GROUP_SIZES ?= 6000 1500
 EVAL_VERSION ?=
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
@@ -28,7 +29,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -76,7 +77,11 @@ help:
 	@echo "  make eval-reextract GROUP_CHARS=3000"
 	@echo "      Extract the document again at that group size under a copy of the active schema (new version)."
 	@echo "  make golden-density GROUP_CHARS=3000"
-	@echo "      eval-reextract, then score the new version's graph against the existing golden set."
+	@echo "      eval-reextract, then golden-score the new version (the run's report is labelled with the size)."
+	@echo "  make golden-curve GROUP_SIZES='6000 1500'"
+	@echo "      golden-density at each size in turn."
+	@echo "  make golden-score"
+	@echo "      Score the active version with every reading except the judge (no probe)."
 	@echo "  make golden-judge"
 	@echo "      Score the active version with every reading, including the LLM judge (EVAL_VERSION=N picks a version)."
 	@echo "  make golden-probe-chunks"
@@ -179,7 +184,16 @@ eval-reextract: eval-check
 eval-reextract-dry: eval-check
 	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --dry-run
 
-golden-density: eval-reextract golden-eval
+golden-density: eval-reextract
+	$(MAKE) --no-print-directory golden-score EVAL_LABEL="group_chars=$(GROUP_CHARS)"
+
+# Every reading except the LLM judge, no probe: one LLM call per answerable question (the question analysis).
+golden-score: eval-check
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) $(if $(EVAL_LABEL),--label "$(EVAL_LABEL)",) --save-dir "$(EVAL_RUNS_DIR)"
+
+# golden-density at each of GROUP_SIZES in turn (each extracts a new schema version): how the score varies with group size.
+golden-curve:
+	@for size in $(GROUP_SIZES); do $(MAKE) --no-print-directory golden-density GROUP_CHARS=$$size || exit 1; done
 
 golden-eval: eval-check
 	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"
