@@ -80,7 +80,7 @@ def test_a_missed_passage_that_a_second_extraction_cites_is_recovered(monkeypatc
     assert [(q["id"], q["outcome"]) for q in result["questions"]] == [("q001", "recovered")]
     assert result["summary"] == {
         "probed": 1, "recovered": 1, "still_missed": 0, "not_locatable": 0, "semantic_recovered": 0,
-        "answer_recovered": 0, "llm_calls": 1,
+        "answer_recovered": 1, "llm_calls": 1,
     }
 
 
@@ -177,3 +177,13 @@ def test_a_new_node_that_states_the_facts_of_the_answer_is_an_answer_recovery(mo
 
     assert result["questions"][0]["answer"] is True
     assert result["summary"]["answer_recovered"] == 1
+
+
+def test_the_probe_returns_what_it_extracted_so_a_scoring_rule_can_be_changed_without_new_calls(monkeypatch):
+    _setup(monkeypatch, [_graph(_person("n1", "Alice", "Alice works at Acme."))])
+
+    result = probe_extraction_misses(STEM, _report(q001="extraction_miss"))
+
+    extracted = result["extracted"]
+    assert list(extracted.values())[0]["nodes"][0]["label"] == "Alice"
+    assert result["questions"][0]["groups"] == [int(unit) for unit in extracted]

@@ -156,6 +156,9 @@ def probe_extraction_misses(
         "version": version,
         "granularity": granularity,
         "questions": results,
+        # what each unit's extraction returned, so a change to a scoring rule can be
+        # applied to it again without another LLM call
+        "extracted": {str(unit): graph for unit, graph in extracted.items()},
         "summary": {
             "probed": len(results),
             **counts,

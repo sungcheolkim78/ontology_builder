@@ -436,6 +436,15 @@ def test_no_node_holding_the_fact_is_an_answer_extraction_miss(monkeypatch):
     assert question["answer"]["outcome"] == "extraction_miss"
 
 
+def test_the_quoted_evidence_of_a_node_counts_as_text_the_chatbot_is_shown(monkeypatch):
+    # graphrag shows "근거: <evidence_text>" beside every node, so a fact that only the quote states is seen
+    _answer_setup(monkeypatch, [_node("n1", "Alice", detail="a summary", evidence="Alice works at Acme in Seoul.")])
+
+    question = score_golden_set(STEM, hops=0, semantic_threshold=None)["questions"][0]
+
+    assert question["answer"]["outcome"] == "hit"
+
+
 def test_the_summary_reports_the_answer_reading(monkeypatch):
     _answer_setup(monkeypatch, [_node("n1", "Alice", detail="Alice works at Acme in Seoul")])
 

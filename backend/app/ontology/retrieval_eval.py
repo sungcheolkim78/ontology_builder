@@ -177,12 +177,16 @@ def fact_in_text(fact: str, text: str) -> bool:
 
 def _item_text(item: dict, labels: dict) -> str:
     """What a node or edge says, as one string: a node its label and detail, an
-    edge its detail (or its two ends and its type), and either its property values."""
+    edge its detail (or its two ends and its type), its property values, and the
+    source wording it quotes -- graphrag shows "근거: <evidence_text>" beside every
+    node and edge, so a fact only the quote states is one the chatbot is shown."""
     if "source" in item:
         text = item.get("detail") or f"{labels.get(item['source'], '')} {item['type']} {labels.get(item['target'], '')}"
     else:
         text = node_embedding_text(item)
-    return " ".join([text, *(str(v) for v in (item.get("properties") or {}).values())])
+    return " ".join(
+        [text, *(str(v) for v in (item.get("properties") or {}).values()), item.get("evidence_text") or ""]
+    )
 
 
 def _answer_facts(question: dict) -> list[str]:
