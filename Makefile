@@ -19,6 +19,7 @@ EVAL_HOPS ?= 1
 GROUP_CHARS ?= 3000
 GROUP_SIZES ?= 6000 1500
 EVAL_VERSION ?=
+VARIANT ?= scripts/prompt_variants/extract_clause_content.txt
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
@@ -29,7 +30,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -82,6 +83,8 @@ help:
 	@echo "      golden-density at each size in turn."
 	@echo "  make golden-score"
 	@echo "      Score the active version with every reading except the judge (no probe)."
+	@echo "  make prompt-probe VARIANT=<file>"
+	@echo "      Re-extract the chunks of the never-answered golden questions with and without the variant prompt text."
 	@echo "  make golden-judge"
 	@echo "      Score the active version with every reading, including the LLM judge (EVAL_VERSION=N picks a version)."
 	@echo "  make golden-probe-chunks"
@@ -194,6 +197,11 @@ golden-score: eval-check
 # golden-density at each of GROUP_SIZES in turn (each extracts a new schema version): how the score varies with group size.
 golden-curve:
 	@for size in $(GROUP_SIZES); do $(MAKE) --no-print-directory golden-density GROUP_CHARS=$$size || exit 1; done
+
+# Try a variant of the extraction instructions on the golden passages that no extraction ever answered
+# (QUESTIONS=q016,q025,... to pick others): current prompt vs VARIANT, chunk by chunk.
+prompt-probe: eval-check
+	$(EVAL_ENV) $(PYTHON) scripts/probe_prompt_variant.py "$(EVAL_STEM)" --variant "$(VARIANT)" $(EVAL_VERSION_ARG) $(if $(QUESTIONS),--questions "$(QUESTIONS)",) --save-dir "$(EVAL_RUNS_DIR)"
 
 golden-eval: eval-check
 	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"

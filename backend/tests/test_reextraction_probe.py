@@ -20,7 +20,7 @@ SCHEMA = {"node_types": [{"name": "Person", "description": "a person"}], "edge_t
 def _question(qid, quote, line):
     return {
         "id": qid, "question": f"question {qid}", "question_type": "attribute",
-        "answerable": True, "answer": "a", "answer_facts": [],
+        "answerable": True, "answer": quote, "answer_facts": [],
         "evidence": [{"quote": quote, "line_start": line, "line_end": line}],
     }
 
@@ -79,7 +79,8 @@ def test_a_missed_passage_that_a_second_extraction_cites_is_recovered(monkeypatc
 
     assert [(q["id"], q["outcome"]) for q in result["questions"]] == [("q001", "recovered")]
     assert result["summary"] == {
-        "probed": 1, "recovered": 1, "still_missed": 0, "not_locatable": 0, "semantic_recovered": 0, "llm_calls": 1,
+        "probed": 1, "recovered": 1, "still_missed": 0, "not_locatable": 0, "semantic_recovered": 0,
+        "answer_recovered": 0, "llm_calls": 1,
     }
 
 
@@ -152,3 +153,27 @@ def test_a_node_that_says_the_passage_without_quoting_it_is_a_semantic_recovery(
     assert result["questions"][0]["outcome"] == "still_missed"  # no quoted evidence
     assert result["questions"][0]["semantic"] is True
     assert result["summary"]["semantic_recovered"] == 1
+
+
+def test_extra_instructions_reach_the_extraction_prompt_of_every_unit(monkeypatch):
+    model = _setup(monkeypatch, [_graph(_person("n1", "Alice", "Alice works at Acme."))])
+
+    probe_extraction_misses(STEM, _report(q001="extraction_miss"), extra_instructions="LIST EVERY ITEM OF A CLAUSE")
+
+    assert "LIST EVERY ITEM OF A CLAUSE" in str(model.calls[0])
+
+
+def test_a_new_node_that_states_the_facts_of_the_answer_is_an_answer_recovery(monkeypatch):
+    _setup(monkeypatch, [json.dumps({"nodes": [{"id": "n1", "label": "Alice", "type": "Person", "detail": "works at Acme in Seoul"}], "edges": []})])
+    golden = {
+        "questions": [
+            {**_question("q001", "Alice works at Acme.", 2), "answer_facts": [{"subject": "Alice", "predicate": "employer", "object": "works at Acme in Seoul"}]}
+        ],
+        "warnings": [],
+    }
+    save_goldenset(STEM, golden)
+
+    result = probe_extraction_misses(STEM, _report(q001="extraction_miss"))
+
+    assert result["questions"][0]["answer"] is True
+    assert result["summary"]["answer_recovered"] == 1

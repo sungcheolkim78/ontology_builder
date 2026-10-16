@@ -84,6 +84,18 @@ def test_extract_graph_preserves_minimal_shape_when_no_structured_metadata(monke
     assert result == graph
 
 
+def test_extra_instructions_are_appended_to_the_extraction_system_prompt(monkeypatch):
+    model = RecordingChatModel(json.dumps({"nodes": [], "edges": []}))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    extract_graph("some text", DEFAULT_SCHEMA)
+    extract_graph("some text", DEFAULT_SCHEMA, extra_instructions="LIST EVERY ITEM OF A CLAUSE")
+
+    assert "LIST EVERY ITEM OF A CLAUSE" not in prompt_text(model.prompts[0])
+    assert "LIST EVERY ITEM OF A CLAUSE" in prompt_text(model.prompts[1])
+    assert "Using this ontology schema" in prompt_text(model.prompts[1])
+
+
 def test_extract_graph_raises_when_nodes_edges_missing(monkeypatch):
     schema = {"node_types": [], "edge_types": []}
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps({})))

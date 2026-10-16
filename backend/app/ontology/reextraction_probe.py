@@ -15,12 +15,26 @@ from app.utils.paths import raw_path_for
 from .chunk_groups import _group_document_text, extract_group_chars, group_chunks_by_budget, map_concurrently
 from .extract_graph import extract_graph
 from .persistence import SchemaNotFound, load_schema
-from .retrieval_eval import SEMANTIC_THRESHOLD, _cited_spans, _SemanticIndex, evidence_spans, spans_overlap
+from .retrieval_eval import (
+    HIT_RECALL,
+    SEMANTIC_THRESHOLD,
+    _answer_facts,
+    _cited_spans,
+    _item_text,
+    _SemanticIndex,
+    evidence_spans,
+    fact_in_text,
+    spans_overlap,
+)
 from .utils import _load_chunk_items
 
 
 def probe_extraction_misses(
-    stem: str, report: dict, granularity: str = "group", semantic_threshold: float | None = SEMANTIC_THRESHOLD
+    stem: str,
+    report: dict,
+    granularity: str = "group",
+    semantic_threshold: float | None = SEMANTIC_THRESHOLD,
+    extra_instructions: str | None = None,
 ) -> dict:
     """For every `extraction_miss` in `report` (a score_golden_set report),
     extracts again each chunk group whose text quotes one of the question's
@@ -37,7 +51,10 @@ def probe_extraction_misses(
     hold them. Besides `recovered` (a new node or edge quotes the passage, the
     strict reading), each question says whether any new node or edge is within
     `semantic_threshold` cosine of the passage (see retrieval_eval._SemanticIndex);
-    None skips that reading."""
+    None skips that reading, and `answer` says whether the new nodes and edges
+    state the facts of the golden answer (retrieval_eval.fact_in_text).
+    `extra_instructions` is appended to the extraction prompt, to try a variant
+    of it on exactly the passages that were missed."""
     if granularity not in ("group", "chunk"):
         raise ValueError(f"granularity must be 'group' or 'chunk', not {granularity!r}")
     version = report["version"]
@@ -73,7 +90,9 @@ def probe_extraction_misses(
     wanted_groups = sorted({index for indices in groups_by_question.values() for index in indices})
     extracted = {}
     if wanted_groups:  # map_concurrently needs at least one item
-        graphs = map_concurrently(lambda index: extract_graph(group_texts[index], schema), wanted_groups)
+        graphs = map_concurrently(
+            lambda index: extract_graph(group_texts[index], schema, extra_instructions), wanted_groups
+        )
         extracted = dict(zip(wanted_groups, graphs))
 
     index = None
@@ -92,7 +111,7 @@ def probe_extraction_misses(
     for qid in missed:
         indices = groups_by_question[qid]
         if not indices:
-            results.append({"id": qid, "outcome": "not_locatable", "semantic": False, "groups": []})
+            results.append({"id": qid, "outcome": "not_locatable", "semantic": False, "answer": False, "groups": []})
             continue
         wanted = evidence_spans(raw_text, questions_by_id[qid]["evidence"])
         cited = [
@@ -114,8 +133,21 @@ def probe_extraction_misses(
                 for evidence in questions_by_id[qid]["evidence"]
                 if evidence.get("quote")
             )
+        facts = _answer_facts(questions_by_id[qid])
+        texts = [
+            _item_text(item, {n["id"]: n["label"] for n in extracted[unit]["nodes"]})
+            for unit in indices
+            for item in [*extracted[unit]["nodes"], *extracted[unit]["edges"]]
+        ]
+        stated = sum(1 for fact in facts if any(fact_in_text(fact, text) for text in texts))
         results.append(
-            {"id": qid, "outcome": "recovered" if recovered else "still_missed", "semantic": said, "groups": indices}
+            {
+                "id": qid,
+                "outcome": "recovered" if recovered else "still_missed",
+                "semantic": said,
+                "answer": bool(facts) and stated / len(facts) >= HIT_RECALL,
+                "groups": indices,
+            }
         )
 
     counts = {name: sum(1 for r in results if r["outcome"] == name) for name in ("recovered", "still_missed", "not_locatable")}
@@ -128,6 +160,7 @@ def probe_extraction_misses(
             "probed": len(results),
             **counts,
             "semantic_recovered": sum(1 for r in results if r["semantic"]),
+            "answer_recovered": sum(1 for r in results if r["answer"]),
             "llm_calls": len(wanted_groups),
         },
     }

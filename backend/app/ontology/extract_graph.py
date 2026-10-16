@@ -124,7 +124,10 @@ def _normalize_extracted_item(
     return normalized
 
 
-def extract_graph(document_text: str, schema: dict) -> dict:
+def extract_graph(document_text: str, schema: dict, extra_instructions: str | None = None) -> dict:
+    """`extra_instructions` is appended to the system prompt: for trying a variant
+    of the extraction instructions without editing EXTRACT_PROMPT (see
+    reextraction_probe); the stages themselves never pass it."""
     normalized_schema = normalize_schema(schema)
     # The schema, not just the instructions, goes into the system message --
     # it's identical across every group of one extract_for_document
@@ -132,6 +135,8 @@ def extract_graph(document_text: str, schema: dict) -> dict:
     # keeps that whole message byte-identical across the call's groups (see
     # EXTRACT_PROMPT's own comment in prompts.py).
     system_prompt = EXTRACT_PROMPT.format(schema=json.dumps(normalized_schema))
+    if extra_instructions:
+        system_prompt += "\n\n" + extra_instructions
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
     graph = call_json("extract_graph", messages)
 
