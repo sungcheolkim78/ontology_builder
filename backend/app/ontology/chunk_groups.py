@@ -39,10 +39,11 @@ MAX_CHUNK_GROUP_CHARS = int(os.environ.get("MAX_CHUNK_GROUP_CHARS", 12_000))
 # gains little from more, smaller groups (each costs a call and has to be
 # consolidated), while extraction loses facts when handed a lot of text at once --
 # measured on one document, shrinking its groups from 12,000 to 3,000 characters
-# took the share of golden questions its graph could answer from 34% to 61%, and
-# 1,500 added almost nothing (docs/ontology/golden_set_evaluation.md). Read
+# took the share of golden questions its graph could answer from 34% to 61-66%
+# (two runs), and 1,500 added nothing beyond that run-to-run noise
+# (docs/ontology/golden_set_evaluation.md). Read
 # through extract_group_chars() so a change at run time (a test, a script) is seen.
-EXTRACT_GROUP_CHARS = int(os.environ.get("EXTRACT_GROUP_CHARS", 12_000))
+EXTRACT_GROUP_CHARS = int(os.environ.get("EXTRACT_GROUP_CHARS", 3_000))
 
 
 def extract_group_chars() -> int:
