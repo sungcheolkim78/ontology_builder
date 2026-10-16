@@ -34,6 +34,20 @@ logger = logging.getLogger(__name__)
 # docstring for what exactly gets consolidated/merged and how.
 MAX_CHUNK_GROUP_CHARS = int(os.environ.get("MAX_CHUNK_GROUP_CHARS", 12_000))
 
+# The extract stage's own group budget, kept apart from the one above because the
+# two stages want different things: a schema or a discovery report is small and
+# gains little from more, smaller groups (each costs a call and has to be
+# consolidated), while extraction loses facts when handed a lot of text at once --
+# measured on one document, shrinking its groups from 12,000 to 3,000 characters
+# took the share of golden questions its graph could answer from 34% to 61%, and
+# 1,500 added almost nothing (docs/ontology/golden_set_evaluation.md). Read
+# through extract_group_chars() so a change at run time (a test, a script) is seen.
+EXTRACT_GROUP_CHARS = int(os.environ.get("EXTRACT_GROUP_CHARS", 12_000))
+
+
+def extract_group_chars() -> int:
+    return EXTRACT_GROUP_CHARS
+
 
 def group_chunks_by_budget(
     chunk_items: list[dict], max_group_chars: int | None = None

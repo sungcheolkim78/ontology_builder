@@ -194,7 +194,7 @@ the one module behind which all three run their per-chunk-group map step:
 `run_chunk_groups(stem=, stage=, operation=, group_fn=, reduce_fn=,
 fingerprint_inputs=, max_chars=, reduce_stage=, summarize=)` loads the
 document itself (its `chunks.json`, or with none its whole `raw.md` as a
-single chunk group) and owns grouping by `MAX_CHUNK_GROUP_CHARS`, concurrent
+single chunk group) and owns grouping by `MAX_CHUNK_GROUP_CHARS` (the extract stage has its own budget, `EXTRACT_GROUP_CHARS`, read through `extract_group_chars()`), concurrent
 execution (`map_concurrently`, capped by `MAX_CONCURRENT_LLM_CALLS`), the
 one-group shortcut that skips `reduce_fn`, the progress file the frontend
 polls (`ChunkProgress`/`load_progress`), and a *resume cache* at

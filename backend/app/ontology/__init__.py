@@ -77,9 +77,11 @@ from .persistence import (
     versions_path,
 )
 from .chunk_groups import (
+    EXTRACT_GROUP_CHARS,
     MAX_CHUNK_GROUP_CHARS,
     ChunkProgress,
     _group_document_text,
+    extract_group_chars,
     group_chunks_by_budget,
     load_progress,
     map_concurrently,

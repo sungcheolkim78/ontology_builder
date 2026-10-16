@@ -16,7 +16,7 @@ from app.llm.prompts import EXTRACT_PROMPT
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema, save_graph
 from .schema_validation import normalize_schema
-from .chunk_groups import run_chunk_groups
+from .chunk_groups import extract_group_chars, run_chunk_groups
 from .utils import (
     _dedupe_by_key,
     _require_document_text,
@@ -255,6 +255,7 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
         operation="extract_graph",
         stem=stem,
         fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT},
+        max_group_chars=extract_group_chars(),
         group_fn=lambda group_text: extract_graph(group_text, schema),
         reduce_fn=_merge_group_graphs,
         reduce_stage="merge",

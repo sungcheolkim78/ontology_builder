@@ -9,7 +9,7 @@ missed passages from a whole chunk group but 47% from the chunk alone).
         scripts/reextract_for_eval.py "<document stem>" --group-chars 3000 [--from-version 3] [--dry-run]
 
 The active schema (or --from-version) is copied as a NEW schema version and the
-document is extracted under it with MAX_CHUNK_GROUP_CHARS=--group-chars, so the
+document is extracted under it with EXTRACT_GROUP_CHARS=--group-chars, so the
 graph of the version it was copied from is left as it was and both can be scored
 (scripts/evaluate_golden_set.py scores the active version; --version picks one).
 --dry-run only reports how many chunk groups, hence LLM calls, the run would make.
@@ -32,7 +32,7 @@ sys.path.insert(0, str(SCRIPTS))
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("stem", help="the document's stem (its folder name under documents/)")
-    parser.add_argument("--group-chars", type=int, required=True, metavar="N", help="MAX_CHUNK_GROUP_CHARS for this run")
+    parser.add_argument("--group-chars", type=int, required=True, metavar="N", help="EXTRACT_GROUP_CHARS for this run")
     parser.add_argument("--from-version", type=int, help="schema version to copy (default: the active one)")
     parser.add_argument("--dry-run", action="store_true", help="only report the number of chunk groups")
     args = parser.parse_args()
@@ -44,7 +44,7 @@ def main() -> int:
     if Path(data_dir).resolve() == (BACKEND / "data").resolve():
         print("ONTOLOGY_DATA_DIR is the live backend/data; use a copy (make eval-data).", file=sys.stderr)
         return 2
-    os.environ["MAX_CHUNK_GROUP_CHARS"] = str(args.group_chars)  # read when chunk_groups is imported
+    os.environ["EXTRACT_GROUP_CHARS"] = str(args.group_chars)  # read when chunk_groups is imported
 
     from evaluate_golden_set import load_openrouter_settings
 

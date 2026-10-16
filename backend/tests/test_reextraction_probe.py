@@ -62,7 +62,7 @@ def _setup(monkeypatch, replies):
         },
     )
     persistence.create_schema_version(STEM, SCHEMA)
-    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 25)
+    monkeypatch.setattr("app.ontology.chunk_groups.EXTRACT_GROUP_CHARS", 25)
     model = LoggingSequencedChatModel(replies)
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
     return model
@@ -103,7 +103,7 @@ def test_only_the_chunk_groups_holding_a_missed_passage_are_extracted(monkeypatc
 
 def test_two_missed_passages_in_one_group_cost_one_extraction(monkeypatch):
     model = _setup(monkeypatch, [_graph(_person("n1", "Alice", "Alice works at Acme."))])
-    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 12_000)  # one group holds everything
+    monkeypatch.setattr("app.ontology.chunk_groups.EXTRACT_GROUP_CHARS", 12_000)  # one group holds everything
 
     result = probe_extraction_misses(STEM, _report(q001="extraction_miss", q002="extraction_miss"))
 
@@ -127,7 +127,7 @@ def test_a_passage_that_is_in_no_chunk_cannot_be_probed(monkeypatch):
 
 def test_by_chunk_only_the_chunk_holding_the_passage_is_extracted_not_its_whole_group(monkeypatch):
     model = _setup(monkeypatch, [_graph(_person("n1", "Bob", "Bob works at Initech."))])
-    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 12_000)  # one group holds all three chunks
+    monkeypatch.setattr("app.ontology.chunk_groups.EXTRACT_GROUP_CHARS", 12_000)  # one group holds all three chunks
 
     result = probe_extraction_misses(STEM, _report(q002="extraction_miss"), granularity="chunk")
 

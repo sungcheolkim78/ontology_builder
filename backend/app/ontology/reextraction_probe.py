@@ -12,7 +12,7 @@ move the extraction misses at all, before any candidate schema is built."""
 from app.preprocess.goldenset import load_goldenset
 from app.utils.paths import raw_path_for
 
-from .chunk_groups import _group_document_text, group_chunks_by_budget, map_concurrently
+from .chunk_groups import _group_document_text, extract_group_chars, group_chunks_by_budget, map_concurrently
 from .extract_graph import extract_graph
 from .persistence import SchemaNotFound, load_schema
 from .retrieval_eval import SEMANTIC_THRESHOLD, _cited_spans, _SemanticIndex, evidence_spans, spans_overlap
@@ -53,7 +53,10 @@ def probe_extraction_misses(
 
     chunk_items = _load_chunk_items(stem) or [{"text": raw_text}]
     if granularity == "group":
-        group_texts = [_group_document_text(group) for group in group_chunks_by_budget(chunk_items)]
+        group_texts = [
+            _group_document_text(group)
+            for group in group_chunks_by_budget(chunk_items, max_group_chars=extract_group_chars())
+        ]
     else:
         group_texts = [_group_document_text([item]) for item in chunk_items]
 

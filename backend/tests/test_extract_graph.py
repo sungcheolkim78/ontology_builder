@@ -236,7 +236,7 @@ def test_extract_graph_keeps_source_section_only_when_it_matches_a_real_label(mo
 @pytest.fixture
 def thirty_char_groups(monkeypatch):
     """Makes two 30-character chunks fall into two chunk groups."""
-    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 30)
+    monkeypatch.setattr("app.ontology.chunk_groups.EXTRACT_GROUP_CHARS", 30)
 
 
 def _use_schema(schema, stem="doc_raw"):
@@ -283,6 +283,36 @@ def test_extract_for_document_merges_coreferent_nodes_across_chunk_groups(monkey
     assert labels == {("Person", "Alice"), ("Org", "Acme"), ("Person", "Bob")}
     assert len(result["nodes"]) == 3  # Alice/Acme deduped, not double-counted
     assert len(result["edges"]) == 2  # duplicate Alice->Acme edge collapses; Bob->Acme survives
+
+
+def test_extraction_is_grouped_by_its_own_budget_not_the_schema_stage_one(monkeypatch):
+    # MAX_CHUNK_GROUP_CHARS is the discover/schema budget; at 30 it would split these two
+    # 30-character chunks into two groups. Extraction has its own (EXTRACT_GROUP_CHARS).
+    monkeypatch.setattr("app.ontology.chunk_groups.MAX_CHUNK_GROUP_CHARS", 30)
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    fake_model = SequencedChatModel([json.dumps(graph)])  # a second group's call would find no reply
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema({"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []})
+
+    extract_for_document("doc_raw")
+
+    assert fake_model.calls == 1
+
+
+def test_the_extraction_budget_is_what_splits_a_chunked_document_for_extraction(monkeypatch):
+    monkeypatch.setattr("app.ontology.chunk_groups.EXTRACT_GROUP_CHARS", 30)
+    graph = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []}
+    fake_model = SequencedChatModel([json.dumps(graph), json.dumps(graph)])
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: fake_model)
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema({"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []})
+
+    extract_for_document("doc_raw")
+
+    assert fake_model.calls == 2
 
 
 # --- extract_for_document seam -----------------------------------------------
