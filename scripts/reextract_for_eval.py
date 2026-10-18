@@ -35,6 +35,7 @@ def main() -> int:
     parser.add_argument("--group-chars", type=int, required=True, metavar="N", help="EXTRACT_GROUP_CHARS for this run")
     parser.add_argument("--from-version", type=int, help="schema version to copy (default: the active one)")
     parser.add_argument("--dry-run", action="store_true", help="only report the number of chunk groups")
+    parser.add_argument("--save-dir", metavar="DIR", help="also write a record of the run (time, model, LLM calls) there")
     args = parser.parse_args()
 
     data_dir = os.environ.get("ONTOLOGY_DATA_DIR")
@@ -73,8 +74,16 @@ def main() -> int:
     version = create_schema_version(args.stem, schema, document_type=document_type)
     print(f"copied schema v{source} as v{version}; extracting ({len(groups)} LLM calls)...")
 
+    from run_record import RunRecord
+
     started = time.time()
-    _, graph, _ = extract_for_document(args.stem)
+    with RunRecord(
+        "reextract_for_eval", save_dir=args.save_dir, stem=args.stem, group_chars=args.group_chars,
+        copied_from_version=source, new_version=version, chunk_groups=len(groups),
+    ) as rec:
+        with rec.phase("extract"):
+            _, graph, _ = extract_for_document(args.stem)
+        rec.meta["nodes"], rec.meta["edges"] = len(graph["nodes"]), len(graph["edges"])
     print(
         f"done in {time.time() - started:.0f}s: v{version} has {len(graph['nodes'])} nodes, {len(graph['edges'])} edges "
         f"({sum(1 for n in graph['nodes'] if n.get('evidence_text'))} nodes cite a passage). "

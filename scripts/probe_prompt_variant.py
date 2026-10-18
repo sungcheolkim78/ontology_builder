@@ -66,12 +66,17 @@ def main() -> int:
         return 2
     report = {"version": version, "questions": [{"id": i, "outcome": "extraction_miss"} for i in ids]}
 
+    from run_record import RunRecord
+
     arms = {}
-    for name, extra in (("current prompt", None), ("variant", variant)):
-        print(f"extracting with the {name}...", file=sys.stderr)
-        arms[name] = probe_extraction_misses(
-            args.stem, report, granularity=args.granularity, extra_instructions=extra
-        )
+    with RunRecord("probe_prompt_variant", stem=args.stem, variant=args.variant, version=version) as rec:
+        for name, extra in (("current prompt", None), ("variant", variant)):
+            print(f"extracting with the {name}...", file=sys.stderr)
+            with rec.phase(name):
+                arms[name] = probe_extraction_misses(
+                    args.stem, report, granularity=args.granularity, extra_instructions=extra
+                )
+        run = rec.snapshot()
 
     base, new = (arms["current prompt"], arms["variant"])
     print(f"\n{args.stem}  schema v{version}  by {args.granularity}   (answer = the new nodes state the golden answer's facts)")
@@ -87,7 +92,7 @@ def main() -> int:
         save_dir = Path(args.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
         saved = save_dir / f"prompt_variant_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        saved.write_text(json.dumps({"options": vars(args), "variant": variant, **arms}, ensure_ascii=False, indent=2))
+        saved.write_text(json.dumps({"options": vars(args), "variant": variant, "run": run, **arms}, ensure_ascii=False, indent=2))
         print(f"\nsaved to {saved}", file=sys.stderr)
     return 0
 

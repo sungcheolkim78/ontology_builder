@@ -337,6 +337,10 @@ read and written:
   chunk) under the same schema to tell a schema that cannot hold a fact from an
   extraction that lost it. See `docs/ontology/golden_set_evaluation.md` for the method,
   the first measurement and moving the data between machines (`samples/schema_eval/`).
+- `call_log.py` (`app/llm/call_log.py`) — `with CallLog() as log:` records the model, duration and
+  token use of every call made through `app.llm.calls` inside the block, by swapping its two
+  telemetry wrappers for timing ones and restoring them on exit; nothing in the server uses it, the
+  evaluation scripts do (`scripts/run_record.py` adds phases, git commit and cost-relevant settings).
 - `chat.py` (`app/llm/chat.py`) — builds the `ChatOpenAI` client (OpenRouter) and converts
   `{role, content}` dicts to langchain messages; nothing outside
   `app.llm.calls` builds or invokes a chat model directly.

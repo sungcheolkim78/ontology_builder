@@ -28,6 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("stem")
     parser.add_argument("--document-type", choices=["legal", "general"], default="legal")
+    parser.add_argument("--save-dir", metavar="DIR", help="also write a record of the run (time, model, LLM calls) there")
     args = parser.parse_args()
 
     data_dir = os.environ.get("ONTOLOGY_DATA_DIR")
@@ -50,8 +51,13 @@ def main() -> int:
     if chunks is not None:
         groups = len(group_chunks_by_budget(chunks))
         print(f"{len(chunks)} chunks -> {groups} chunk groups: about {groups + 1} LLM calls (one per group, plus consolidation)")
+    from run_record import RunRecord
+
     started = time.time()
-    schema, version = schema_for_document(args.stem, document_type=args.document_type)
+    with RunRecord("generate_schema_for_eval", save_dir=args.save_dir, stem=args.stem, document_type=args.document_type) as rec:
+        with rec.phase("schema"):
+            schema, version = schema_for_document(args.stem, document_type=args.document_type)
+        rec.meta.update(version=version, node_types=len(schema["node_types"]), edge_types=len(schema["edge_types"]))
     print(
         f"done in {time.time() - started:.0f}s: schema v{version} with {len(schema['node_types'])} node types "
         f"and {len(schema['edge_types'])} edge types"

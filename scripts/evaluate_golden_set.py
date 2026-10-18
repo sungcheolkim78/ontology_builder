@@ -178,28 +178,38 @@ def main() -> int:
     from app.preprocess.goldenset import DEFAULT_CONTEXT_CHARS, generate_goldenset, save_goldenset
     from app.utils.paths import raw_path_for
 
-    if args.generate:
-        report = generate_goldenset(
-            raw_path_for(args.stem).read_text(),
-            source_name=f"{args.stem}.md",
-            question_count=args.generate,
-            question_context_chars=args.context_chars or DEFAULT_CONTEXT_CHARS,
-        )
-        save_goldenset(args.stem, report)
-        print(f"generated {len(report['questions'])} golden questions", file=sys.stderr)
-        if args.generate_only:
-            print(f"warnings: {len(report['warnings'])}; answerable: {sum(q['answerable'] for q in report['questions'])}")
-            return 0
+    from run_record import RunRecord
 
-    threshold = {} if args.semantic_threshold is None else {
-        "semantic_threshold": args.semantic_threshold if args.semantic_threshold > 0 else None
-    }
-    report = score_golden_set(args.stem, version=args.version, hops=args.hops, judge=args.judge, **threshold)
-    probe = None
-    if args.probe_misses:
-        from app.ontology.reextraction_probe import probe_extraction_misses
+    with RunRecord(
+        "evaluate_golden_set", stem=args.stem, version=args.version, label=args.label,
+        generate=args.generate, judge=args.judge, probe_misses=args.probe_misses,
+    ) as rec:
+        if args.generate:
+            with rec.phase("generate golden set"):
+                report = generate_goldenset(
+                    raw_path_for(args.stem).read_text(),
+                    source_name=f"{args.stem}.md",
+                    question_count=args.generate,
+                    question_context_chars=args.context_chars or DEFAULT_CONTEXT_CHARS,
+                )
+                save_goldenset(args.stem, report)
+            print(f"generated {len(report['questions'])} golden questions", file=sys.stderr)
+            if args.generate_only:
+                print(f"warnings: {len(report['warnings'])}; answerable: {sum(q['answerable'] for q in report['questions'])}")
+                return 0
 
-        probe = probe_extraction_misses(args.stem, report, granularity=args.probe_misses)
+        threshold = {} if args.semantic_threshold is None else {
+            "semantic_threshold": args.semantic_threshold if args.semantic_threshold > 0 else None
+        }
+        with rec.phase("score"):
+            report = score_golden_set(args.stem, version=args.version, hops=args.hops, judge=args.judge, **threshold)
+        probe = None
+        if args.probe_misses:
+            from app.ontology.reextraction_probe import probe_extraction_misses
+
+            with rec.phase("probe"):
+                probe = probe_extraction_misses(args.stem, report, granularity=args.probe_misses)
+        run = rec.snapshot()
     full = {**report, "probe": probe} if probe else report
     if args.save_dir:
         save_dir = Path(args.save_dir)
@@ -207,7 +217,7 @@ def main() -> int:
         saved = save_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         saved.write_text(
             json.dumps(
-                {"saved_at": datetime.now().isoformat(), "options": vars(args), **full},
+                {"saved_at": datetime.now().isoformat(), "options": vars(args), "run": run, **full},
                 ensure_ascii=False, indent=2,
             )
         )

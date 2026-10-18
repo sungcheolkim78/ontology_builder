@@ -187,7 +187,7 @@ eval-check: eval-data
 # make golden-density GROUP_CHARS=... to extract and score it.
 eval-schema:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=schema
-	$(EVAL_ENV) $(PYTHON) scripts/generate_schema_for_eval.py "$(EVAL_STEM)"
+	$(EVAL_ENV) $(PYTHON) scripts/generate_schema_for_eval.py "$(EVAL_STEM)" --save-dir "$(EVAL_RUNS_DIR)"
 
 golden-generate:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=generate
@@ -197,7 +197,7 @@ golden-generate:
 # copy of the active schema as a new version (the old version keeps its graph), in the eval copy only.
 eval-reextract:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
-	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS)
+	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --save-dir "$(EVAL_RUNS_DIR)"
 
 eval-reextract-dry:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
