@@ -2,7 +2,14 @@
 """Checks, without any LLM call, that scripts/evaluate_golden_set.py can run:
 the document's folder is in the data copy ONTOLOGY_DATA_DIR points at, it has an
 active schema and an extracted graph, and an OpenRouter key is configured.
-Run by `make eval-check`; prints what it finds and exits non-zero on a problem."""
+Run by `make eval-check`; prints what it finds and exits non-zero on a problem.
+
+    check_eval_setup.py "<stem>" [--stage generate|schema|reextract|score]
+
+--stage says what is about to be run and so what must already exist: `generate`
+(a golden set) needs only the document; `schema` (generating one) the document;
+`reextract` an active schema; `score` (the default) an active schema and an
+extracted graph."""
 
 import os
 import sys
@@ -14,6 +21,7 @@ sys.path.insert(0, str(BACKEND))
 
 def main() -> int:
     stem = sys.argv[1]
+    stage = sys.argv[sys.argv.index("--stage") + 1] if "--stage" in sys.argv else "score"
     problems = []
 
     data_dir = os.environ.get("ONTOLOGY_DATA_DIR", "")
@@ -51,11 +59,11 @@ def main() -> int:
     print(f"document: {len(raw.read_text()):,} characters")
     version = get_active_version(stem)
     print(f"active schema version: {version}")
-    if version is None:
+    if version is None and stage in ("reextract", "score"):
         problems.append("the document has no active schema version")
     graph = graphdb.load_graph(stem, version=version) if version is not None else None
     print("extracted graph:", f"{len(graph['nodes'])} nodes, {len(graph['edges'])} edges" if graph else "none")
-    if version is not None and graph is None:
+    if version is not None and graph is None and stage == "score":
         problems.append("the document has a schema but no extracted graph")
     golden = load_goldenset(stem)
     print("golden set:", f"{len(golden['questions'])} questions" if golden else "none (use make golden-eval-generate)")

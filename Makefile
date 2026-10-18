@@ -30,7 +30,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-schema golden-generate prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -71,6 +71,10 @@ help:
 	@echo "      Delete that copy and copy backend/data again."
 	@echo "  make eval-check"
 	@echo "      Check the evaluation setup (no LLM call)."
+	@echo "  make eval-schema EVAL_STEM=<stem>"
+	@echo "      Generate a schema for a document that has none (in the eval copy)."
+	@echo "  make golden-generate EVAL_STEM=<stem>"
+	@echo "      Generate the golden set only (no scoring), for a document with no graph yet."
 	@echo "  make golden-eval"
 	@echo "      Score the document's existing golden set (1 LLM call per answerable question)."
 	@echo "  make eval-reextract-dry GROUP_CHARS=3000"
@@ -177,14 +181,26 @@ eval-data-reset:
 	@$(MAKE) --no-print-directory eval-data
 
 eval-check: eval-data
-	@$(EVAL_ENV) $(PYTHON) scripts/check_eval_setup.py "$(EVAL_STEM)"
+	@$(EVAL_ENV) $(PYTHON) scripts/check_eval_setup.py "$(EVAL_STEM)" $(if $(CHECK_STAGE),--stage $(CHECK_STAGE),)
+
+# For a document that has no schema yet (EVAL_STEM=<stem>): generate one, then a golden set, then
+# make golden-density GROUP_CHARS=... to extract and score it.
+eval-schema:
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=schema
+	$(EVAL_ENV) $(PYTHON) scripts/generate_schema_for_eval.py "$(EVAL_STEM)"
+
+golden-generate:
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=generate
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --generate $(EVAL_QUESTIONS) --context-chars $(EVAL_CONTEXT_CHARS) --generate-only
 
 # Does smaller chunk groups (GROUP_CHARS, default 3000) raise the score? Extracts the document again under a
 # copy of the active schema as a new version (the old version keeps its graph), in the eval copy only.
-eval-reextract: eval-check
+eval-reextract:
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
 	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS)
 
-eval-reextract-dry: eval-check
+eval-reextract-dry:
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
 	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --dry-run
 
 golden-density: eval-reextract

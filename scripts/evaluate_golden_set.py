@@ -129,6 +129,10 @@ def main() -> int:
     parser.add_argument("stem", help="the document's stem (its folder name under documents/)")
     parser.add_argument("--generate", type=int, metavar="N", help="generate an N-question golden set first")
     parser.add_argument(
+        "--generate-only", action="store_true",
+        help="with --generate: stop after writing the golden set (for a document with no extracted graph yet)",
+    )
+    parser.add_argument(
         "--context-chars", type=int, default=None, metavar="N",
         help="characters of the document one generation call sees (default: the module's own, 24000)",
     )
@@ -183,6 +187,9 @@ def main() -> int:
         )
         save_goldenset(args.stem, report)
         print(f"generated {len(report['questions'])} golden questions", file=sys.stderr)
+        if args.generate_only:
+            print(f"warnings: {len(report['warnings'])}; answerable: {sum(q['answerable'] for q in report['questions'])}")
+            return 0
 
     threshold = {} if args.semantic_threshold is None else {
         "semantic_threshold": args.semantic_threshold if args.semantic_threshold > 0 else None
