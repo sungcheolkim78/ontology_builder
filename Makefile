@@ -23,7 +23,10 @@ VARIANT ?= scripts/prompt_variants/extract_clause_content.txt
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
-EVAL_ENV := ONTOLOGY_DATA_DIR="$(abspath $(EVAL_DATA_DIR))"
+# LADYBUG_BUFFER_POOL_SIZE: the graph database's default pool (256MB) is too small for a data copy holding
+# several extracted versions; the server runs with 1GB (backend/.env.example).
+EVAL_BUFFER_POOL_SIZE ?= 1073741824
+EVAL_ENV := ONTOLOGY_DATA_DIR="$(abspath $(EVAL_DATA_DIR))" LADYBUG_BUFFER_POOL_SIZE=$(EVAL_BUFFER_POOL_SIZE)
 
 GOLDENSET_SCRIPT := scripts/prepare_goldenset/prepare_goldenset.py
 MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)

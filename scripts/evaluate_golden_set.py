@@ -38,18 +38,25 @@ BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
 
 
+# The graph database's buffer pool (app/graph/graphdb.py) defaults to 256MB, which a data copy
+# holding several extracted versions of a document outgrows: searches then fail with "Buffer
+# manager exception: Unable to allocate memory!". The server runs with 1GB (backend/.env.example).
+DEFAULT_BUFFER_POOL_SIZE = str(1024 * 1024 * 1024)
+
+
 def load_openrouter_settings() -> None:
-    """Copies OPENROUTER_* entries of backend/.env into the environment unless the
-    caller already set them. Only those: this script has no business with the
-    tracing keys or anything else the file holds."""
+    """Copies OPENROUTER_* and LADYBUG_* entries of backend/.env into the environment
+    unless the caller already set them, and gives the graph database the server's
+    1GB buffer pool when neither says otherwise. Only those entries: this script has
+    no business with the tracing keys or anything else the file holds."""
     env_file = BACKEND / ".env"
-    if not env_file.is_file():
-        return
-    for line in env_file.read_text().splitlines():
-        key, sep, value = line.partition("=")
-        key = key.strip()
-        if sep and key.startswith("OPENROUTER_") and key not in os.environ:
-            os.environ[key] = value.strip().strip('"').strip("'")
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            key = key.strip()
+            if sep and key.startswith(("OPENROUTER_", "LADYBUG_")) and key not in os.environ:
+                os.environ[key] = value.strip().strip('"').strip("'")
+    os.environ.setdefault("LADYBUG_BUFFER_POOL_SIZE", DEFAULT_BUFFER_POOL_SIZE)
 
 
 def print_report(report: dict, label: str | None = None) -> None:
