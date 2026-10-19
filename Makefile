@@ -194,7 +194,7 @@ eval-schema:
 
 golden-generate:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=generate
-	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --generate $(EVAL_QUESTIONS) --context-chars $(EVAL_CONTEXT_CHARS) --generate-only
+	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --generate $(EVAL_QUESTIONS) --context-chars $(EVAL_CONTEXT_CHARS) --generate-only --save-dir "$(EVAL_RUNS_DIR)"
 
 # Does smaller chunk groups (GROUP_CHARS, default 3000) raise the score? Extracts the document again under a
 # copy of the active schema as a new version (the old version keeps its graph), in the eval copy only.

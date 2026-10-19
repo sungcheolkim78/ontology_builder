@@ -188,7 +188,7 @@ def main() -> int:
     from run_record import RunRecord
 
     with RunRecord(
-        "evaluate_golden_set", stem=args.stem, version=args.version, label=args.label,
+        "evaluate_golden_set", save_dir=args.save_dir if args.generate_only else None, stem=args.stem, version=args.version, label=args.label,
         generate=args.generate, judge=args.judge, probe_misses=args.probe_misses,
     ) as rec:
         if args.generate:
