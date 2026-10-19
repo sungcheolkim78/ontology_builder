@@ -19,6 +19,7 @@ EVAL_HOPS ?= 1
 GROUP_CHARS ?= 3000
 GROUP_SIZES ?= 6000 1500
 EVAL_VERSION ?=
+LABEL_NOTE ?=
 MAPPING ?=
 FROM_VERSION ?=
 VARIANT ?= scripts/prompt_variants/extract_clause_content.txt
@@ -89,7 +90,7 @@ help:
 	@echo "  make eval-refine MAPPING=<file> [FROM_VERSION=n]"
 	@echo "      Apply a merge mapping to the schema and graph as a new active version (no LLM call); -dry reports only."
 	@echo "  make golden-density GROUP_CHARS=3000"
-	@echo "      eval-reextract, then golden-score the new version (the run's report is labelled with the size)."
+	@echo "      eval-reextract, then golden-score the new version (the report is labelled with the size, plus LABEL_NOTE)."
 	@echo "  make golden-curve GROUP_SIZES='6000 1500'"
 	@echo "      golden-density at each size in turn."
 	@echo "  make golden-score"
@@ -223,7 +224,7 @@ eval-refine-dry:
 	$(EVAL_ENV) $(PYTHON) scripts/refine_for_eval.py "$(EVAL_STEM)" --mapping "$(MAPPING)" $(if $(FROM_VERSION),--from-version $(FROM_VERSION),) --dry-run
 
 golden-density: eval-reextract
-	$(MAKE) --no-print-directory golden-score EVAL_LABEL="group_chars=$(GROUP_CHARS)"
+	$(MAKE) --no-print-directory golden-score EVAL_LABEL="group_chars=$(GROUP_CHARS)$(if $(LABEL_NOTE), $(LABEL_NOTE),)"
 
 # Every reading except the LLM judge, no probe: one LLM call per answerable question (the question analysis).
 golden-score: eval-check
