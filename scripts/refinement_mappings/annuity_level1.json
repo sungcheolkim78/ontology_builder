@@ -1,0 +1,15 @@
+{
+  "document": "삼성파워즉시연금보험 (graph: v3, 3,000-character extraction)",
+  "from_version": 3,
+  "node_types": {
+    "InsuranceProduct": "DefinedTerm",
+    "AccountOrAsset": "DefinedTerm",
+    "DiseaseCategory": "DefinedTerm",
+    "LegalConsequence": "LegalNorm"
+  },
+  "edge_types": {
+    "TRIGGERS": null,
+    "BARRED_BY": null,
+    "TRANSFERS_TO": null
+  }
+}

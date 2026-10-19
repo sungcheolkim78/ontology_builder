@@ -1,0 +1,20 @@
+{
+  "document": "삼성올백(ALL100)종신보험 (graph: v7, 3,000-character extraction)",
+  "from_version": 7,
+  "node_types": {
+    "BodyPart": "DefinedTerm",
+    "ClassificationStandard": "Provision",
+    "MedicalPractitioner": "Party",
+    "DiagnosticCriterion": "ExclusionOrCondition",
+    "Account": "DefinedTerm",
+    "CrimeAndSanction": "DefinedTerm",
+    "InsurancePolicy": "DefinedTerm",
+    "InsuredEvent": "ExclusionOrCondition"
+  },
+  "edge_types": {
+    "RESULTS_IN_DISEASE": null,
+    "TARGETS_BODY_PART": null,
+    "REGULATES_CRIME": "DEFINES_TERM",
+    "HAS_CONDITION": "BARRED_BY"
+  }
+}

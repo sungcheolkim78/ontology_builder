@@ -19,6 +19,8 @@ EVAL_HOPS ?= 1
 GROUP_CHARS ?= 3000
 GROUP_SIZES ?= 6000 1500
 EVAL_VERSION ?=
+MAPPING ?=
+FROM_VERSION ?=
 VARIANT ?= scripts/prompt_variants/extract_clause_content.txt
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
@@ -33,7 +35,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help eval-schema golden-generate prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-refine eval-refine-dry eval-schema golden-generate prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -84,6 +86,8 @@ help:
 	@echo "      Report how many chunk groups (LLM calls) extraction would make at that group size."
 	@echo "  make eval-reextract GROUP_CHARS=3000"
 	@echo "      Extract the document again at that group size under a copy of the active schema (new version)."
+	@echo "  make eval-refine MAPPING=<file> [FROM_VERSION=n]"
+	@echo "      Apply a merge mapping to the schema and graph as a new active version (no LLM call); -dry reports only."
 	@echo "  make golden-density GROUP_CHARS=3000"
 	@echo "      eval-reextract, then golden-score the new version (the run's report is labelled with the size)."
 	@echo "  make golden-curve GROUP_SIZES='6000 1500'"
@@ -205,6 +209,18 @@ eval-reextract:
 eval-reextract-dry:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
 	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --dry-run
+
+# Apply a merge mapping (MAPPING=scripts/refinement_mappings/<name>.json, FROM_VERSION=<n> to override the file's)
+# to the schema and graph: a new active version with the candidate schema and the relabelled graph, no LLM call.
+eval-refine:
+	@test -n "$(MAPPING)" || (echo "MAPPING=<mapping file> is required" >&2; exit 2)
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
+	$(EVAL_ENV) $(PYTHON) scripts/refine_for_eval.py "$(EVAL_STEM)" --mapping "$(MAPPING)" $(if $(FROM_VERSION),--from-version $(FROM_VERSION),)
+
+eval-refine-dry:
+	@test -n "$(MAPPING)" || (echo "MAPPING=<mapping file> is required" >&2; exit 2)
+	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
+	$(EVAL_ENV) $(PYTHON) scripts/refine_for_eval.py "$(EVAL_STEM)" --mapping "$(MAPPING)" $(if $(FROM_VERSION),--from-version $(FROM_VERSION),) --dry-run
 
 golden-density: eval-reextract
 	$(MAKE) --no-print-directory golden-score EVAL_LABEL="group_chars=$(GROUP_CHARS)"
