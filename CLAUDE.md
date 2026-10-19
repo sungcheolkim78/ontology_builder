@@ -364,9 +364,13 @@ read and written:
   {"type": "json_object"}` and low reasoning effort, a prose one
   (`answer_chat`, `summarize_document`) does not -- `call_json` and
   `call_text` each reject an operation of the other kind. Adding an LLM
-  operation is adding one entry there. Nothing is retried beyond
-  `invoke_with_telemetry`'s connection-error retry, so a truncated or
-  malformed reply surfaces as a `ValueError`.
+  operation is adding one entry there. `call_json` asks again once
+  (`MALFORMED_REPLY_RETRIES`) for a reply that is not JSON, not an object, or lacks
+  a declared field -- a model returns one such reply in a long run now and then, and
+  one of them used to fail a whole extraction -- and raises the last reply's
+  `ValueError` if the second is no better; beyond that only
+  `invoke_with_telemetry`'s connection-error retry exists, so a truncated reply
+  that stays truncated still surfaces as a `ValueError`.
 - `embeddings.py` — builds the `OpenAIEmbeddings` client (also OpenRouter,
   `OPENROUTER_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`).
   `EMBEDDING_DIM` (1536, matching that model's output) is a hard constraint

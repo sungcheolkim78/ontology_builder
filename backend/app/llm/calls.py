@@ -3,12 +3,15 @@ parsed and shape-checked. See app/llm/operations.py for what each operation
 declares, and CONTEXT.md for the vocabulary."""
 
 import json
+import logging
 import re
 
 from app.llm.chat import get_chat_model
 from app.llm.operations import OPERATIONS
 from app.llm.telemetry import embed_with_telemetry, invoke_with_telemetry
 from app.preprocess.embeddings import get_embedding_model
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_text_block(content: list) -> str:
@@ -82,21 +85,17 @@ def call_text(operation: str, prompt) -> str:
     return response.content
 
 
-def call_json(operation: str, prompt) -> dict:
-    """Calls the model for `operation` with `prompt` (a string or a list of
-    langchain messages), parses the reply as a JSON object and checks that it
-    has every field the operation declares (see app/llm/operations.py), each
-    of the declared type. Raises ValueError for anything else -- unparseable
-    output, a non-object, a missing or wrongly typed field. Nothing is retried
-    beyond the connection-error retry invoke_with_telemetry already does."""
-    spec = OPERATIONS.get(operation)
-    if spec is None:
-        raise ValueError(f"unknown operation: {operation!r}")
-    if not spec.json:
-        raise ValueError(f"{operation} is not a JSON operation; use call_text")
-    model = get_chat_model(operation)
-    response = invoke_with_telemetry(spec.telemetry_name, model, prompt)
-    result = parse_json_response(response.content)
+# A reply that is not what the operation asked for -- not JSON, not an object, a
+# declared field missing or the wrong type -- is asked for again this many times before
+# the ValueError goes up. Models occasionally return such a reply once in a long run
+# (observed: one chunk group in 45 of an extraction, which then failed the whole run); it is
+# usually not repeated. A request that can never succeed (an unknown operation, the wrong
+# kind of operation) is never retried.
+MALFORMED_REPLY_RETRIES = 1
+
+
+def _checked_json(operation: str, spec, content) -> dict:
+    result = parse_json_response(content)
     if not isinstance(result, dict):
         raise ValueError(f"{operation} response is not a JSON object")
     invalid = [
@@ -107,3 +106,27 @@ def call_json(operation: str, prompt) -> dict:
     if invalid:
         raise ValueError(f"{operation} JSON missing or invalid: {', '.join(invalid)}")
     return result
+
+
+def call_json(operation: str, prompt) -> dict:
+    """Calls the model for `operation` with `prompt` (a string or a list of
+    langchain messages), parses the reply as a JSON object and checks that it
+    has every field the operation declares (see app/llm/operations.py), each
+    of the declared type. A reply that fails any of that is asked for again up
+    to MALFORMED_REPLY_RETRIES times; raises ValueError (the last reply's) if
+    it never passes. Besides that, nothing is retried beyond the
+    connection-error retry invoke_with_telemetry already does."""
+    spec = OPERATIONS.get(operation)
+    if spec is None:
+        raise ValueError(f"unknown operation: {operation!r}")
+    if not spec.json:
+        raise ValueError(f"{operation} is not a JSON operation; use call_text")
+    model = get_chat_model(operation)
+    for attempt in range(MALFORMED_REPLY_RETRIES + 1):
+        response = invoke_with_telemetry(spec.telemetry_name, model, prompt)
+        try:
+            return _checked_json(operation, spec, response.content)
+        except ValueError as e:
+            if attempt == MALFORMED_REPLY_RETRIES:
+                raise
+            logger.warning("%s: malformed reply (%s); asking again", operation, e)

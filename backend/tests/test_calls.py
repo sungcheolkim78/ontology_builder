@@ -256,3 +256,73 @@ def test_embed_returns_one_vector_per_text(fake_embedding_model):
 
     assert vectors == [[2.0, 1.0], [3.0, 1.0]]
     assert fake_embedding_model.texts == [["ab", "cde"]]
+
+
+# --- a malformed reply is retried once ------------------------------------------
+
+
+class RepliesInOrder:
+    """Answers each invoke() with the next of `replies`; records how often it was asked."""
+
+    def __init__(self, replies):
+        self.replies, self.calls = list(replies), 0
+
+    def invoke(self, prompt):
+        reply = self.replies[min(self.calls, len(self.replies) - 1)]
+        self.calls += 1
+        return type("FakeResponse", (), {"content": reply})()
+
+
+def _use(monkeypatch, replies):
+    model = RepliesInOrder(replies)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+    return model
+
+
+GOOD = json.dumps({"nodes": [], "edges": []})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["this is not json", "[1, 2]", json.dumps({"nodes": "no", "edges": []})],  # unparseable, not an object, wrong field type
+)
+def test_a_malformed_first_reply_is_retried_and_a_good_second_one_is_returned(monkeypatch, bad):
+    model = _use(monkeypatch, [bad, GOOD])
+
+    assert call_json("extract_graph", "p") == {"nodes": [], "edges": []}
+    assert model.calls == 2
+
+
+def test_a_reply_that_is_malformed_twice_raises_after_exactly_one_retry(monkeypatch):
+    model = _use(monkeypatch, ["not json", "still not json"])
+
+    with pytest.raises(ValueError, match="valid JSON"):
+        call_json("extract_graph", "p")
+
+    assert model.calls == 2
+
+
+def test_the_error_raised_after_the_retry_is_the_last_replys(monkeypatch):
+    _use(monkeypatch, ["not json", "[1, 2]"])
+
+    with pytest.raises(ValueError, match="not a JSON object"):
+        call_json("extract_graph", "p")
+
+
+def test_a_good_reply_is_asked_for_once(monkeypatch):
+    model = _use(monkeypatch, [GOOD])
+
+    call_json("extract_graph", "p")
+
+    assert model.calls == 1
+
+
+def test_a_request_that_can_never_succeed_is_not_retried(monkeypatch):
+    model = _use(monkeypatch, [GOOD])
+
+    with pytest.raises(ValueError):
+        call_json("no_such_operation", "p")
+    with pytest.raises(ValueError):
+        call_json("answer_chat", "p")  # a prose operation
+
+    assert model.calls == 0
