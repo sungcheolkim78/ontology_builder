@@ -18,6 +18,7 @@ from .persistence import (
     SchemaNotFound,
     active_schema,
     create_schema_version,
+    get_active_version,
     list_versions,
     load_schema,
     save_graph,
@@ -180,3 +181,21 @@ def refine_version(stem: str, mapping: dict, version: int | None = None) -> dict
         "nodes": counts(graph["nodes"], refined["nodes"]) if refined else None,
         "edges": counts(graph["edges"], refined["edges"]) if refined else None,
     }
+
+
+def unfinished_copy(stem: str, source_version: int | None = None) -> tuple[int, int] | None:
+    """`(active, source)` if the active version is a copy of another version's schema
+    that never got a graph -- what an extraction that stopped partway (a provider error in
+    one chunk group) leaves behind -- else None. `source` is the newest other version
+    with the identical schema, or only `source_version` when one is given. Extracting
+    again under the active version, not a fresh copy, picks up the chunk groups already
+    finished (the resume cache is keyed by the schema's content, not its version) and
+    leaves no empty version behind."""
+    active = get_active_version(stem)
+    if active is None or graphdb.load_graph(stem, version=active) is not None:
+        return None
+    schema = load_schema(stem, active)
+    twins = [v["version"] for v in list_versions(stem) if v["version"] != active and load_schema(stem, v["version"]) == schema]
+    if source_version is not None:
+        twins = [v for v in twins if v == source_version]
+    return (active, max(twins)) if twins else None

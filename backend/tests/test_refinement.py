@@ -10,6 +10,7 @@ from app.ontology.refinement import (
     apply_mapping_to_graph,
     apply_mapping_to_schema,
     refine_version,
+    unfinished_copy,
     validate_mapping,
 )
 from app.ontology.schema_validation import validate_schema
@@ -179,3 +180,41 @@ def test_refining_a_version_that_has_no_graph_still_makes_the_candidate_schema()
 
     assert summary["nodes"] is None
     assert "Doctor" not in _types(persistence.load_schema(STEM, summary["version"]))
+
+
+# --- continuing a copy whose extraction stopped ---------------------------------
+
+
+def test_the_active_version_is_an_unfinished_copy_when_another_has_its_schema_and_it_has_no_graph():
+    source = _store()
+    copy = persistence.create_schema_version(STEM, _schema(), document_type="legal")  # extraction stopped before a graph
+
+    assert unfinished_copy(STEM) == (copy, source)
+
+
+def test_a_given_source_must_be_the_one_it_copies():
+    source = _store()
+    other = persistence.create_schema_version(STEM, {**_schema(), "edge_types": []}, document_type="legal")
+    persistence.save_graph(STEM, _graph(), version=other)
+    copy = persistence.create_schema_version(STEM, _schema(), document_type="legal")
+
+    assert unfinished_copy(STEM, source) == (copy, source)
+    assert unfinished_copy(STEM, other) is None
+
+
+@pytest.mark.parametrize("what", ["has a graph", "is another schema", "has no twin", "is the given source"])
+def test_it_is_not_an_unfinished_copy_otherwise(what):
+    if what == "has no twin":
+        persistence.create_schema_version(STEM, _schema(), document_type="legal")  # the first, schema-only version
+        assert unfinished_copy(STEM) is None
+        return
+    source = _store()
+    if what == "is the given source":
+        assert unfinished_copy(STEM, source) is None
+        return
+    changed = _schema() if what == "has a graph" else {**_schema(), "node_types": _schema()["node_types"][:2], "edge_types": []}
+    copy = persistence.create_schema_version(STEM, changed, document_type="legal")
+    if what == "has a graph":
+        persistence.save_graph(STEM, _graph(), version=copy)
+
+    assert unfinished_copy(STEM) is None

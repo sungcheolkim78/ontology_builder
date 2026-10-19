@@ -54,6 +54,7 @@ def main() -> int:
     from app.ontology.chunk_groups import group_chunks_by_budget
     from app.ontology.extract_graph import extract_for_document
     from app.ontology.persistence import create_schema_version, get_active_version, list_versions, load_schema
+    from app.ontology.refinement import unfinished_copy
     from app.ontology.utils import _load_chunk_items
 
     chunks = _load_chunk_items(args.stem)
@@ -65,14 +66,22 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    source = args.from_version or get_active_version(args.stem)
-    schema = load_schema(args.stem, source)
-    if schema is None:
-        print(f"no schema version {source} for {args.stem!r}", file=sys.stderr)
-        return 2
-    document_type = next((v["document_type"] for v in list_versions(args.stem) if v["version"] == source), "general")
-    version = create_schema_version(args.stem, schema, document_type=document_type)
-    print(f"copied schema v{source} as v{version}; extracting ({len(groups)} LLM calls)...")
+    continuing = unfinished_copy(args.stem, args.from_version)
+    if continuing:
+        version, source = continuing
+        print(
+            f"v{version} is a copy of schema v{source} whose extraction stopped; continuing it "
+            f"({len(groups)} chunk groups, the finished ones are reused)..."
+        )
+    else:
+        source = args.from_version or get_active_version(args.stem)
+        schema = load_schema(args.stem, source)
+        if schema is None:
+            print(f"no schema version {source} for {args.stem!r}", file=sys.stderr)
+            return 2
+        document_type = next((v["document_type"] for v in list_versions(args.stem) if v["version"] == source), "general")
+        version = create_schema_version(args.stem, schema, document_type=document_type)
+        print(f"copied schema v{source} as v{version}; extracting ({len(groups)} LLM calls)...")
 
     from run_record import RunRecord
 
