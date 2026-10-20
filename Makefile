@@ -37,7 +37,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help eval-refine eval-refine-dry eval-schema golden-generate prompt-probe golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-refine eval-refine-dry eval-schema golden-generate prompt-experiment golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
