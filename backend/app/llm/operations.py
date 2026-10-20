@@ -116,6 +116,12 @@ _ENTRIES = (
         "extract_graph", "extract-graph", 40_000,
         required={"nodes": list, "edges": list}, selectable=True,
     ),
+    # A second extraction pass over one chunk group that adds what the first left out
+    # (extract_graph.supplement_graph): follows whichever model is picked for extraction.
+    Operation(
+        "supplement_graph", "supplement-graph", 40_000,
+        required={"nodes": list, "edges": list}, model_key="extract_graph",
+    ),
     Operation(
         "validate_ontology", "validate-ontology", 8_000,
         required={"validation_summary": dict, "issues": list}, selectable=True,

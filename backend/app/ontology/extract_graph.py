@@ -12,7 +12,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.llm.calls import call_json
-from app.llm.prompts import EXTRACT_PROMPT
+from app.llm.prompts import EXTRACT_PROMPT, SUPPLEMENT_PROMPT
 
 from .persistence import DEFAULT_SCHEMA, create_schema_version, get_active_version, load_schema, save_graph
 from .schema_validation import normalize_schema
@@ -139,7 +139,13 @@ def extract_graph(document_text: str, schema: dict, extra_instructions: str | No
         system_prompt += "\n\n" + extra_instructions
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=f"Document:\n{document_text}")]
     graph = call_json("extract_graph", messages)
+    return _normalize_graph(graph, normalized_schema, document_text)
 
+
+def _normalize_graph(graph: dict, normalized_schema: dict, document_text: str, known_ids=()) -> dict:
+    """Verifies and shapes a model's {nodes, edges}: every item is normalized (see
+    _normalize_extracted_item), and an edge whose endpoint is neither one of the
+    graph's own nodes nor among `known_ids` is dropped."""
     properties_by_type = _properties_by_type(normalized_schema)
     section_labels = _section_labels_in(document_text)
     graph["nodes"] = [
@@ -154,7 +160,7 @@ def extract_graph(document_text: str, schema: dict, extra_instructions: str | No
     # or output truncated mid-list). graphdb.write_graph would reject the
     # whole extraction over one bad edge, so drop just the offending edges
     # here and keep the rest of the graph.
-    node_ids = {n["id"] for n in graph["nodes"]}
+    node_ids = {n["id"] for n in graph["nodes"]} | set(known_ids)
     valid_edges = []
     for edge in graph["edges"]:
         if edge["source"] not in node_ids or edge["target"] not in node_ids:
@@ -169,8 +175,64 @@ def extract_graph(document_text: str, schema: dict, extra_instructions: str | No
             )
         )
     graph["edges"] = valid_edges
-
     return graph
+
+
+def supplement_graph(document_text: str, schema: dict, graph: dict, extra_instructions: str | None = None) -> dict:
+    """A second pass over `document_text`: the model is shown what `graph` (the first
+    pass's result for this same text) already holds and asked to add only what it left
+    out (SUPPLEMENT_PROMPT). Returns a new graph, the first pass's nodes and edges plus
+    the additions; `graph` itself is not changed. An added node that has the same type
+    and label as an existing one is not added again (edges meant for it attach to the
+    existing node), and added nodes get ids that cannot collide with existing ones.
+    Costs one more call per text, so it is for finding out whether the first pass's
+    gaps are worth closing (see reextraction_probe), not a stage of the pipeline."""
+    normalized_schema = normalize_schema(schema)
+    system_prompt = SUPPLEMENT_PROMPT.format(schema=json.dumps(normalized_schema))
+    if extra_instructions:
+        system_prompt += "\n\n" + extra_instructions
+    existing = "\n".join(
+        f"- {n['id']} | {n['type']} | {n['label']}" + (f" | {n['detail'][:160]}" if n.get("detail") else "")
+        for n in graph["nodes"]
+    )
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Already extracted:\n{existing or '(nothing)'}\n\nDocument:\n{document_text}"),
+    ]
+    reply = call_json("supplement_graph", messages)
+    existing_ids = {n["id"] for n in graph["nodes"]}
+    reply = _normalize_graph(reply, normalized_schema, document_text, known_ids=existing_ids)
+
+    by_key = {(n["type"], n["label"]): n["id"] for n in graph["nodes"]}
+    taken = set(existing_ids)
+    id_map: dict[str, str] = {}
+    added = []
+    for node in reply["nodes"]:
+        key = (node["type"], node["label"])
+        if key in by_key:
+            id_map[node["id"]] = by_key[key]
+            continue
+        new_id, n = node["id"], 1
+        while new_id in taken:
+            new_id, n = f"s{n}_{node['id']}", n + 1
+        taken.add(new_id)
+        id_map[node["id"]] = new_id
+        by_key[key] = new_id
+        added.append({**node, "id": new_id})
+
+    # an endpoint the reply declared itself is the reply's node; any other is an existing one
+    edges = [
+        {**e, "source": id_map.get(e["source"], e["source"]), "target": id_map.get(e["target"], e["target"])}
+        for e in reply["edges"]
+    ]
+    seen = {(e["source"], e["target"], e["type"]) for e in graph["edges"]}
+    new_edges = []
+    for edge in edges:
+        key = (edge["source"], edge["target"], edge["type"])
+        if key not in seen:
+            seen.add(key)
+            new_edges.append(edge)
+    return {"nodes": [*graph["nodes"], *added], "edges": [*graph["edges"], *new_edges]}
 
 
 def _merge_group_graphs(group_graphs: list[dict]) -> dict:

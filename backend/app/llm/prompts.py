@@ -113,6 +113,25 @@ Output a single JSON object, no other text, with exactly these keys:
 {{"nodes": [{{"id": str, "label": str, "type": "<node type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}], "edges": [{{"source": "<node id>", "target": "<node id>", "type": "<edge type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}]}}"""
 
 
+# A second pass over text EXTRACT_PROMPT has already been run on: the first pass tends to turn each
+# short clause into one node that states its gist and to skip a clause's other conditions,
+# consequences and list items. This one is shown what was extracted and asked for only what is
+# missing, so it can spend its whole output on the gaps. Same output shape as extraction, with ids
+# the new nodes choose themselves (prefixed "s") and edges that may point at either.
+SUPPLEMENT_PROMPT = """Using this ontology schema:
+{schema}
+
+A first pass has already extracted the nodes listed under "Already extracted" from the document. Read the document again and add ONLY what that first pass left out:
+- every clause (article, paragraph, item) whose rule, condition, consequence, exception, deadline or period, amount or ratio, procedure or qualification is not stated by an existing node, including short clauses that are easy to skip;
+- every item of a list (numbered, bulleted, 가./나./다.) that no existing node lists in full;
+- the concrete means a clause names (a channel, a web address and its menu path, a code).
+
+Do not repeat an existing node. A new node's "id" is a short slug starting with "s" (s1, s2, ...). An edge's "source" and "target" may be the id of a new node or of an existing one. Follow the same rules for "type", "label", "detail" (up to 4 sentences, the document's own wording for figures and conditions), "evidence" (the shortest verbatim span, copied exactly), "source_section", "properties" and "confidence" as for the first pass. If nothing is missing, return empty lists.
+
+Output a single JSON object, no other text, with exactly these keys:
+{{"nodes": [{{"id": str, "label": str, "type": "<node type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}], "edges": [{{"source": "<node id>", "target": "<node id>", "type": "<edge type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}]}}"""
+
+
 # Adapted from docs/ontology/ontology_validation_prompt.md (the team's
 # ontology-validation agent spec) into a single-call JSON-output prompt, the
 # same shape every other prompt in this module uses. Keeps that doc's

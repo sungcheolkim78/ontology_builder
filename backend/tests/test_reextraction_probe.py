@@ -187,3 +187,22 @@ def test_the_probe_returns_what_it_extracted_so_a_scoring_rule_can_be_changed_wi
     extracted = result["extracted"]
     assert list(extracted.values())[0]["nodes"][0]["label"] == "Alice"
     assert result["questions"][0]["groups"] == [int(unit) for unit in extracted]
+
+
+def test_a_second_pass_asks_the_model_again_for_each_unit_and_keeps_both_passes_nodes(monkeypatch):
+    first = _graph(_person("n1", "Alice"))
+    second = json.dumps({"nodes": [{"id": "x", "label": "Alice employer", "type": "Person", "detail": "works at Acme in Seoul"}], "edges": []})
+    model = _setup(monkeypatch, [first, second])
+    golden = {
+        "questions": [{**_question("q001", "Alice works at Acme.", 2), "answer_facts": [{"subject": "Alice", "predicate": "employer", "object": "works at Acme in Seoul"}]}],
+        "warnings": [],
+    }
+    save_goldenset(STEM, golden)
+
+    result = probe_extraction_misses(STEM, _report(q001="extraction_miss"), second_pass=True)
+
+    assert len(model.calls) == 2
+    assert result["questions"][0]["answer"] is True
+    assert result["summary"]["llm_calls"] == 2
+    labels = {n["label"] for g in result["extracted"].values() for n in g["nodes"]}
+    assert labels == {"Alice", "Alice employer"}

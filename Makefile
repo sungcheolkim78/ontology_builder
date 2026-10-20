@@ -22,7 +22,8 @@ EVAL_VERSION ?=
 LABEL_NOTE ?=
 MAPPING ?=
 FROM_VERSION ?=
-VARIANT ?= scripts/prompt_variants/extract_clause_content.txt
+REPORT ?=
+VARIANT ?= scripts/prompt_variants/extract_clause_coverage.txt
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
@@ -95,8 +96,8 @@ help:
 	@echo "      golden-density at each size in turn."
 	@echo "  make golden-score"
 	@echo "      Score the active version with every reading except the judge (no probe)."
-	@echo "  make prompt-probe VARIANT=<file>"
-	@echo "      Re-extract the chunks of the never-answered golden questions with and without the variant prompt text."
+	@echo "  make prompt-experiment REPORT=<scoring report> [VARIANT=<file>]"
+	@echo "      Re-extract the chunks the report's extraction misses sit in: 2 controls, the variant prompt, a second pass."
 	@echo "  make golden-judge"
 	@echo "      Score the active version with every reading, including the LLM judge (EVAL_VERSION=N picks a version)."
 	@echo "  make golden-probe-chunks"
@@ -234,10 +235,12 @@ golden-score: eval-check
 golden-curve:
 	@for size in $(GROUP_SIZES); do $(MAKE) --no-print-directory golden-density GROUP_CHARS=$$size || exit 1; done
 
-# Try a variant of the extraction instructions on the golden passages that no extraction ever answered
-# (QUESTIONS=q016,q025,... to pick others): current prompt vs VARIANT, chunk by chunk.
-prompt-probe: eval-check
-	$(EVAL_ENV) $(PYTHON) scripts/probe_prompt_variant.py "$(EVAL_STEM)" --variant "$(VARIANT)" $(EVAL_VERSION_ARG) $(if $(QUESTIONS),--questions "$(QUESTIONS)",) --save-dir "$(EVAL_RUNS_DIR)"
+# Close the gaps of an extraction: on the golden passages a scoring REPORT (a backups/eval_runs/<time>.json) classed as
+# extraction misses, re-extract their chunks under the current prompt twice (controls), with VARIANT appended, and with
+# a second pass that adds what is missing; reports which arms state the facts of the golden answers.
+prompt-experiment: eval-check
+	@test -n "$(REPORT)" || (echo "REPORT=<scoring report JSON> is required" >&2; exit 2)
+	$(EVAL_ENV) $(PYTHON) scripts/probe_prompt_variant.py "$(EVAL_STEM)" --from-report "$(REPORT)" --variant "$(VARIANT)" --second-pass --save-dir "$(EVAL_RUNS_DIR)"
 
 golden-eval: eval-check
 	$(EVAL_ENV) $(PYTHON) $(EVAL_SCRIPT) "$(EVAL_STEM)" --hops $(EVAL_HOPS) $(EVAL_VERSION_ARG) --probe-misses --save-dir "$(EVAL_RUNS_DIR)"

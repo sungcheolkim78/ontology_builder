@@ -16,6 +16,7 @@ JSON_OPERATIONS = (
     "discover_ontology", "generate_schema", "extract_graph", "validate_ontology", "propose_evolution",
     "consolidate_discovery", "consolidate_schema",
     "analyze_question", "generate_goldenset_questions", "generate_goldenset_answers", "judge_answerability",
+    "supplement_graph",
 )
 
 

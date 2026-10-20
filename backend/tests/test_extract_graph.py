@@ -10,6 +10,7 @@ from app.ontology.extract_graph import (
     _find_evidence_span,
     extract_for_document,
     extract_graph,
+    supplement_graph,
 )
 from app.utils.paths import document_dir_for
 from fakes import FakeChatModel, RecordingChatModel, SequencedChatModel, prompt_text
@@ -94,6 +95,67 @@ def test_extra_instructions_are_appended_to_the_extraction_system_prompt(monkeyp
     assert "LIST EVERY ITEM OF A CLAUSE" not in prompt_text(model.prompts[0])
     assert "LIST EVERY ITEM OF A CLAUSE" in prompt_text(model.prompts[1])
     assert "Using this ontology schema" in prompt_text(model.prompts[1])
+
+
+# --- supplement_graph: a second pass for what the first one left out ----------
+
+_SUPP_SCHEMA = {
+    "node_types": [{"name": "Person", "description": "a person"}, {"name": "Org", "description": "an org"}],
+    "edge_types": [{"name": "WORKS_AT", "description": "works at", "source": "Person", "target": "Org"}],
+}
+_FIRST = {
+    "nodes": [{"id": "n1", "label": "Alice", "type": "Person"}, {"id": "n2", "label": "Acme", "type": "Org"}],
+    "edges": [{"source": "n1", "target": "n2", "type": "WORKS_AT"}],
+}
+
+
+def _supplement(monkeypatch, reply, text="Alice works at Acme. Bob works at Acme."):
+    model = RecordingChatModel(json.dumps(reply))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+    return supplement_graph(text, _SUPP_SCHEMA, _FIRST), model
+
+
+def test_the_supplement_keeps_the_first_pass_and_adds_what_the_second_found(monkeypatch):
+    reply = {
+        "nodes": [{"id": "n1", "label": "Bob", "type": "Person"}],  # an id the first pass already used
+        "edges": [{"source": "n1", "target": "n2", "type": "WORKS_AT"}],  # Bob -> the first pass's Acme
+    }
+
+    result, _ = _supplement(monkeypatch, reply)
+
+    labels = {(n["type"], n["label"]) for n in result["nodes"]}
+    assert labels == {("Person", "Alice"), ("Org", "Acme"), ("Person", "Bob")}
+    assert len({n["id"] for n in result["nodes"]}) == 3, "the new node must not take over the first pass's id"
+    bob = next(n for n in result["nodes"] if n["label"] == "Bob")
+    assert any(e["source"] == bob["id"] and e["target"] == "n2" for e in result["edges"])
+
+
+def test_a_node_the_first_pass_already_has_is_not_added_again(monkeypatch):
+    result, _ = _supplement(monkeypatch, {"nodes": [{"id": "x", "label": "Alice", "type": "Person"}], "edges": []})
+
+    assert len(result["nodes"]) == 2
+
+
+def test_an_edge_to_a_node_nobody_declared_is_dropped(monkeypatch):
+    result, _ = _supplement(monkeypatch, {"nodes": [], "edges": [{"source": "n1", "target": "ghost", "type": "WORKS_AT"}]})
+
+    assert len(result["edges"]) == 1  # only the first pass's
+
+
+def test_the_supplement_prompt_shows_the_document_and_what_was_already_extracted(monkeypatch):
+    _, model = _supplement(monkeypatch, {"nodes": [], "edges": []})
+
+    sent = prompt_text(model.prompts[0])
+    assert "Bob works at Acme." in sent  # the document
+    assert "Alice" in sent and "Acme" in sent  # the first pass's nodes
+
+
+def test_the_input_graph_is_left_alone(monkeypatch):
+    before = json.dumps(_FIRST, sort_keys=True)
+
+    _supplement(monkeypatch, {"nodes": [{"id": "n9", "label": "Bob", "type": "Person"}], "edges": []})
+
+    assert json.dumps(_FIRST, sort_keys=True) == before
 
 
 def test_extract_graph_raises_when_nodes_edges_missing(monkeypatch):

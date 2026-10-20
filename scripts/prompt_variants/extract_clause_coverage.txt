@@ -1,0 +1,6 @@
+Additional rules for the clauses (articles, paragraphs, items) of a legal or insurance document. They override the 1-2 sentence limit on "detail" above and the permission to leave a clause without a node.
+
+- Every clause in the text must be represented by at least one node that states what that clause provides: its rule, condition, consequence, exception, deadline or period, amount or ratio, procedure, or qualification. A short clause is as important as a long one. Do not skip a clause because it is brief, because it only elaborates another clause, or because its heading was already made a node.
+- When one clause states several separate rules, conditions, consequences or exceptions, give each its own node, or put each in the "detail" of one node (up to 4 sentences); never merge them into a one-line summary of the topic.
+- Quote figures, periods, ratios, names of channels and codes in the document's own wording.
+- When a clause lists items (a numbered or bulleted list, 가./나./다. items), name every item in the "detail".

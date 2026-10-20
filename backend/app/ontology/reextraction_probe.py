@@ -13,7 +13,7 @@ from app.preprocess.goldenset import load_goldenset
 from app.utils.paths import raw_path_for
 
 from .chunk_groups import _group_document_text, extract_group_chars, group_chunks_by_budget, map_concurrently
-from .extract_graph import extract_graph
+from .extract_graph import extract_graph, supplement_graph
 from .persistence import SchemaNotFound, load_schema
 from .retrieval_eval import (
     HIT_RECALL,
@@ -35,6 +35,7 @@ def probe_extraction_misses(
     granularity: str = "group",
     semantic_threshold: float | None = SEMANTIC_THRESHOLD,
     extra_instructions: str | None = None,
+    second_pass: bool = False,
 ) -> dict:
     """For every `extraction_miss` in `report` (a score_golden_set report),
     extracts again each chunk group whose text quotes one of the question's
@@ -54,7 +55,9 @@ def probe_extraction_misses(
     None skips that reading, and `answer` says whether the new nodes and edges
     state the facts of the golden answer (retrieval_eval.fact_in_text).
     `extra_instructions` is appended to the extraction prompt, to try a variant
-    of it on exactly the passages that were missed."""
+    of it on exactly the passages that were missed. With `second_pass`, each text
+    is also run through supplement_graph (a second call that adds what the first
+    left out), and the new nodes and edges are those of both passes together."""
     if granularity not in ("group", "chunk"):
         raise ValueError(f"granularity must be 'group' or 'chunk', not {granularity!r}")
     version = report["version"]
@@ -90,9 +93,11 @@ def probe_extraction_misses(
     wanted_groups = sorted({index for indices in groups_by_question.values() for index in indices})
     extracted = {}
     if wanted_groups:  # map_concurrently needs at least one item
-        graphs = map_concurrently(
-            lambda index: extract_graph(group_texts[index], schema, extra_instructions), wanted_groups
-        )
+        def extract(index):
+            graph = extract_graph(group_texts[index], schema, extra_instructions)
+            return supplement_graph(group_texts[index], schema, graph) if second_pass else graph
+
+        graphs = map_concurrently(extract, wanted_groups)
         extracted = dict(zip(wanted_groups, graphs))
 
     index = None
@@ -164,6 +169,6 @@ def probe_extraction_misses(
             **counts,
             "semantic_recovered": sum(1 for r in results if r["semantic"]),
             "answer_recovered": sum(1 for r in results if r["answer"]),
-            "llm_calls": len(wanted_groups),
+            "llm_calls": len(wanted_groups) * (2 if second_pass else 1),
         },
     }
