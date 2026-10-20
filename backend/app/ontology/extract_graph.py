@@ -293,7 +293,7 @@ def _anchor_evidence_to_document(items: list[dict], document_text: str) -> None:
             item.pop("end_offset", None)
 
 
-def extract_for_document(stem: str) -> tuple[dict, dict, int]:
+def extract_for_document(stem: str, extra_instructions: str | None = None) -> tuple[dict, dict, int]:
     """One seam for main.py's /extract route: runs extract_graph over the
     document's chunk groups (or, with no chunks.json, over its whole text as
     one group) through run_chunk_groups, which owns the progress file (with
@@ -311,7 +311,12 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
     schema's output. Unlike the discover/schema stages, merging never goes
     back through an LLM -- a document's node/edge count scales with its
     length, so exact (type, label) matching is used instead (see
-    _merge_group_graphs)."""
+    _merge_group_graphs).
+
+    `extra_instructions` is appended to every group's extraction prompt (see
+    extract_graph): for trying a variant of the instructions on a whole document, as
+    the evaluation scripts do; the route never passes it. It is part of what a cached
+    group result depends on, so results made under other instructions are not reused."""
     document_text = _require_document_text(stem)
     version = get_active_version(stem)
     if version is None:
@@ -321,9 +326,9 @@ def extract_for_document(stem: str) -> tuple[dict, dict, int]:
         stage="extract",
         operation="extract_graph",
         stem=stem,
-        fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT},
+        fingerprint_inputs={"schema": schema, "prompt": EXTRACT_PROMPT, **({"extra_instructions": extra_instructions} if extra_instructions else {})},
         max_group_chars=extract_group_chars(),
-        group_fn=lambda group_text: extract_graph(group_text, schema),
+        group_fn=lambda group_text: extract_graph(group_text, schema, extra_instructions),
         reduce_fn=_merge_group_graphs,
         reduce_stage="merge",
         summarize=lambda graph: {"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},

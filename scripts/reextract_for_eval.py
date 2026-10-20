@@ -6,7 +6,7 @@ backend/app/ontology/reextraction_probe.py: the same schema recovered 6% of the
 missed passages from a whole chunk group but 47% from the chunk alone).
 
     ONTOLOGY_DATA_DIR=/path/to/a/COPY/of/backend/data \\
-        scripts/reextract_for_eval.py "<document stem>" --group-chars 3000 [--from-version 3] [--dry-run]
+        scripts/reextract_for_eval.py "<document stem>" --group-chars 3000 [--from-version 3] [--variant FILE] [--dry-run]
 
 The active schema (or --from-version) is copied as a NEW schema version and the
 document is extracted under it with EXTRACT_GROUP_CHARS=--group-chars, so the
@@ -35,6 +35,10 @@ def main() -> int:
     parser.add_argument("--group-chars", type=int, required=True, metavar="N", help="EXTRACT_GROUP_CHARS for this run")
     parser.add_argument("--from-version", type=int, help="schema version to copy (default: the active one)")
     parser.add_argument("--dry-run", action="store_true", help="only report the number of chunk groups")
+    parser.add_argument(
+        "--variant", metavar="FILE",
+        help="a text file appended to the extraction prompt (scripts/prompt_variants/): extract with those instructions",
+    )
     parser.add_argument("--save-dir", metavar="DIR", help="also write a record of the run (time, model, LLM calls) there")
     args = parser.parse_args()
 
@@ -85,13 +89,14 @@ def main() -> int:
 
     from run_record import RunRecord
 
+    extra = Path(args.variant).read_text().strip() if args.variant else None
     started = time.time()
     with RunRecord(
         "reextract_for_eval", save_dir=args.save_dir, stem=args.stem, group_chars=args.group_chars,
-        copied_from_version=source, new_version=version, chunk_groups=len(groups),
+        copied_from_version=source, new_version=version, chunk_groups=len(groups), variant=args.variant,
     ) as rec:
         with rec.phase("extract"):
-            _, graph, _ = extract_for_document(args.stem)
+            _, graph, _ = extract_for_document(args.stem, extra_instructions=extra)
         rec.meta["nodes"], rec.meta["edges"] = len(graph["nodes"]), len(graph["edges"])
     print(
         f"done in {time.time() - started:.0f}s: v{version} has {len(graph['nodes'])} nodes, {len(graph['edges'])} edges "

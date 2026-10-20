@@ -359,6 +359,26 @@ def test_extract_for_document_merges_coreferent_nodes_across_chunk_groups(monkey
     assert len(result["edges"]) == 2  # duplicate Alice->Acme edge collapses; Bob->Acme survives
 
 
+def test_extra_instructions_reach_every_groups_prompt_and_a_change_of_them_is_not_served_from_the_resume_cache(monkeypatch, thirty_char_groups):
+    graph = json.dumps({"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}], "edges": []})
+    model = RecordingChatModel(graph)
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+    write_document()
+    write_chunks("doc_raw", ["a" * 30, "b" * 30])
+    _use_schema({"node_types": [{"name": "Person", "description": "a person"}], "edge_types": []})
+
+    extract_for_document("doc_raw")
+    assert len(model.prompts) == 2                                    # the plain run: one call per group
+
+    extract_for_document("doc_raw", extra_instructions="LIST EVERY ITEM")
+    assert len(model.prompts) == 4                                    # other instructions, other results: asked again
+    assert all("LIST EVERY ITEM" in prompt_text(p) for p in model.prompts[2:])
+    assert all("LIST EVERY ITEM" not in prompt_text(p) for p in model.prompts[:2])
+
+    extract_for_document("doc_raw", extra_instructions="LIST EVERY ITEM")
+    assert len(model.prompts) == 4                                    # the same instructions again: from the cache
+
+
 def test_extraction_is_grouped_by_its_own_budget_not_the_schema_stage_one(monkeypatch):
     # MAX_CHUNK_GROUP_CHARS is the discover/schema budget; at 30 it would split these two
     # 30-character chunks into two groups. Extraction has its own (EXTRACT_GROUP_CHARS).

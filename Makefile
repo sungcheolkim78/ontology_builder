@@ -22,6 +22,7 @@ EVAL_VERSION ?=
 LABEL_NOTE ?=
 MAPPING ?=
 FROM_VERSION ?=
+EXTRACT_VARIANT ?=
 REPORT ?=
 VARIANT ?= scripts/prompt_variants/extract_clause_coverage.txt
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
@@ -90,7 +91,7 @@ help:
 	@echo "      Extract the document again at that group size under a copy of the active schema (new version)."
 	@echo "  make eval-refine MAPPING=<file> [FROM_VERSION=n]"
 	@echo "      Apply a merge mapping to the schema and graph as a new active version (no LLM call); -dry reports only."
-	@echo "  make golden-density GROUP_CHARS=3000"
+	@echo "  make golden-density GROUP_CHARS=3000 [FROM_VERSION=n] [EXTRACT_VARIANT=<prompt text file>]"
 	@echo "      eval-reextract, then golden-score the new version (the report is labelled with the size, plus LABEL_NOTE)."
 	@echo "  make golden-curve GROUP_SIZES='6000 1500'"
 	@echo "      golden-density at each size in turn."
@@ -206,7 +207,7 @@ golden-generate:
 # copy of the active schema as a new version (the old version keeps its graph), in the eval copy only.
 eval-reextract:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
-	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) --save-dir "$(EVAL_RUNS_DIR)"
+	$(EVAL_ENV) $(PYTHON) scripts/reextract_for_eval.py "$(EVAL_STEM)" --group-chars $(GROUP_CHARS) $(if $(FROM_VERSION),--from-version $(FROM_VERSION),) $(if $(EXTRACT_VARIANT),--variant "$(EXTRACT_VARIANT)",) --save-dir "$(EVAL_RUNS_DIR)"
 
 eval-reextract-dry:
 	@$(MAKE) --no-print-directory eval-check CHECK_STAGE=reextract
