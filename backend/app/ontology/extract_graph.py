@@ -142,17 +142,31 @@ def extract_graph(document_text: str, schema: dict, extra_instructions: str | No
     return _normalize_graph(graph, normalized_schema, document_text)
 
 
+def _complete(item, required: tuple) -> bool:
+    """Whether a model's node or edge has every key it needs, each a non-empty string. A
+    reply now and then leaves one out (observed: a node without its type), and an incomplete
+    one cannot be stored, merged or linked to."""
+    return isinstance(item, dict) and all(isinstance(item.get(key), str) and item[key] for key in required)
+
+
+_NODE_KEYS = ("id", "label", "type")
+_EDGE_KEYS = ("source", "target", "type")
+
+
 def _normalize_graph(graph: dict, normalized_schema: dict, document_text: str, known_ids=()) -> dict:
     """Verifies and shapes a model's {nodes, edges}: every item is normalized (see
     _normalize_extracted_item), and an edge whose endpoint is neither one of the
     graph's own nodes nor among `known_ids` is dropped."""
     properties_by_type = _properties_by_type(normalized_schema)
     section_labels = _section_labels_in(document_text)
+    complete_nodes = [node for node in graph["nodes"] if _complete(node, _NODE_KEYS)]
+    if len(complete_nodes) != len(graph["nodes"]):
+        logger.warning("dropping %d node(s) without an id, label or type", len(graph["nodes"]) - len(complete_nodes))
     graph["nodes"] = [
         _normalize_extracted_item(
             node, properties_by_type.get(node.get("type"), {}), document_text, section_labels
         )
-        for node in graph["nodes"]
+        for node in complete_nodes
     ]
 
     # The LLM occasionally hallucinates an edge endpoint that isn't among
@@ -163,6 +177,9 @@ def _normalize_graph(graph: dict, normalized_schema: dict, document_text: str, k
     node_ids = {n["id"] for n in graph["nodes"]} | set(known_ids)
     valid_edges = []
     for edge in graph["edges"]:
+        if not _complete(edge, _EDGE_KEYS):
+            logger.warning("dropping edge without a source, target or type: %r", edge)
+            continue
         if edge["source"] not in node_ids or edge["target"] not in node_ids:
             logger.warning(
                 "dropping edge with unknown endpoint: %r -> %r (type=%r)",
@@ -250,7 +267,8 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
     id_map: dict[tuple[int, str], str] = {}
     merged_nodes = []
     for group_index, graph in enumerate(group_graphs):
-        for node in graph["nodes"]:
+        # a group result cached before items were checked can still hold an incomplete node
+        for node in (n for n in graph["nodes"] if _complete(n, _NODE_KEYS)):
             key = (node["type"], node["label"])
             canonical_id = canonical_id_by_key.get(key)
             if canonical_id is None:
@@ -261,7 +279,7 @@ def _merge_group_graphs(group_graphs: list[dict]) -> dict:
 
     merged_edges = []
     for group_index, graph in enumerate(group_graphs):
-        for edge in graph["edges"]:
+        for edge in (e for e in graph["edges"] if _complete(e, _EDGE_KEYS)):
             source = id_map.get((group_index, edge["source"]))
             target = id_map.get((group_index, edge["target"]))
             if source is None or target is None:

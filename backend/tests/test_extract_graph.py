@@ -8,6 +8,7 @@ from app.llm.chat import set_model_name
 from app.ontology import DEFAULT_SCHEMA, create_schema_version
 from app.ontology.extract_graph import (
     _find_evidence_span,
+    _merge_group_graphs,
     extract_for_document,
     extract_graph,
     supplement_graph,
@@ -156,6 +157,51 @@ def test_the_input_graph_is_left_alone(monkeypatch):
     _supplement(monkeypatch, {"nodes": [{"id": "n9", "label": "Bob", "type": "Person"}], "edges": []})
 
     assert json.dumps(_FIRST, sort_keys=True) == before
+
+
+# --- items a model left incomplete ---------------------------------------------
+
+
+def _extract_reply(monkeypatch, reply):
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: FakeChatModel(json.dumps(reply)))
+    schema = {"node_types": [{"name": "Person", "description": "p"}, {"name": "Org", "description": "o"}], "edge_types": []}
+    return extract_graph("text", schema)
+
+
+@pytest.mark.parametrize("missing", ["id", "label", "type"])
+def test_a_node_without_an_id_label_or_type_is_dropped_with_the_edges_that_pointed_at_it(monkeypatch, missing):
+    complete = {"id": "n2", "label": "Bob", "type": "Person"}
+    broken = {key: value for key, value in {"id": "n1", "label": "Alice", "type": "Person"}.items() if key != missing}
+    reply = {
+        "nodes": [broken, complete],
+        "edges": [{"source": "n1", "target": "n2", "type": "KNOWS"}, {"source": "n2", "target": "n2", "type": "SELF"}],
+    }
+
+    result = _extract_reply(monkeypatch, reply)
+
+    assert [n["label"] for n in result["nodes"]] == ["Bob"]
+    assert [e["type"] for e in result["edges"]] == ["SELF"]
+
+
+@pytest.mark.parametrize("missing", ["source", "target", "type"])
+def test_an_edge_without_a_source_target_or_type_is_dropped(monkeypatch, missing):
+    nodes = [{"id": "n1", "label": "Alice", "type": "Person"}, {"id": "n2", "label": "Acme", "type": "Org"}]
+    edge = {key: value for key, value in {"source": "n1", "target": "n2", "type": "WORKS_AT"}.items() if key != missing}
+
+    result = _extract_reply(monkeypatch, {"nodes": nodes, "edges": [edge]})
+
+    assert result["edges"] == [] and len(result["nodes"]) == 2
+
+
+def test_merging_group_results_skips_an_incomplete_node_even_one_a_resume_cache_still_holds():
+    # a result stored before items were checked can still hold one; it must not stop the merge
+    first = {"nodes": [{"id": "n1", "label": "Alice", "type": "Person"}, {"id": "n2", "label": "Acme"}], "edges": [{"source": "n1", "target": "n2", "type": "WORKS_AT"}]}
+    second = {"nodes": [{"id": "n1", "label": "Bob", "type": "Person"}], "edges": [{"source": "n1", "target": "n1", "type": "SELF"}, {"source": "n1", "type": "BROKEN"}]}
+
+    merged = _merge_group_graphs([first, second])
+
+    assert [(n["type"], n["label"]) for n in merged["nodes"]] == [("Person", "Alice"), ("Person", "Bob")]
+    assert [e["type"] for e in merged["edges"]] == ["SELF"]
 
 
 def test_extract_graph_raises_when_nodes_edges_missing(monkeypatch):
