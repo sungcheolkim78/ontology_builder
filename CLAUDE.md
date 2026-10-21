@@ -336,7 +336,9 @@ read and written:
   re-extracts the text behind the extraction misses (a chunk group, or just the
   chunk) under the same schema to tell a schema that cannot hold a fact from an
   extraction that lost it. See `docs/ontology/golden_set_evaluation.md` for the method,
-  the first measurement and moving the data between machines (`samples/schema_eval/`).
+  the first measurement and moving the data between machines (`samples/schema_eval/`);
+  `docs/ontology/extraction_quality_findings.md` for what the measurements showed and what was changed
+  because of them (with `docs/adr/` for why), and `docs/ontology/eval_runs_table.md` for every run's numbers.
 - `call_log.py` (`app/llm/call_log.py`) — `with CallLog() as log:` records the model, duration and
   token use of every call made through `app.llm.calls` inside the block, by swapping its two
   telemetry wrappers for timing ones and restoring them on exit; nothing in the server uses it, the

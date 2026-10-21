@@ -38,7 +38,7 @@ MODEL_ARG := $(if $(strip $(MODEL)),--model "$(MODEL)",)
 LOG_ARG := $(if $(strip $(LOG_FILE)),--log-file "$(LOG_FILE)",)
 MAX_FILES_ARG := $(if $(strip $(MAX_PROC_FILEN)),--max-process-files "$(MAX_PROC_FILEN)",)
 
-.PHONY: help eval-refine eval-refine-dry eval-schema golden-generate prompt-experiment golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
+.PHONY: help eval-summary eval-refine eval-refine-dry eval-schema golden-generate prompt-experiment golden-score golden-curve golden-judge eval-reextract-dry eval-data eval-data-reset eval-check eval-reextract golden-density golden-eval golden-probe-chunks golden-eval-generate podman-start podman-up podman-down podman-restart setup goldenset goldenset-overwrite goldenset-test samsunglife-data samsunglife-data-test pdf-to-md pdf-to-md-verify pdf-to-md-test chunk-terms chunk-terms-test
 
 help:
 	@echo "Available targets:"
@@ -75,6 +75,8 @@ help:
 	@echo ""
 	@echo "  make eval-data"
 	@echo "      Copy backend/data to EVAL_DATA_DIR (backups/eval_data) for golden-set evaluation."
+	@echo "  make eval-summary"
+	@echo "      Regenerate docs/ontology/eval_runs_table.md from backups/eval_runs (then commit it)."
 	@echo "  make eval-data-reset"
 	@echo "      Delete that copy and copy backend/data again."
 	@echo "  make eval-check"
@@ -184,6 +186,10 @@ eval-data:
 		fi; \
 		mkdir -p "$(dir $(EVAL_DATA_DIR))" && cp -R backend/data "$(EVAL_DATA_DIR)" && echo "copied backend/data -> $(EVAL_DATA_DIR)"; \
 	fi
+
+# Rewrite docs/ontology/eval_runs_table.md from every report and run record in EVAL_RUNS_DIR (it is not committed; the table is).
+eval-summary:
+	$(PYTHON) scripts/summarize_eval_runs.py --runs "$(EVAL_RUNS_DIR)"
 
 eval-data-reset:
 	@test "$(abspath $(EVAL_DATA_DIR))" != "$(abspath backend/data)" || (echo "EVAL_DATA_DIR must not be backend/data" >&2; exit 2)

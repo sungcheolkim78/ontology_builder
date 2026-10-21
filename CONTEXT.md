@@ -40,6 +40,10 @@ _Avoid_: draft schema, trial schema
 One candidate schema scored against the schema it would replace: the change in type counts and, per golden question, the change in Retrieval outcome (questions gained, questions lost).
 _Avoid_: evaluation result
 
+**Reading**:
+One way of scoring a golden question against the search results: *strict* (a retrieved node quotes the answering passage), *semantic* (a node's text is close to it), *answer* (the retrieved text states the facts of the golden answer) or *judge* (an LLM says the context can answer). Reported side by side, never merged; the answer reading is the one to decide with.
+_Avoid_: metric, score type
+
 **Chunk group**:
 A budgeted run of consecutive chunks sent to the LLM in a single call. A document with no chunks is a single chunk group holding its whole text.
 _Avoid_: batch, candidate group
