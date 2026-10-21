@@ -67,3 +67,19 @@ _Avoid_: task, step
 **Reduce**:
 The step that folds every group result of a stage into that stage's single output.
 _Avoid_: merge step, consolidation (consolidation is one kind of reduce)
+
+**Rider** (특약):
+A contract attached to a policy's main contract (주계약), with its own numbering of articles. It starts at its `OOO특약 약관` title line and first article; the chunker records it as `rider_type`/`rider_name` on every chunk (`rider_type` is also `main`, `general` for the common 제1편 every rider refers to, or `appendix`). A policy can hold more than one main contract.
+_Avoid_: section (a chunk's `section_index` numbers riders, but "section" alone is ambiguous with 편/관 headings), 부가계약
+
+**Appendix**:
+The laws a policy cites, printed at its end. Each law is its own section (`rider_type: appendix`), named from its `- 법령명` line, because it numbers its own articles from 제1조.
+_Avoid_: 부록 chunk, law chunk
+
+**Plan** (`variant`):
+A rider sold in several plans repeats its articles once per plan, each run opened by a `《종합통원형》`-style line. The plan is recorded as the chunk's `variant`.
+_Avoid_: type, version
+
+**Table of contents reference**:
+The policy's own "상품 목차" (main contract, riders, appendix), read by `app.preprocess.chunking_eval` to check what the chunker found. Never an input to the chunker.
+_Avoid_: ground truth (it can be wrong or unreadable; a policy without one is reported `no-toc`)

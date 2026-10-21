@@ -269,9 +269,29 @@ read and written:
   `/api/documents`, which only looks for `raw.md`).
 - `chunking.py` — the markdown -> chunked-json stage, picking up where
   `parser.py` leaves off: `chunk_markdown_file` splits a document's `raw.md`
-  into per-article JSON chunks at `documents/{stem}/chunks.json` (`제N조`
-  headings, rider/section detection) — a separate, on-demand step from
-  parsing, triggered via `POST /api/documents/{filename}/chunk`.
+  into per-article JSON chunks at `documents/{stem}/chunks.json` — a separate,
+  on-demand step from parsing, triggered via
+  `POST /api/documents/{filename}/chunk`. Structure comes from the body, never
+  from the policy's table of contents (see below): an article heading is
+  `### 제N조 [title]`, the same line without the `###` when it is a whole
+  heading, or numbered by part (`제2-1조`); a rider (특약) starts at its
+  `OOO특약 약관` title line followed by its first article (joining a name the
+  PDF wrapped over lines), or with no title where numbering starts over; the
+  common 제1편 every rider refers to is a `general` section; a cited law of the
+  appendix is its own `appendix` section; a rider sold in plans repeats its
+  articles under `《plan》` lines, recorded as `variant`. Each chunk carries
+  `rider_type` (`main`/`general`/`rider`/`appendix`), `rider_name`,
+  `rider_name_source` (`title`/`guess`/`fallback`/`main`/`appendix` -- a
+  `fallback` `특약_N` is counted, not passed off as a name), `variant`,
+  `ancestors` (the 편/관 stack, read from the section's own start, table-of-
+  contents lines excluded) and `path` (`rider > 편/관 > 조`, unchanged in shape,
+  what `ChunkView` shows). `app.preprocess.chunking_eval` scores it against the
+  policy's own "상품 목차" -- rider names, article sequence, heading coverage,
+  hierarchy, side by side -- via `scripts/evaluate_chunking.py` (free, no model
+  call; `--holdout` for the two held-out documents, run once at the end of a
+  change). See `docs/ontology/chunking_quality.md` for the measurements and
+  `docs/adr/0005-*` for why the table of contents only checks. Changing a rule
+  here is judged the way that was: re-run the evaluator, compare every column.
 - `goldenset.py` — per-document golden QA generation, adapted from
   `scripts/prepare_goldenset/prepare_goldenset.py` (the standalone CLI tool)
   so a single already-uploaded document can get one from a UI button
