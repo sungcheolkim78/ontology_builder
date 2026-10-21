@@ -1,0 +1,230 @@
+"""Scores how well `app.preprocess.chunking.chunk_markdown` recovered a policy's
+structure (main contract, riders, 관/편 hierarchy, 조 sequence).
+
+The reference is the document's own "상품 목차" block -- the product table of
+contents near the front, a list of `name page` lines under 주계약 / 특약 /
+제도성특약 / 유첨 / 부록 headings. It is used only here, never by the chunker, so
+a wrong table of contents cannot leak into the chunks it is meant to check.
+
+Four readings are reported side by side and never merged into one score:
+rider names against the table of contents, 조 numbering within each rider,
+the 관/편 hierarchy, and labels that look like body text rather than a name.
+Free and deterministic: no model call.
+"""
+
+from __future__ import annotations
+
+import re
+
+PRODUCT_TOC_TITLE = re.compile(r"^(?:#+\s*)?상품\s*목차\s*$")
+_TOC_ENTRY = re.compile(r"^(?P<name>.+?)\s+(?P<page>\d{1,3})$")
+_PAGE_MARKER = re.compile(r"^<!--\s*page:")
+
+# TOC heading -> what the entries under it are.
+_TOC_SECTIONS = (
+    ("주계약", "main"),
+    ("특약일반사항", "general"),
+    ("제도성특약", "rider"),
+    ("특약", "rider"),
+    ("유첨", "attachment"),
+    ("부록", "appendix"),
+)
+
+_MIDDLE_DOTS = str.maketrans({"∙": "·", "ㆍ": "·", "•": "·", "‧": "·"})
+_FALLBACK_LABEL = re.compile(r"^특약_\d+$")
+
+
+def normalize_rider_name(name: str) -> str:
+    """Comparable form of a rider name: no heading marker, no spaces, one kind
+    of middle dot, no trailing '약관'."""
+    name = name.strip().lstrip("#").strip().translate(_MIDDLE_DOTS)
+    name = re.sub(r"\s+", "", name)
+    return name.removesuffix("약관")
+
+
+def parse_product_toc(text: str) -> dict | None:
+    """The 상품 목차 block as {"main": str, "general": [..], "riders": [..],
+    "attachments": [..], "appendix": [..]}, or None when the document has no
+    such block (the caller reports the table of contents as unusable)."""
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if PRODUCT_TOC_TITLE.match(line.strip()):
+            # the last one wins: the front matter also names it in a list
+            following = [item.strip() for item in lines[index + 1 : index + 4]]
+            if "주계약" in following:
+                start = index
+    if start is None:
+        return None
+
+    toc: dict = {"main": None, "general": [], "riders": [], "attachments": [], "appendix": []}
+    kind = None
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped == "---" or _PAGE_MARKER.match(stripped):
+            break
+        if not stripped:
+            continue
+        heading = next(
+            (k for title, k in _TOC_SECTIONS if stripped == title or stripped.startswith(f"{title} ※")),
+            None,
+        )
+        if heading is not None:
+            kind = heading
+            continue
+        match = _TOC_ENTRY.match(stripped)
+        if match is None or kind is None:
+            continue
+        name = match.group("name").strip()
+        if kind == "main":
+            toc["main"] = name
+        else:
+            toc[{"general": "general", "rider": "riders", "attachment": "attachments", "appendix": "appendix"}[kind]].append(name)
+    return toc if toc["main"] else None
+
+
+def rider_name_of(chunk: dict) -> str:
+    """The rider a chunk belongs to: the chunker's `rider_name` when it records
+    one, else the older `section_label`."""
+    return chunk.get("rider_name") or chunk.get("section_label") or ""
+
+
+def _sections(chunks: list[dict]) -> list[tuple[int, str, list[dict]]]:
+    grouped: dict[int, list[dict]] = {}
+    for chunk in chunks:
+        grouped.setdefault(chunk["section_index"], []).append(chunk)
+    return [(index, rider_name_of(items[0]), items) for index, items in sorted(grouped.items())]
+
+
+def looks_like_body_text(label: str) -> bool:
+    """A rider label that is a sentence, a bullet or a leftover marker, not a name."""
+    label = label.strip()
+    if not label or label.startswith(("-", "#", "※", "·", "|")):
+        return True
+    return len(label) > 45 or label.endswith(("다.", "니다", "습니다")) or "특약" not in label
+
+
+def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
+    sections = _sections(chunks)
+    found = [normalize_rider_name(name) for _, name, _ in sections]
+    fallback = [name for _, name, _ in sections if _FALLBACK_LABEL.match(name)]
+    suspicious = [
+        name
+        for position, (_, name, _) in enumerate(sections)
+        if position > 0 and not _FALLBACK_LABEL.match(name) and looks_like_body_text(name)
+    ]
+    result = {
+        "sections": len(sections),
+        "fallback_labels": len(fallback),
+        "suspicious_labels": suspicious,
+        "toc_available": toc is not None,
+    }
+    if toc is None:
+        return result
+    expected = [normalize_rider_name(name) for name in toc["riders"]]
+    expected_set, found_set = set(expected), set(found[1:])
+    result.update(
+        {
+            "toc_riders": len(expected),
+            "matched": len(expected_set & found_set),
+            "missing": sorted(expected_set - found_set),
+            "extra": sorted(found_set - expected_set),
+            "chunk_sections_vs_toc": f"{len(sections)} vs {1 + len(expected)}",
+        }
+    )
+    return result
+
+
+def score_article_sequence(chunks: list[dict]) -> dict:
+    """Within each rider, 조 numbers should run 1, 2, 3 ...; `제N조의M` may repeat N."""
+    duplicates = gaps = regressions = 0
+    details: list[str] = []
+    for index, name, items in _sections(chunks):
+        seen: set[tuple[str, str | None]] = set()
+        previous = None
+        for chunk in items:
+            number = int(chunk["article_no"])
+            key = (chunk["article_no"], chunk.get("sub_no"))
+            if key in seen:
+                duplicates += 1
+            seen.add(key)
+            if previous is not None:
+                if number < previous:
+                    regressions += 1
+                    details.append(f"{index}:{name[:20]} 제{previous}조 -> 제{number}조")
+                elif number > previous + 1:
+                    gaps += 1
+            previous = number
+    return {
+        "chunks": len(chunks),
+        "duplicate_articles": duplicates,
+        "gaps": gaps,
+        "regressions": regressions,
+        "regression_examples": details[:5],
+    }
+
+
+# Any line that reads as an article heading, with or without the markdown `###`,
+# numbered `제12조`, `제12조의2` or `제2-1조`. Anchored to the whole line, like the
+# chunker's own pattern, so a table-of-contents line (page number after the
+# title) and a cross-reference inside a sentence are not candidates.
+_ARTICLE_CANDIDATE = re.compile(
+    r"^(?:#+\s*)?제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[.+\]|\(.+\))\s*$"
+)
+
+
+def score_article_coverage(chunk_result: dict, raw_text: str) -> dict:
+    """Lines of raw text that look like an article heading versus the ones the
+    chunker turned into a chunk: the rest are articles it dropped into the
+    previous chunk's body."""
+    started = {chunk["line_start"] for chunk in chunk_result["chunks"]}
+    candidates = [
+        number
+        for number, line in enumerate(raw_text.splitlines(), start=1)
+        if _ARTICLE_CANDIDATE.match(line.strip())
+    ]
+    missed = [number for number in candidates if number not in started]
+    lines = raw_text.splitlines()
+    return {
+        "heading_lines": len(candidates),
+        "chunked": len(candidates) - len(missed),
+        "missed": len(missed),
+        "missed_examples": [f"{number}: {lines[number - 1].strip()[:50]}" for number in missed[:5]],
+    }
+
+
+def score_hierarchy(chunks: list[dict]) -> dict:
+    """The 편/관 stack of each chunk must never go backwards inside a rider (a
+    관 number that drops is a running header or a table-of-contents line taken
+    for a heading) and must hold at most one entry per level."""
+    regressions = repeated_level = 0
+    examples: list[str] = []
+    for index, name, items in _sections(chunks):
+        last_by_level: dict[str, int] = {}
+        for chunk in items:
+            levels = [item["level"] for item in chunk.get("ancestors", [])]
+            if len(levels) != len(set(levels)):
+                repeated_level += 1
+            for item in chunk.get("ancestors", []):
+                number = int(item["no"])
+                if number < last_by_level.get(item["level"], 0):
+                    regressions += 1
+                    examples.append(f"{chunk['id']} 제{number}{item['level']} after {last_by_level[item['level']]}")
+                last_by_level[item["level"]] = number
+    return {
+        "hierarchy_regressions": regressions,
+        "repeated_level": repeated_level,
+        "hierarchy_examples": examples[:5],
+    }
+
+
+def score_chunking(chunk_result: dict, raw_text: str) -> dict:
+    chunks = chunk_result["chunks"]
+    toc = parse_product_toc(raw_text)
+    return {
+        "toc": toc,
+        "riders": score_rider_names(chunks, toc),
+        "articles": score_article_sequence(chunks),
+        "coverage": score_article_coverage(chunk_result, raw_text),
+        "hierarchy": score_hierarchy(chunks),
+    }
