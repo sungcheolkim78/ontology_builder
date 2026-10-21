@@ -86,6 +86,21 @@ def test_extract_graph_preserves_minimal_shape_when_no_structured_metadata(monke
     assert result == graph
 
 
+def test_the_extraction_prompt_carries_the_clause_coverage_rules_and_still_formats_with_a_schema(monkeypatch):
+    from app.llm.prompts import EXTRACT_COVERAGE_RULES, EXTRACT_PROMPT
+
+    model = RecordingChatModel(json.dumps({"nodes": [], "edges": []}))
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    extract_graph("some text", DEFAULT_SCHEMA)
+
+    sent = prompt_text(model.prompts[0])
+    assert EXTRACT_COVERAGE_RULES in sent
+    assert "Every clause in the text must be represented" in sent        # what was measured
+    assert sent.index("Output a single JSON object") < sent.index("Additional rules")  # after the base instructions
+    assert EXTRACT_PROMPT.rstrip().endswith(EXTRACT_COVERAGE_RULES.rstrip())  # at the very end, where it was evaluated
+
+
 def test_extra_instructions_are_appended_to_the_extraction_system_prompt(monkeypatch):
     model = RecordingChatModel(json.dumps({"nodes": [], "edges": []}))
     monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)

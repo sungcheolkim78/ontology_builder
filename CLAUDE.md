@@ -425,6 +425,12 @@ read and written:
   `VALIDATION_PROMPT`, `DISCOVERY_PROMPT`, `SUMMARY_PROMPT`,
   `EVOLUTION_PROMPT`, `CONSOLIDATION_PROMPT`, `SCHEMA_CONSOLIDATION_PROMPT`);
   `goldenset.py` imports `QUESTION_PROMPT`/`ANSWER_PROMPT` the same way.
+  `EXTRACT_PROMPT` ends with `EXTRACT_COVERAGE_RULES` (every clause gets a node stating what it
+  provides, separate rules get separate nodes, list items go in the `detail`): measured on two
+  policy documents it raised the golden questions answerable from the graph from 59 to 66 of 83,
+  for about 40-50% more output tokens and 36% more nodes (`docs/ontology/golden_set_evaluation.md`
+  section 5-6). A prompt change is judged the way that one was: re-extract with
+  `reextract_for_eval.py --variant`, score, compare against runs of the unchanged prompt.
 - `ontology.py` (`app/ontology/`, a package — see below) — two LLM-driven steps, run separately by design: propose a
   schema (`node_types`/`edge_types`) for a document, then extract actual
   `nodes`/`edges` conforming to a schema (the document's own, a copied one,

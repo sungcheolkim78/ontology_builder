@@ -94,7 +94,7 @@ SCHEMA_PROMPTS = {
 # system message alongside the instructions, still gives every group of that
 # one call a byte-identical system message, maximizing the cacheable prefix
 # for exactly the repeated-call pattern this module has.
-EXTRACT_PROMPT = """Using this ontology schema:
+_EXTRACT_INSTRUCTIONS = """Using this ontology schema:
 {schema}
 
 Extract entities and relationships from the document that conform to this schema.
@@ -111,6 +111,24 @@ Extract entities and relationships from the document that conform to this schema
 
 Output a single JSON object, no other text, with exactly these keys:
 {{"nodes": [{{"id": str, "label": str, "type": "<node type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}], "edges": [{{"source": "<node id>", "target": "<node id>", "type": "<edge type from schema>", "detail": str, "properties": {{}}, "evidence": str, "source_section": str, "confidence": "HIGH|MEDIUM|LOW"}}]}}"""
+
+
+# Appended to the end of EXTRACT_PROMPT, where it was evaluated (docs/ontology/golden_set_evaluation.md,
+# section 5-6): the base instructions turn a short clause into one node that states its gist and
+# leave out the clause's other conditions, consequences and list items, which is most of what a
+# golden question then asks for. With these rules, on two policy documents, 66 of 83 golden
+# questions could be answered from the graph against 59 without them (most of the gain in list and
+# multi-clause questions), at about 40-50% more output tokens and 36% more nodes per extraction.
+# The text is exactly what was measured; it refers to the "detail" limit above it, so it belongs
+# after the base instructions rather than woven into them.
+EXTRACT_COVERAGE_RULES = """Additional rules for the clauses (articles, paragraphs, items) of a legal or insurance document. They override the 1-2 sentence limit on "detail" above and the permission to leave a clause without a node.
+
+- Every clause in the text must be represented by at least one node that states what that clause provides: its rule, condition, consequence, exception, deadline or period, amount or ratio, procedure, or qualification. A short clause is as important as a long one. Do not skip a clause because it is brief, because it only elaborates another clause, or because its heading was already made a node.
+- When one clause states several separate rules, conditions, consequences or exceptions, give each its own node, or put each in the "detail" of one node (up to 4 sentences); never merge them into a one-line summary of the topic.
+- Quote figures, periods, ratios, names of channels and codes in the document's own wording.
+- When a clause lists items (a numbered or bulleted list, 가./나./다. items), name every item in the "detail"."""
+
+EXTRACT_PROMPT = _EXTRACT_INSTRUCTIONS + "\n\n" + EXTRACT_COVERAGE_RULES
 
 
 # A second pass over text EXTRACT_PROMPT has already been run on: the first pass tends to turn each

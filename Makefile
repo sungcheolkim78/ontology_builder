@@ -24,7 +24,7 @@ MAPPING ?=
 FROM_VERSION ?=
 EXTRACT_VARIANT ?=
 REPORT ?=
-VARIANT ?= scripts/prompt_variants/extract_clause_coverage.txt
+VARIANT ?=
 EVAL_VERSION_ARG := $(if $(strip $(EVAL_VERSION)),--version $(EVAL_VERSION),)
 EVAL_RUNS_DIR ?= backups/eval_runs
 EVAL_SCRIPT := scripts/evaluate_golden_set.py
@@ -241,6 +241,7 @@ golden-curve:
 # a second pass that adds what is missing; reports which arms state the facts of the golden answers.
 prompt-experiment: eval-check
 	@test -n "$(REPORT)" || (echo "REPORT=<scoring report JSON> is required" >&2; exit 2)
+	@test -n "$(VARIANT)" || (echo "VARIANT=<prompt text file> is required (extract_clause_coverage.txt is already in EXTRACT_PROMPT; appending it again would only repeat it)" >&2; exit 2)
 	$(EVAL_ENV) $(PYTHON) scripts/probe_prompt_variant.py "$(EVAL_STEM)" --from-report "$(REPORT)" --variant "$(VARIANT)" --second-pass --save-dir "$(EVAL_RUNS_DIR)"
 
 golden-eval: eval-check
