@@ -164,9 +164,10 @@ def parse_rider_title(lines: list[str], index: int) -> str | None:
     return name
 
 
-def rider_starts(lines: list[str], headings: list[tuple[int, dict]]) -> dict[int, str]:
-    """Position in `headings` of each rider's first article -> that rider's name."""
-    starts: dict[int, str] = {}
+def rider_starts(lines: list[str], headings: list[tuple[int, dict]]) -> dict[int, tuple[str, int]]:
+    """Position in `headings` of each rider's first article -> (rider name, the
+    line index of its title)."""
+    starts: dict[int, tuple[str, int]] = {}
     for position, (heading_index, parsed) in enumerate(headings):
         if not _is_first_article(parsed):
             continue
@@ -174,9 +175,43 @@ def rider_starts(lines: list[str], headings: list[tuple[int, dict]]) -> dict[int
         for index in range(heading_index - 1, max(previous, heading_index - RIDER_TITLE_WINDOW) - 1, -1):
             name = parse_rider_title(lines, index)
             if name is not None:
-                starts[position] = name
+                starts[position] = (name, index)
                 break
     return starts
+
+
+# The appendix of cited laws opens with a line like "부록 약관에서 인용된 법령 내용
+# (가나다 순)", and each law with "- 감염병의 예방 및 관리에 관한 법률" just above its
+# first article. Like a rider title, the opening line counts only when an article
+# follows it soon: the same words sit in the table of contents with none after.
+# The laws number their own articles from 제1조, so each law is a section of its own
+# (otherwise ids such as "7::제2조" repeat across laws, and the last rider swallows
+# every law).
+_APPENDIX_MARKER = re.compile(r"^(?:#+\s*)?\[?부록\]?\s*약관에서\s*인용된\s*법령")
+_LAW_TITLE = re.compile(r"^-\s+(?P<name>.{2,60}?(?:법|법률|령|규칙|규정|조례))$")
+APPENDIX_WINDOW = 40
+
+
+def find_appendix_start(lines: list[str], headings: list[tuple[int, dict]]) -> int | None:
+    """Index of the line opening the appendix of cited laws, or None. The last
+    qualifying one: the appendix is at the end, and the same words earlier are
+    the front matter's list of what the policy contains."""
+    found = None
+    for index, line in enumerate(lines):
+        if not _APPENDIX_MARKER.match(line.strip()):
+            continue
+        if any(index < heading_index <= index + APPENDIX_WINDOW for heading_index, _ in headings):
+            found = index
+    return found
+
+
+def law_title_line(lines: list[str], start: int, end: int) -> int | None:
+    """Index of the cited law's title line between `start` and the article
+    heading at `end`, the last one if there are several."""
+    for index in range(end - 1, start - 1, -1):
+        if _LAW_TITLE.match(lines[index].strip()):
+            return index
+    return None
 
 
 def _body_text(lines: list[str], start: int, end: int) -> str:
@@ -205,39 +240,75 @@ def chunk_markdown(text: str, source_name: str) -> dict:
     }
 
     titled = rider_starts(lines, headings)
+    appendix_start = find_appendix_start(lines, headings)
     chunks = []
     section_index = -1
-    section_label = None
-    rider_name_source = "title"
-    section_start = 0
+    section_label = rider_name = ""
+    rider_type = "main"
+    rider_name_source = "main"
+    section_start = 0  # first line the section's 편/관 headings are read from
+    section_first_heading = 0
     for position, (index, parsed) in enumerate(headings):
-        # A title line decides. With none, a rider still starts where the
-        # numbering starts over: a first article (제1조, 제2-1조) no larger than
-        # the article before it. Moving on to the next part (제1-15조, then
-        # 제2-1조) is not a restart.
-        restarts = (
-            _is_first_article(parsed)
-            and position > 0
-            and _article_parts(parsed) <= _article_parts(headings[position - 1][1])
-        )
-        is_section_start = position == 0 or position in titled or restarts
-        if is_section_start:
+        previous_index = headings[position - 1][0] if position else -1
+        in_appendix = appendix_start is not None and index > appendix_start
+        law_line = None
+        if in_appendix:
+            law_line = law_title_line(lines, max(previous_index + 1, appendix_start), index)
+
+        if in_appendix:
+            # a law's own numbering is neither a rider's nor evidence of one
+            opens_section = law_line is not None or previous_index < appendix_start
+        else:
+            # A title line decides. With none, a rider still starts where the
+            # numbering starts over: a first article (제1조, 제2-1조) no larger
+            # than the article before it. Moving on to the next part (제1-15조,
+            # then 제2-1조) is not a restart.
+            restarts = (
+                _is_first_article(parsed)
+                and position > 0
+                and _article_parts(parsed) <= _article_parts(headings[position - 1][1])
+            )
+            opens_section = position == 0 or position in titled or restarts
+
+        if opens_section:
             section_index += 1
-            if section_index == 0:
-                section_label, rider_name_source = "주계약", "main"
-            elif position in titled:
-                section_label, rider_name_source = titled[position], "title"
-            elif guessed := guess_section_label(lines, section_start, index):
-                section_label, rider_name_source = guessed, "guess"
+            if in_appendix:
+                rider_type, rider_name_source = "appendix", "appendix"
+                rider_name = _LAW_TITLE.match(lines[law_line].strip()).group("name") if law_line is not None else "인용된 법령"
+                section_label = f"부록 > {rider_name}"
+                section_start = law_line if law_line is not None else appendix_start
+            elif section_index == 0:
+                rider_type, rider_name_source = "main", "main"
+                section_label = rider_name = "주계약"
+                section_start = 0
             else:
-                section_label, rider_name_source = f"특약_{section_index}", "fallback"
-            section_start = index
+                rider_type = "rider"
+                if position in titled:
+                    rider_name, title_index = titled[position]
+                    rider_name_source, section_start = "title", title_index
+                elif guessed := guess_section_label(lines, section_first_heading, index):
+                    rider_name, rider_name_source, section_start = guessed, "guess", previous_index + 1
+                else:
+                    rider_name, rider_name_source, section_start = f"특약_{section_index}", "fallback", previous_index + 1
+                if _GENERAL_PART_TITLE.match(rider_name):
+                    rider_type = "general"
+                section_label = rider_name
+            section_first_heading = index
 
         end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        # text that is not this article's: the appendix's opening notes, and the
+        # title line of the next cited law
+        if appendix_start is not None and index < appendix_start < end:
+            end = appendix_start
+        if position + 1 < len(headings) and headings[position + 1][0] > (appendix_start or len(lines)):
+            next_law_line = law_title_line(lines, max(index + 1, appendix_start), headings[position + 1][0])
+            if next_law_line is not None:
+                end = min(end, next_law_line)
+
         article_ref = f"제{parsed['article_no']}조" + (
             f"의{parsed['sub_no']}" if parsed["sub_no"] else ""
         )
-        ancestors = section_ancestors(lines, index)
+        ancestors = section_ancestors(lines[section_start:], index - section_start)
         ancestor_path = [
             f"제{item['no']}{item['level']} {item['title']}".rstrip()
             for item in ancestors
@@ -248,12 +319,8 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 "id": f"{section_index}::{article_ref}",
                 "section_index": section_index,
                 "section_label": section_label,
-                "rider_type": (
-                    "main"
-                    if section_index == 0
-                    else "general" if section_label.startswith("[특약") else "rider"
-                ),
-                "rider_name": section_label,
+                "rider_type": rider_type,
+                "rider_name": rider_name,
                 "rider_name_source": rider_name_source,
                 "article_no": parsed["article_no"],
                 "sub_no": parsed["sub_no"],

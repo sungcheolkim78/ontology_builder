@@ -131,7 +131,9 @@ def looks_like_body_text(label: str) -> bool:
 
 
 def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
-    sections = _sections(chunks)
+    # the cited laws of the appendix are sections too, but not riders to name
+    appendix = [s for s in _sections(chunks) if s[2][0].get("rider_type") == "appendix"]
+    sections = [s for s in _sections(chunks) if s[2][0].get("rider_type") != "appendix"]
     found = [normalize_rider_name(name) for _, name, _ in sections]
     fallback = [name for _, name, _ in sections if _FALLBACK_LABEL.match(name)]
     suspicious = [
@@ -141,6 +143,7 @@ def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
     ]
     result = {
         "sections": len(sections),
+        "appendix_sections": len(appendix),
         "fallback_labels": len(fallback),
         "suspicious_labels": suspicious,
         "toc_available": toc is not None,
@@ -194,7 +197,8 @@ def score_article_sequence(chunks: list[dict]) -> dict:
                 if number < previous:
                     regressions += 1
                     details.append(f"{index}:{name[:20]} 제{_join(previous)}조 -> 제{_join(number)}조")
-                elif _is_gap(previous, number):
+                elif _is_gap(previous, number) and items[0].get("rider_type") != "appendix":
+                    # a cited law is quoted in excerpts, so gaps there are expected
                     gaps += 1
             previous = number
     return {

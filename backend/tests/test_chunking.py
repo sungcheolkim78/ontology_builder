@@ -330,3 +330,54 @@ def test_a_rider_title_whose_last_line_is_only_yakgwan_is_joined():
     chunks = chunk_markdown(text, "doc")["chunks"]
 
     assert chunks[1]["rider_name"] == "갑상선암및기타피부암직접치료보장특약C(무배당,저해약환급금형)"
+
+
+APPENDIX_DOCUMENT = """### 제1조 [목적]
+주계약 본문입니다.
+### 제2조 [정의]
+주계약 정의입니다.
+
+---
+
+부록 약관에서 인용된 법령 내용 (가나다 순)
+- 아래 법령은 고객의 이해를 돕기 위해 마련되었습니다.
+- 감염병의 예방 및 관리에 관한 법률
+### 제2조(정의)
+이 법에서 사용하는 용어의 뜻은 다음과 같다.
+### 제3조(적용)
+적용 범위.
+- 개인정보보호법
+### 제2조(정의)
+개인정보의 정의.
+"""
+
+
+def test_a_cited_law_in_the_appendix_is_its_own_section_not_part_of_the_last_rider():
+    chunks = chunk_markdown(APPENDIX_DOCUMENT, "doc")["chunks"]
+
+    assert [(c["rider_type"], c["rider_name"], c["article_no"]) for c in chunks] == [
+        ("main", "주계약", "1"),
+        ("main", "주계약", "2"),
+        ("appendix", "감염병의 예방 및 관리에 관한 법률", "2"),
+        ("appendix", "감염병의 예방 및 관리에 관한 법률", "3"),
+        ("appendix", "개인정보보호법", "2"),
+    ]
+    assert len({c["id"] for c in chunks}) == len(chunks)  # 제2조 of two laws no longer collide
+    assert chunks[2]["path"].startswith("부록 > 감염병의 예방 및 관리에 관한 법률 > 제2조")
+    # the appendix's own disclaimer is not left in the last chunk of the contract
+    assert "법령 내용" not in chunks[1]["text"]
+    assert "가나다" not in chunks[1]["text"]
+
+
+def test_the_appendix_starts_at_the_last_opening_line_not_at_a_table_of_contents_mention():
+    text = (
+        "[부록] 약관에서 인용된 법령 내용\n"  # front-matter list of what the policy contains
+        "### 제1조 [목적]\n주계약 본문입니다.\n"
+        "### 제2조 [정의]\n주계약 정의입니다.\n"
+        "부록 약관에서 인용된 법령 내용 (가나다 순)\n"
+        "- 개인정보보호법\n"
+        "### 제2조(정의)\n개인정보의 정의.\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [c["rider_type"] for c in chunks] == ["main", "main", "appendix"]
