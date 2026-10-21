@@ -1,6 +1,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { apiFetch } from '../utils/api.js'
+import {
+  SAMSUNGLIFE_CATEGORIES,
+  SAMSUNGLIFE_STATUSES,
+  countSamsunglifeTerms,
+  filterSamsunglifeTerms,
+  toggleSelection,
+} from '../utils/samsunglifeTerms.js'
 
 const props = defineProps({
   file: { type: Object, default: null },
@@ -38,6 +45,17 @@ const samsunglifeSearching = ref(false)
 const samsunglifeSearched = ref(false)
 const samsunglifeSearchError = ref('')
 const samsunglifeResults = ref([])
+// Narrow the results already fetched; kept across searches and downloads, all on by default.
+const samsunglifeCategories = ref([...SAMSUNGLIFE_CATEGORIES])
+const samsunglifeStatuses = ref(SAMSUNGLIFE_STATUSES.map((status) => status.key))
+const samsunglifeVisibleResults = computed(() =>
+  filterSamsunglifeTerms(
+    samsunglifeResults.value,
+    samsunglifeCategories.value,
+    samsunglifeStatuses.value,
+  ),
+)
+const samsunglifeCounts = computed(() => countSamsunglifeTerms(samsunglifeResults.value))
 const samsunglifeDownloadingName = ref('')
 const samsunglifeDownloadError = ref('')
 
@@ -551,16 +569,48 @@ onBeforeUnmount(() => {
             >{{ samsunglifeSearching ? '검색 중...' : '검색' }}</button>
           </form>
           <p v-if="samsunglifeSearchError" class="mt-1 text-[11px] text-red-600 dark:text-red-400">{{ samsunglifeSearchError }}</p>
-          <ul v-if="samsunglifeResults.length" class="mt-2 space-y-1">
+          <div v-if="samsunglifeResults.length" class="mt-2 space-y-1">
+            <div class="flex flex-wrap gap-1" role="group" aria-label="분류 필터">
+              <button
+                v-for="category in SAMSUNGLIFE_CATEGORIES"
+                :key="category"
+                type="button"
+                class="chip"
+                :class="samsunglifeCategories.includes(category)
+                  ? 'border-sky-500/60 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                  : 'border-border text-ink-faint'"
+                :aria-pressed="samsunglifeCategories.includes(category)"
+                @click="samsunglifeCategories = toggleSelection(samsunglifeCategories, category)"
+              >{{ category }} {{ samsunglifeCounts.categories[category] }}</button>
+            </div>
+            <div class="flex flex-wrap gap-1" role="group" aria-label="판매 상태 필터">
+              <button
+                v-for="status in SAMSUNGLIFE_STATUSES"
+                :key="status.key"
+                type="button"
+                class="chip"
+                :class="samsunglifeStatuses.includes(status.key)
+                  ? 'border-sky-500/60 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                  : 'border-border text-ink-faint'"
+                :aria-pressed="samsunglifeStatuses.includes(status.key)"
+                @click="samsunglifeStatuses = toggleSelection(samsunglifeStatuses, status.key)"
+              >{{ status.label }} {{ samsunglifeCounts.statuses[status.key] }}</button>
+            </div>
+          </div>
+          <p
+            v-if="samsunglifeResults.length && !samsunglifeVisibleResults.length"
+            class="mt-1 text-[11px] text-ink-faint"
+          >필터에 맞는 결과가 없습니다</p>
+          <ul v-if="samsunglifeVisibleResults.length" class="mt-2 space-y-1">
             <li
-              v-for="term in samsunglifeResults"
+              v-for="term in samsunglifeVisibleResults"
               :key="`${term.category}-${term.name}`"
               class="flex items-center justify-between gap-1.5 rounded-md px-1.5 py-1 text-[11px] hover:bg-ink/5"
             >
               <div class="min-w-0">
                 <div class="break-all text-ink">{{ term.name }}</div>
                 <div class="text-[10px] text-ink-faint">
-                  {{ term.category }} · {{ term.currently_listed ? '판매중' : '판매종료' }}
+                  {{ term.category }} · {{ term.currently_listed ? '판매중' : '판매중지' }}
                 </div>
               </div>
               <button
@@ -572,7 +622,7 @@ onBeforeUnmount(() => {
             </li>
           </ul>
           <p
-            v-else-if="samsunglifeSearched && !samsunglifeSearching && !samsunglifeSearchError"
+            v-else-if="samsunglifeSearched && !samsunglifeResults.length && !samsunglifeSearching && !samsunglifeSearchError"
             class="mt-1 text-[11px] text-ink-faint"
           >검색 결과가 없습니다</p>
           <p v-if="samsunglifeDownloadingName" class="mt-1 text-[11px] text-ink-muted">
