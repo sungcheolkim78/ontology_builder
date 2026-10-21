@@ -18,11 +18,22 @@ from app.utils.store import write_json
 # Anchored to the full line: a TOC duplicate or a mid-sentence PDF line-wrap
 # artifact always has extra text trailing the closing bracket/paren, so
 # requiring the title bracket to end the line rejects both at once.
-ARTICLE_HEADING_PATTERN = re.compile(
-    r"^###\s*제\s*(?P<no>\d+)\s*조"
-    r"(?:\s*의\s*(?P<sub>\d+))?\s*"
-    r"(?:\[(?P<title_b>.+)\]|\((?P<title_p>.+)\))\s*$"
+#
+# The article number is `12` or, in a rider written in parts, `2-1` (제2-1조).
+# A line the converter marked `###` vouches for itself, so its title may hold
+# anything. The converter also drops the `###` from some real headings (a
+# 일시납 policy's "해당 사항이 없습니다" articles), and nothing vouches for such a
+# line, so it must be the whole heading: a `[title]`, or a `(title)` whose own
+# parentheses balance and which ends the line -- not a sentence that opens with
+# a citation like "제20조(계약내용의 변경 등) 제1항의 절차에 따라 ...".
+_ARTICLE_NUMBER = r"제\s*(?P<no>\d+(?:-\d+)?)\s*조(?:\s*의\s*(?P<sub>\d+))?\s*"
+MARKED_ARTICLE_HEADING_PATTERN = re.compile(
+    rf"^###\s*{_ARTICLE_NUMBER}(?:\[(?P<title_b>.+)\]|\((?P<title_p>.+)\))\s*$"
 )
+UNMARKED_ARTICLE_HEADING_PATTERN = re.compile(
+    rf"^{_ARTICLE_NUMBER}(?:\[(?P<title_b>[^\[\]]+)\]|\((?P<title_p>(?:[^()]|\([^()]*\))*)\))\s*$"
+)
+ARTICLE_HEADING_PATTERNS = (MARKED_ARTICLE_HEADING_PATTERN, UNMARKED_ARTICLE_HEADING_PATTERN)
 
 SECTION_HEADING_PATTERN = re.compile(
     r"^(?:##\s*)?제\s*(?P<no>\d+)\s*"
@@ -31,7 +42,7 @@ SECTION_HEADING_PATTERN = re.compile(
 
 
 def parse_article_heading(line: str) -> dict[str, str | None] | None:
-    match = ARTICLE_HEADING_PATTERN.match(line)
+    match = next((m for pattern in ARTICLE_HEADING_PATTERNS if (m := pattern.match(line.strip()))), None)
     if not match:
         return None
     title = match.group("title_b")

@@ -135,6 +135,21 @@ def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
     return result
 
 
+def _join(number: tuple[int, ...]) -> str:
+    return "-".join(str(part) for part in number)
+
+
+def _is_gap(previous: tuple[int, ...], number: tuple[int, ...]) -> bool:
+    """`제12조` after `제10조` skips one; `제2-4조` after `제2-2조` too. A new part
+    (`제3-1조` after `제2-9조`) restarts at 1; only an article that is neither
+    the next in its part nor the first of the next part is a gap."""
+    if len(previous) == 1 or len(number) == 1:
+        return number[0] > previous[0] + 1
+    if number[0] == previous[0]:
+        return number[1] > previous[1] + 1
+    return number[0] > previous[0] + 1 or number[1] != 1
+
+
 def score_article_sequence(chunks: list[dict]) -> dict:
     """Within each rider, 조 numbers should run 1, 2, 3 ...; `제N조의M` may repeat N."""
     duplicates = gaps = regressions = 0
@@ -143,7 +158,7 @@ def score_article_sequence(chunks: list[dict]) -> dict:
         seen: set[tuple[str, str | None]] = set()
         previous = None
         for chunk in items:
-            number = int(chunk["article_no"])
+            number = tuple(int(part) for part in chunk["article_no"].split("-"))
             key = (chunk["article_no"], chunk.get("sub_no"))
             if key in seen:
                 duplicates += 1
@@ -151,8 +166,8 @@ def score_article_sequence(chunks: list[dict]) -> dict:
             if previous is not None:
                 if number < previous:
                     regressions += 1
-                    details.append(f"{index}:{name[:20]} 제{previous}조 -> 제{number}조")
-                elif number > previous + 1:
+                    details.append(f"{index}:{name[:20]} 제{_join(previous)}조 -> 제{_join(number)}조")
+                elif _is_gap(previous, number):
                     gaps += 1
             previous = number
     return {
@@ -169,7 +184,8 @@ def score_article_sequence(chunks: list[dict]) -> dict:
 # chunker's own pattern, so a table-of-contents line (page number after the
 # title) and a cross-reference inside a sentence are not candidates.
 _ARTICLE_CANDIDATE = re.compile(
-    r"^(?:#+\s*)?제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[.+\]|\(.+\))\s*$"
+    r"^(?:###\s*제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[.+\]|\(.+\))"
+    r"|제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[[^\[\]]+\]|\((?:[^()]|\([^()]*\))*\)))\s*$"
 )
 
 

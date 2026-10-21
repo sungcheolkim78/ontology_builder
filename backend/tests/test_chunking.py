@@ -45,6 +45,37 @@ def test_parse_section_heading_accepts_korean_policy_section_forms(line):
     }
 
 
+@pytest.mark.parametrize(
+    ("line", "article_no", "sub_no", "title"),
+    [
+        # the converter sometimes drops the `###`
+        ("제26조 [보험료의 납입이 연체되는 경우 납입최고(독촉)와 계약의 해지]", "26", None, "보험료의 납입이 연체되는 경우 납입최고(독촉)와 계약의 해지"),
+        # riders number articles by part: 제2-1조, 제2-1조의2
+        ("제2-1조 [용어의 정의]", "2-1", None, "용어의 정의"),
+        ("제2-1조의3 [“급성심근경색증”의 정의 및 진단확정]", "2-1", "3", "“급성심근경색증”의 정의 및 진단확정"),
+        ("제4-36조 (통신판매시 준수사항)", "4-36", None, "통신판매시 준수사항"),
+        ("### 제1-2조 [목적]", "1-2", None, "목적"),
+    ],
+)
+def test_parse_article_heading_accepts_headings_without_markdown_marker_and_part_numbers(
+    line, article_no, sub_no, title
+):
+    assert parse_article_heading(line) == {"article_no": article_no, "sub_no": sub_no, "title": title}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # a body sentence that starts with a citation, with no `###` to vouch for it
+        "제20조(계약내용의 변경 등) 제1항의 절차에 따라 계약자 명의를 보험수익자로 변경하여 계약의 특별부활(효력",
+        "제1조 [목적]에 따라 보험금을 지급합니다.",
+        "제3조 [목적] 5",
+    ],
+)
+def test_parse_article_heading_rejects_unmarked_lines_that_are_not_whole_headings(line):
+    assert parse_article_heading(line) is None
+
+
 def test_parse_article_heading_rejects_midsentence_corruption():
     result = parse_article_heading(
         "### 제3조(보험금의 지급사유)에 해당하는 피보험자의 위험을 보장하기 위하여 체결됩니다."
