@@ -251,7 +251,7 @@ def score_hierarchy(chunks: list[dict]) -> dict:
     """The 편/관 stack of each chunk must never go backwards inside a rider (a
     관 number that drops is a running header or a table-of-contents line taken
     for a heading) and must hold at most one entry per level."""
-    regressions = repeated_level = 0
+    regressions = repeated_level = skipped = 0
     examples: list[str] = []
     for index, name, items in _sections(chunks):
         last_by_level: dict[str, int] = {}
@@ -261,13 +261,25 @@ def score_hierarchy(chunks: list[dict]) -> dict:
                 repeated_level += 1
             for item in chunk.get("ancestors", []):
                 number = int(item["no"])
-                if number < last_by_level.get(item["level"], 0):
+                previous = last_by_level.get(item["level"], 0)
+                if number < previous:
                     regressions += 1
-                    examples.append(f"{chunk['id']} 제{number}{item['level']} after {last_by_level[item['level']]}")
+                    examples.append(f"{chunk['id']} 제{number}{item['level']} after {previous}")
+                elif (
+                    number > previous + 1
+                    and chunk.get("rider_type") != "appendix"
+                    and not (previous == 0 and item["level"] == "편")
+                ):
+                    # 제1관, 제2관 ... run on: a skipped number is a heading lost or
+                    # misread. A rider written in parts opens at 제2편, though: the
+                    # common 제1편 is only referred to.
+                    skipped += 1
+                    examples.append(f"{chunk['id']} 제{number}{item['level']} follows {previous}")
                 last_by_level[item["level"]] = number
     return {
         "hierarchy_regressions": regressions,
         "repeated_level": repeated_level,
+        "skipped_numbers": skipped,
         "hierarchy_examples": examples[:5],
     }
 

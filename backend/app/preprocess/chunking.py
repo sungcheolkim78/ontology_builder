@@ -53,10 +53,18 @@ def parse_article_heading(line: str) -> dict[str, str | None] | None:
     return {"article_no": match.group("no"), "sub_no": match.group("sub"), "title": title}
 
 
+_TOC_TAIL = re.compile(r"\s\d{1,4}$|제\s*\d+(?:-\d+)?\s*조")
+
+
 def parse_section_heading(line: str) -> dict[str, str] | None:
     """Parse a policy hierarchy heading such as ``제 2 관 보험금의 지급``."""
     match = SECTION_HEADING_PATTERN.match(line.strip())
     if not match:
+        return None
+    # A table-of-contents line: the page number ends it, or the articles under it
+    # are listed on the same line. Same rule as for an article heading: the title
+    # must be the whole line, with nothing trailing.
+    if _TOC_TAIL.search(match.group("title")):
         return None
     return {
         "level": match.group("level"),

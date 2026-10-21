@@ -442,3 +442,27 @@ def test_a_plan_continues_until_the_next_plan_line_or_the_next_rider():
 def test_a_marked_line_that_is_a_sentence_after_its_parenthesised_title_is_not_a_heading():
     line = "### 제20조(계약내용의 변경 등) 제1항의 절차에 따라 계약자 명의를 변경하여 특별부활(효력회복)"
     assert parse_article_heading(line) is None
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # table-of-contents lines: a page number ends them, or an article is listed on the same line
+        "## 제5관 보험료의 납입 20",
+        "## 제1관 목적 및 용어의 정의 5 제13조 [계약 전 알릴 의무] 15",
+        "## 제1관 보험계약의 성립과 유지 제22조 [계약의 소멸] 20",
+    ],
+)
+def test_parse_section_heading_rejects_table_of_contents_lines(line):
+    assert parse_section_heading(line) is None
+
+
+def test_a_table_of_contents_part_line_is_not_the_part_of_the_first_article():
+    text = (
+        "## 제7관 분쟁의 조정 등 26\n"  # front matter
+        "### 제1조 [목적]\n본문\n"
+        "### 제2조 [정의]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [c["ancestors"] for c in chunks] == [[], []]

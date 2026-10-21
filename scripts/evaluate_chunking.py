@@ -48,7 +48,7 @@ def main() -> None:
         text = path.read_text(encoding="utf-8")
         reports[name] = score_chunking(chunk_markdown(text, name), text)
 
-    header = f"{'document':34} {'chunks':>6} {'secs':>9} {'laws':>4} {'match':>7} {'fallbk':>6} {'susp':>4} {'cover':>9} {'dup':>3} {'gap':>3} {'regr':>4} {'h.reg':>5}"
+    header = f"{'document':34} {'chunks':>6} {'secs':>9} {'laws':>4} {'match':>7} {'fallbk':>6} {'susp':>4} {'cover':>9} {'dup':>3} {'gap':>3} {'regr':>4} {'h.reg':>5} {'h.skip':>6}"
     print(header)
     for name, report in reports.items():
         riders, articles, hierarchy = report["riders"], report["articles"], report["hierarchy"]
@@ -58,7 +58,7 @@ def main() -> None:
         print(
             f"{name[:34]:34} {articles['chunks']:>6} {expected:>9} {riders['appendix_sections']:>4} {match:>7} {riders['fallback_labels']:>6} "
             f"{len(riders['suspicious_labels']):>4} {coverage['chunked']}/{coverage['heading_lines']:<6} {articles['duplicate_articles']:>3} {articles['gaps']:>3} "
-            f"{articles['regressions']:>4} {hierarchy['hierarchy_regressions']:>5}"
+            f"{articles['regressions']:>4} {hierarchy['hierarchy_regressions']:>5} {hierarchy['skipped_numbers']:>6}"
         )
         if args.verbose:
             for key in ("missing", "extra"):
