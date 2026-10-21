@@ -381,3 +381,64 @@ def test_the_appendix_starts_at_the_last_opening_line_not_at_a_table_of_contents
     chunks = chunk_markdown(text, "doc")["chunks"]
 
     assert [c["rider_type"] for c in chunks] == ["main", "main", "appendix"]
+
+
+def test_headings_before_the_first_article_are_front_matter_not_the_main_contract():
+    text = (
+        "### 제8조 [보험금의 지급절차]\n"  # a stray line of the table of contents
+        "### 제20조 [계약내용의 변경 등]\n"
+        "# 삼성가나다보험 약관\n"
+        "## 제1관 목적\n"
+        "### 제1조 [목적]\n본문\n"
+        "### 제2조 [정의]\n본문\n"
+    )
+    result = chunk_markdown(text, "doc")
+
+    assert [c["article_no"] for c in result["chunks"]] == ["1", "2"]
+    assert {c["rider_name"] for c in result["chunks"]} == {"주계약"}
+    assert "제8조" in result["preamble"]["text"]
+
+
+def test_the_plan_a_rider_repeats_its_articles_for_is_recorded_and_keeps_ids_unique():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "# 실손의료비보장특약 약관\n"
+        "### 제1조 [담보종목]\n본문\n"
+        "《상해입원형》\n"
+        "### 제3조 [보상내용]\n상해 입원 본문\n"
+        "---\n\n<!-- page: 270 -->\n\n"
+        "《종합통원형》\n"
+        "### 제3조 [보상내용]\n통원 본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [c["variant"] for c in chunks] == [None, None, "상해입원형", "종합통원형"]
+    assert len({c["id"] for c in chunks}) == len(chunks)
+    assert chunks[3]["path"].endswith("《종합통원형》 > 제3조(보상내용)")
+    # the plan's name line is the next article's, not the previous article's text
+    assert "《" not in chunks[2]["text"]
+
+
+def test_a_plan_continues_until_the_next_plan_line_or_the_next_rider():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "# 실손의료비보장특약 약관\n"
+        "### 제1조 [담보종목]\n본문\n"
+        "《상해입원형》\n"
+        "### 제3조 [보상내용]\n본문\n"
+        "### 제4조 [보상하지 않는 사항]\n본문\n"
+        "《종합통원형》\n"
+        "### 제3조 [보상내용]\n본문\n"
+        "### 제4조 [보상하지 않는 사항]\n본문\n"
+        "# 다라특약 약관\n"
+        "### 제1조 [목적]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [c["variant"] for c in chunks] == [None, None, "상해입원형", "상해입원형", "종합통원형", "종합통원형", None]
+    assert len({c["id"] for c in chunks}) == len(chunks)
+
+
+def test_a_marked_line_that_is_a_sentence_after_its_parenthesised_title_is_not_a_heading():
+    line = "### 제20조(계약내용의 변경 등) 제1항의 절차에 따라 계약자 명의를 변경하여 특별부활(효력회복)"
+    assert parse_article_heading(line) is None

@@ -20,18 +20,20 @@ from app.utils.store import write_json
 # requiring the title bracket to end the line rejects both at once.
 #
 # The article number is `12` or, in a rider written in parts, `2-1` (제2-1조).
-# A line the converter marked `###` vouches for itself, so its title may hold
-# anything. The converter also drops the `###` from some real headings (a
+# A line the converter marked `###` vouches for itself, so a `[title]` may hold
+# anything; the converter also marks body sentences, so even then a `(title)`
+# must balance and end the line. The converter also drops the `###` from some real headings (a
 # 일시납 policy's "해당 사항이 없습니다" articles), and nothing vouches for such a
 # line, so it must be the whole heading: a `[title]`, or a `(title)` whose own
 # parentheses balance and which ends the line -- not a sentence that opens with
 # a citation like "제20조(계약내용의 변경 등) 제1항의 절차에 따라 ...".
 _ARTICLE_NUMBER = r"제\s*(?P<no>\d+(?:-\d+)?)\s*조(?:\s*의\s*(?P<sub>\d+))?\s*"
+_BALANCED_PARENS = r"(?:[^()]|\([^()]*\))*"
 MARKED_ARTICLE_HEADING_PATTERN = re.compile(
-    rf"^###\s*{_ARTICLE_NUMBER}(?:\[(?P<title_b>.+)\]|\((?P<title_p>.+)\))\s*$"
+    rf"^###\s*{_ARTICLE_NUMBER}(?:\[(?P<title_b>.+)\]|\((?P<title_p>{_BALANCED_PARENS})\))\s*$"
 )
 UNMARKED_ARTICLE_HEADING_PATTERN = re.compile(
-    rf"^{_ARTICLE_NUMBER}(?:\[(?P<title_b>[^\[\]]+)\]|\((?P<title_p>(?:[^()]|\([^()]*\))*)\))\s*$"
+    rf"^{_ARTICLE_NUMBER}(?:\[(?P<title_b>[^\[\]]+)\]|\((?P<title_p>{_BALANCED_PARENS})\))\s*$"
 )
 ARTICLE_HEADING_PATTERNS = (MARKED_ARTICLE_HEADING_PATTERN, UNMARKED_ARTICLE_HEADING_PATTERN)
 
@@ -205,6 +207,23 @@ def find_appendix_start(lines: list[str], headings: list[tuple[int, dict]]) -> i
     return found
 
 
+# A rider sold in plans repeats its articles per plan, each run opened by a line
+# such as "《종합통원형》" just above the first article. The plan is part of what
+# the article is, and without it the repeated 제3조 would share an id.
+_VARIANT = re.compile(r"^《(?P<name>[^《》]+)》$")
+
+
+def variant_line(lines: list[str], start: int, end: int) -> int | None:
+    """Index of the plan-name line directly above the article heading at `end`
+    (blank lines and page breaks between them don't count), or None."""
+    for index in range(end - 1, start - 1, -1):
+        stripped = lines[index].strip()
+        if not stripped or stripped == "---" or stripped.startswith("<!--"):
+            continue
+        return index if _VARIANT.match(stripped) else None
+    return None
+
+
 def law_title_line(lines: list[str], start: int, end: int) -> int | None:
     """Index of the cited law's title line between `start` and the article
     heading at `end`, the last one if there are several."""
@@ -232,6 +251,14 @@ def chunk_markdown(text: str, source_name: str) -> dict:
         if (parsed := parse_article_heading(line)) is not None
     ]
 
+    # The main contract starts at its 제1조. A heading before that is front matter
+    # (a stray line of the table of contents), and it would otherwise become a
+    # "주계약" of its own and push the real one onto the rider list.
+    first_article = next(
+        (position for position, (_, parsed) in enumerate(headings) if _is_first_article(parsed)), 0
+    )
+    headings = headings[first_article:]
+
     preamble_end = headings[0][0] if headings else len(lines)
     preamble = {
         "line_start": 1,
@@ -248,6 +275,7 @@ def chunk_markdown(text: str, source_name: str) -> dict:
     rider_name_source = "main"
     section_start = 0  # first line the section's 편/관 headings are read from
     section_first_heading = 0
+    variant = None
     for position, (index, parsed) in enumerate(headings):
         previous_index = headings[position - 1][0] if position else -1
         in_appendix = appendix_start is not None and index > appendix_start
@@ -295,7 +323,16 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 section_label = rider_name
             section_first_heading = index
 
+        if opens_section:
+            variant = None
+        own_variant = variant_line(lines, previous_index + 1, index)
+        if own_variant is not None:  # a plan runs until the next plan line or the next section
+            variant = _VARIANT.match(lines[own_variant].strip()).group("name")
         end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        if position + 1 < len(headings):
+            next_variant = variant_line(lines, index + 1, headings[position + 1][0])
+            if next_variant is not None:
+                end = min(end, next_variant)
         # text that is not this article's: the appendix's opening notes, and the
         # title line of the next cited law
         if appendix_start is not None and index < appendix_start < end:
@@ -313,10 +350,12 @@ def chunk_markdown(text: str, source_name: str) -> dict:
             f"제{item['no']}{item['level']} {item['title']}".rstrip()
             for item in ancestors
         ]
-        path_parts = [section_label, *ancestor_path, f"{article_ref}({parsed['title']})"]
+        variant_part = [f"《{variant}》"] if variant else []
+        path_parts = [section_label, *ancestor_path, *variant_part, f"{article_ref}({parsed['title']})"]
+        chunk_id = f"{section_index}::{article_ref}" + (f"@{variant}" if variant else "")
         chunks.append(
             {
-                "id": f"{section_index}::{article_ref}",
+                "id": chunk_id,
                 "section_index": section_index,
                 "section_label": section_label,
                 "rider_type": rider_type,
@@ -325,6 +364,7 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 "article_no": parsed["article_no"],
                 "sub_no": parsed["sub_no"],
                 "title": parsed["title"],
+                "variant": variant,
                 "ancestors": ancestors,
                 "path": " > ".join(path_parts),
                 "line_start": index + 1,

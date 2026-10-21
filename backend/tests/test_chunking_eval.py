@@ -102,3 +102,11 @@ def test_parse_product_toc_keeps_a_wrapped_entry_whose_page_number_was_lost():
         "초기집중보장형암주요치료보장특약C(무배당,저해약환급금형)",
         "다라특약(무배당)",
     ]
+
+
+def test_article_sequence_restarts_at_each_plan_of_a_rider():
+    def chunk(no, variant):
+        return {"section_index": 0, "section_label": "x", "article_no": str(no), "sub_no": None, "variant": variant}
+
+    result = score_article_sequence([chunk(3, "상해입원형"), chunk(4, "상해입원형"), chunk(3, "종합통원형"), chunk(4, "종합통원형")])
+    assert (result["regressions"], result["duplicate_articles"]) == (0, 0)

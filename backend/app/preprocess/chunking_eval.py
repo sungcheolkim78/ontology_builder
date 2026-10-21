@@ -185,11 +185,14 @@ def score_article_sequence(chunks: list[dict]) -> dict:
     duplicates = gaps = regressions = 0
     details: list[str] = []
     for index, name, items in _sections(chunks):
-        seen: set[tuple[str, str | None]] = set()
+        seen: set[tuple] = set()
         previous = None
+        variant = None
         for chunk in items:
+            if chunk.get("variant") != variant:  # a plan numbers its articles over again
+                variant, previous = chunk.get("variant"), None
             number = tuple(int(part) for part in chunk["article_no"].split("-"))
-            key = (chunk["article_no"], chunk.get("sub_no"))
+            key = (chunk["article_no"], chunk.get("sub_no"), chunk.get("variant"))
             if key in seen:
                 duplicates += 1
             seen.add(key)
@@ -214,9 +217,10 @@ def score_article_sequence(chunks: list[dict]) -> dict:
 # numbered `제12조`, `제12조의2` or `제2-1조`. Anchored to the whole line, like the
 # chunker's own pattern, so a table-of-contents line (page number after the
 # title) and a cross-reference inside a sentence are not candidates.
+_PARENS = r"(?:[^()]|\([^()]*\))*"
 _ARTICLE_CANDIDATE = re.compile(
-    r"^(?:###\s*제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[.+\]|\(.+\))"
-    r"|제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[[^\[\]]+\]|\((?:[^()]|\([^()]*\))*\)))\s*$"
+    r"^(?:###\s*제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[.+\]|\(" + _PARENS + r"\))"
+    r"|제\s*\d+(?:-\d+)?\s*조(?:\s*의\s*\d+)?\s*(?:\[[^\[\]]+\]|\(" + _PARENS + r"\)))\s*$"
 )
 
 
@@ -225,10 +229,13 @@ def score_article_coverage(chunk_result: dict, raw_text: str) -> dict:
     chunker turned into a chunk: the rest are articles it dropped into the
     previous chunk's body."""
     started = {chunk["line_start"] for chunk in chunk_result["chunks"]}
+    # what comes before the contract's first chunk is front matter (the table of
+    # contents has heading-shaped lines), not articles that were missed
+    first = min(started, default=0)
     candidates = [
         number
         for number, line in enumerate(raw_text.splitlines(), start=1)
-        if _ARTICLE_CANDIDATE.match(line.strip())
+        if number >= first and _ARTICLE_CANDIDATE.match(line.strip())
     ]
     missed = [number for number in candidates if number not in started]
     lines = raw_text.splitlines()
