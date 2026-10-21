@@ -318,3 +318,15 @@ def test_the_common_part_every_rider_refers_to_is_its_own_general_section():
         ("general", "[특약 약관] 제1편 일반사항"),
         ("rider", "가나특약"),
     ]
+
+
+def test_a_rider_title_whose_last_line_is_only_yakgwan_is_joined():
+    text = (
+        "### 제1조 [목적]\n본문\n\n"
+        "갑상선암및기타피부암직접치료보장특약C(무배당,저해약환급금형)\n"
+        "약관\n"
+        "제2-1조 [용어]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert chunks[1]["rider_name"] == "갑상선암및기타피부암직접치료보장특약C(무배당,저해약환급금형)"

@@ -108,7 +108,7 @@ def guess_section_label(lines: list[str], start: int, end: int) -> str | None:
 # followed by one. Riders written in parts begin at 제2-1조 (the common 제1편 is
 # only referred to), the others at 제1조.
 RIDER_TITLE_WINDOW = 40
-_RIDER_TITLE_PATTERN = re.compile(r"^(?:#+\s*)?(?P<name>[^|]+?)\s*약관$")
+_RIDER_TITLE_PATTERN = re.compile(r"^(?:#+\s*)?(?P<name>[^|]*?)\s*약관$")
 _GENERIC_RIDER_TITLES = {"특약", "제도성특약"}
 MIN_NAME_FRAGMENT = 4  # a wrapped head of a rider name is long ("갑상선암및기타피부암"), not "본문"
 _PRODUCT_CODE = re.compile(r"^[A-Z]{2}\d+\(\d+\)")  # "JG0002003(251212)", printed above some titles
