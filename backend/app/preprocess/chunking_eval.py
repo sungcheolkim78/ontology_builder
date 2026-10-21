@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 PRODUCT_TOC_TITLE = re.compile(r"^(?:#+\s*)?상품\s*목차\s*$")
-_TOC_ENTRY = re.compile(r"^(?P<name>.+?)\s+(?P<page>\d{1,3})$")
+_TOC_ENTRY = re.compile(r"^(?P<name>.+?)\s+(?P<page>\d{1,4})$")
 _PAGE_MARKER = re.compile(r"^<!--\s*page:")
 
 # TOC heading -> what the entries under it are.
@@ -38,8 +38,14 @@ def normalize_rider_name(name: str) -> str:
     """Comparable form of a rider name: no heading marker, no spaces, one kind
     of middle dot, no trailing '약관'."""
     name = name.strip().lstrip("#").strip().translate(_MIDDLE_DOTS)
-    name = re.sub(r"\s+", "", name)
-    return name.removesuffix("약관")
+    name = re.sub(r"\s+", "", name).removesuffix("약관")
+    # the table of contents leaves out a middle dot the title line keeps
+    # ("운전탑승부담보" / "운전·탑승부담보"), so the dot is not part of the name
+    return name.replace("·", "")
+
+
+def _brackets_balance(text: str) -> bool:
+    return text.count("(") == text.count(")") and text.count("[") == text.count("]")
 
 
 def parse_product_toc(text: str) -> dict | None:
@@ -58,28 +64,48 @@ def parse_product_toc(text: str) -> dict | None:
         return None
 
     toc: dict = {"main": None, "general": [], "riders": [], "attachments": [], "appendix": []}
+    keys = {"general": "general", "rider": "riders", "attachment": "attachments", "appendix": "appendix"}
     kind = None
+    wrapped = ""  # head of an entry whose name wrapped onto the next line
+    at_page_start = False
     for line in lines[start + 1 :]:
         stripped = line.strip()
         if stripped == "---" or _PAGE_MARKER.match(stripped):
-            break
+            at_page_start = True
+            continue
         if not stripped:
             continue
         heading = next(
             (k for title, k in _TOC_SECTIONS if stripped == title or stripped.startswith(f"{title} ※")),
             None,
         )
-        if heading is not None:
-            kind = heading
-            continue
         match = _TOC_ENTRY.match(stripped)
-        if match is None or kind is None:
+        if at_page_start:
+            # the list goes on over the page break only while the next page
+            # opens with another entry, a heading, or the head of a wrapped
+            # rider name; anything else ends it
+            if heading is None and match is None and not wrapped and "특약" not in stripped:
+                break
+            at_page_start = False
+        if heading is not None:
+            kind, wrapped = heading, ""
             continue
-        name = match.group("name").strip()
+        if match is None:
+            wrapped = "" if stripped.startswith(("※", "[")) else wrapped + stripped
+            # the converter sometimes loses the page number of a wrapped entry:
+            # a name whose brackets close is then complete without one
+            if kind in ("rider", "attachment") and "특약" in wrapped and _brackets_balance(wrapped):
+                toc[keys[kind]].append(wrapped)
+                wrapped = ""
+            continue
+        if kind is None:
+            continue
+        name = wrapped + match.group("name").strip()
+        wrapped = ""
         if kind == "main":
             toc["main"] = name
         else:
-            toc[{"general": "general", "rider": "riders", "attachment": "attachments", "appendix": "appendix"}[kind]].append(name)
+            toc[keys[kind]].append(name)
     return toc if toc["main"] else None
 
 
@@ -101,7 +127,7 @@ def looks_like_body_text(label: str) -> bool:
     label = label.strip()
     if not label or label.startswith(("-", "#", "※", "·", "|")):
         return True
-    return len(label) > 45 or label.endswith(("다.", "니다", "습니다")) or "특약" not in label
+    return len(label) > 90 or label.endswith(("다.", "니다", "습니다")) or "특약" not in label
 
 
 def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
@@ -121,11 +147,12 @@ def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
     }
     if toc is None:
         return result
-    expected = [normalize_rider_name(name) for name in toc["riders"]]
+    # the common part ("[특약약관]제1편일반사항") is a section of its own, listed apart
+    expected = [normalize_rider_name(name) for name in toc["general"] + toc["riders"]]
     expected_set, found_set = set(expected), set(found[1:])
     result.update(
         {
-            "toc_riders": len(expected),
+            "toc_riders": len(expected),  # riders and general parts
             "matched": len(expected_set & found_set),
             "missing": sorted(expected_set - found_set),
             "extra": sorted(found_set - expected_set),

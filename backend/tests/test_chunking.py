@@ -166,3 +166,155 @@ def test_chunk_markdown_file_reads_from_document_dir_and_writes_chunks_json():
 def test_chunk_markdown_file_raises_for_missing_document():
     with pytest.raises(FileNotFoundError):
         chunk_markdown_file("does_not_exist")
+
+
+RIDER_DOCUMENT = """# 삼성가나다보험 약관
+
+### 제1조 [목적]
+주계약 본문입니다.
+### 제2조 [정의]
+주계약 정의입니다.
+
+# 건강우대특약(무배당) 약관
+
+### 제1조 [특약의 체결]
+특약 본문입니다.
+### 제2조 [정의]
+특약 정의입니다.
+
+(체증형)암진단특약C(무배당) 약관
+## 제1편 일반사항
+[특약 약관] 제1편 일반사항 제1-1조부터 제1-15조까지의 규정을 이 특약 제1편 일반사항으로 합니다.
+## 제2편 개별사항
+## 제1관 용어의 정의 등
+제2-1조 [용어의 정의]
+본문입니다.
+제2-2조 [보험기간]
+본문입니다.
+"""
+
+
+def test_a_rider_title_line_starts_a_rider_and_names_it():
+    chunks = chunk_markdown(RIDER_DOCUMENT, "doc")["chunks"]
+
+    assert [(c["rider_type"], c["rider_name"]) for c in chunks] == [
+        ("main", "주계약"),
+        ("main", "주계약"),
+        ("rider", "건강우대특약(무배당)"),
+        ("rider", "건강우대특약(무배당)"),
+        ("rider", "(체증형)암진단특약C(무배당)"),
+        ("rider", "(체증형)암진단특약C(무배당)"),
+    ]
+    assert {c["rider_name_source"] for c in chunks[2:]} == {"title"}
+    # path keeps its old shape: rider > 편/관 > 조
+    assert chunks[4]["path"].startswith("(체증형)암진단특약C(무배당) > 제2편 개별사항 > 제1관 용어의 정의 등 > 제2-1조")
+
+
+def test_a_rider_name_wrapped_onto_two_lines_is_joined():
+    text = (
+        "### 제1조 [목적]\n본문\n\n"
+        "<!-- page: 324 -->\n\n"
+        "갑상선암및기타피부암주요치료보장\n"
+        "(치료별연간1회,진단후10년)특약C(무배당) 약관\n"
+        "제2-1조 [용어의 정의]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert chunks[1]["rider_name"] == "갑상선암및기타피부암주요치료보장(치료별연간1회,진단후10년)특약C(무배당)"
+
+
+def test_a_line_that_merely_ends_in_teukyak_yakgwan_is_not_a_rider_title():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "① 회사는 특약의 부활(효력회복) 청약을 받은 경우에는 주계약 및 해당 특약 약관\n"
+        "### 제2조 [정의]\n본문\n"
+        "제도성특약 약관\n"
+        "### 제3조 [보험금]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert {c["section_index"] for c in chunks} == {0}
+
+
+def test_a_rider_without_a_title_line_falls_back_and_says_so():
+    text = "### 제1조 [목적]\n본문\n### 제2조 [정의]\n본문\n### 제1조 [특약의 적용]\n본문\n"
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert chunks[2]["rider_name"] == "특약_1"
+    assert chunks[2]["rider_name_source"] == "fallback"
+
+
+def test_a_product_code_line_above_a_rider_title_is_not_part_of_its_name():
+    text = (
+        "### 제1조 [목적]\n본문\n\n"
+        "JG0002003(251212)\n"
+        "특별조건부특약 약관\n"
+        "### 제1조 [특약의 적용]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert chunks[1]["rider_name"] == "특별조건부특약"
+
+
+def test_a_part_numbered_rider_with_no_title_line_still_starts_where_numbering_restarts():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "### 제2조 [정의]\n본문\n"
+        "# 가나특약 약관\n"
+        "제2-1조 [용어]\n본문\n"
+        "제2-2조 [기간]\n본문\n"
+        "제2-1조 [용어]\n본문\n"  # next rider, its title lost in conversion
+        "제2-2조 [기간]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [c["section_index"] for c in chunks] == [0, 0, 1, 1, 2, 2]
+    assert chunks[2]["rider_name"] == "가나특약"
+    assert chunks[4]["rider_name_source"] in {"guess", "fallback"}
+
+
+def test_moving_on_to_the_next_part_inside_one_rider_is_not_a_new_rider():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "제1-1조 [적용]\n본문\n"
+        "제1-2조 [정의]\n본문\n"
+        "제2-1조 [용어]\n본문\n"
+        "제2-2조 [기간]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert {c["section_index"] for c in chunks} == {0}
+
+
+def test_a_rider_title_wrapped_in_the_middle_of_a_word_is_joined():
+    text = (
+        "### 제1조 [목적]\n본문\n\n"
+        "(체증형)주요순환계질환특정치료보장(치료별연간1회)특약C(무배\n"
+        "당,저해약환급금형) 약관\n"
+        "※ 안내입니다.\n"
+        "제2-1조 [용어]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert chunks[1]["rider_name"] == "(체증형)주요순환계질환특정치료보장(치료별연간1회)특약C(무배당,저해약환급금형)"
+    assert chunks[1]["rider_name_source"] == "title"
+
+
+def test_the_common_part_every_rider_refers_to_is_its_own_general_section():
+    text = (
+        "### 제1조 [목적]\n본문\n\n"
+        "[특약 약관] 제1편 일반사항\n"
+        "## 제1편 일반사항\n"
+        "제1-1조 [목적]\n본문\n"
+        "제1-2조 [정의]\n본문\n"
+        "# 가나특약 약관\n"
+        "제2-1조 [용어]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert [(c["rider_type"], c["rider_name"]) for c in chunks] == [
+        ("main", "주계약"),
+        ("general", "[특약 약관] 제1편 일반사항"),
+        ("general", "[특약 약관] 제1편 일반사항"),
+        ("rider", "가나특약"),
+    ]

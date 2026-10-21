@@ -101,6 +101,84 @@ def guess_section_label(lines: list[str], start: int, end: int) -> str | None:
     return None
 
 
+# A rider starts at its own title line, "OOO특약 약관" (with or without a `# `),
+# followed within RIDER_TITLE_WINDOW lines by the rider's first article. The first
+# article is what tells a title from the same words elsewhere: the table of
+# contents, a guide page, or a body line that happens to end "특약 약관" are not
+# followed by one. Riders written in parts begin at 제2-1조 (the common 제1편 is
+# only referred to), the others at 제1조.
+RIDER_TITLE_WINDOW = 40
+_RIDER_TITLE_PATTERN = re.compile(r"^(?:#+\s*)?(?P<name>[^|]+?)\s*약관$")
+_GENERIC_RIDER_TITLES = {"특약", "제도성특약"}
+MIN_NAME_FRAGMENT = 4  # a wrapped head of a rider name is long ("갑상선암및기타피부암"), not "본문"
+_PRODUCT_CODE = re.compile(r"^[A-Z]{2}\d+\(\d+\)")  # "JG0002003(251212)", printed above some titles
+_NOT_A_NAME_START = ("①", "②", "③", "④", "⑤", "-", "※", "·", "<!--", "---")
+
+
+def _is_first_article(parsed: dict[str, str | None]) -> bool:
+    if parsed["sub_no"] is not None:
+        return False
+    number = parsed["article_no"]
+    return number == "1" or re.fullmatch(r"\d+-1", number) is not None
+
+
+def _article_parts(parsed: dict[str, str | None]) -> tuple[int, ...]:
+    return tuple(int(part) for part in parsed["article_no"].split("-"))
+
+
+_GENERAL_PART_TITLE = re.compile(r"^\[특약\s*약관\]\s*제\s*\d+\s*편\s*일반사항$")
+
+
+def _brackets_balance(text: str) -> bool:
+    return text.count("(") == text.count(")") and text.count("[") == text.count("]")
+
+
+def _is_name_fragment(line: str) -> bool:
+    return bool(line) and " " not in line and not line.startswith(_NOT_A_NAME_START) and not line.endswith(("다.", "다")) and not _PRODUCT_CODE.match(line)
+
+
+def parse_rider_title(lines: list[str], index: int) -> str | None:
+    """The rider named by the title line at `index`, or None if it is not one.
+
+    The name is the title line with any wrapped head joined on: a long name
+    wraps in the PDF, sometimes in the middle of a word ("...특약C(무배" /
+    "당,저해약환급금형) 약관"), so the lines directly above count as its head when
+    they are a name fragment -- long enough not to be a stray word, or with a
+    bracket still open."""
+    stripped = lines[index].strip()
+    if _GENERAL_PART_TITLE.match(stripped):
+        return stripped
+    match = _RIDER_TITLE_PATTERN.match(stripped)
+    if match is None:
+        return None
+    name = match.group("name").strip()
+    if len(name) > 80 or name in _GENERIC_RIDER_TITLES or name.startswith(_NOT_A_NAME_START):
+        return None
+    for above in range(index - 1, max(index - 3, -1), -1):
+        head = lines[above].strip()
+        if not _is_name_fragment(head) or (len(head) < MIN_NAME_FRAGMENT and _brackets_balance(head)):
+            break
+        name = head + name
+    if "특약" not in name or len(name) > 120 or name.endswith(("다.", "다")):
+        return None
+    return name
+
+
+def rider_starts(lines: list[str], headings: list[tuple[int, dict]]) -> dict[int, str]:
+    """Position in `headings` of each rider's first article -> that rider's name."""
+    starts: dict[int, str] = {}
+    for position, (heading_index, parsed) in enumerate(headings):
+        if not _is_first_article(parsed):
+            continue
+        previous = headings[position - 1][0] if position else -1
+        for index in range(heading_index - 1, max(previous, heading_index - RIDER_TITLE_WINDOW) - 1, -1):
+            name = parse_rider_title(lines, index)
+            if name is not None:
+                starts[position] = name
+                break
+    return starts
+
+
 def _body_text(lines: list[str], start: int, end: int) -> str:
     """Join lines[start:end], dropping page-break artifacts, not headings."""
     kept = [
@@ -126,21 +204,33 @@ def chunk_markdown(text: str, source_name: str) -> dict:
         "text": _body_text(lines, 0, preamble_end),
     }
 
+    titled = rider_starts(lines, headings)
     chunks = []
     section_index = -1
     section_label = None
+    rider_name_source = "title"
     section_start = 0
     for position, (index, parsed) in enumerate(headings):
-        is_section_start = position == 0 or (
-            parsed["article_no"] == "1" and parsed["sub_no"] is None
+        # A title line decides. With none, a rider still starts where the
+        # numbering starts over: a first article (제1조, 제2-1조) no larger than
+        # the article before it. Moving on to the next part (제1-15조, then
+        # 제2-1조) is not a restart.
+        restarts = (
+            _is_first_article(parsed)
+            and position > 0
+            and _article_parts(parsed) <= _article_parts(headings[position - 1][1])
         )
+        is_section_start = position == 0 or position in titled or restarts
         if is_section_start:
             section_index += 1
-            section_label = (
-                "주계약"
-                if section_index == 0
-                else guess_section_label(lines, section_start, index) or f"특약_{section_index}"
-            )
+            if section_index == 0:
+                section_label, rider_name_source = "주계약", "main"
+            elif position in titled:
+                section_label, rider_name_source = titled[position], "title"
+            elif guessed := guess_section_label(lines, section_start, index):
+                section_label, rider_name_source = guessed, "guess"
+            else:
+                section_label, rider_name_source = f"특약_{section_index}", "fallback"
             section_start = index
 
         end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
@@ -158,6 +248,13 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 "id": f"{section_index}::{article_ref}",
                 "section_index": section_index,
                 "section_label": section_label,
+                "rider_type": (
+                    "main"
+                    if section_index == 0
+                    else "general" if section_label.startswith("[특약") else "rider"
+                ),
+                "rider_name": section_label,
+                "rider_name_source": rider_name_source,
                 "article_no": parsed["article_no"],
                 "sub_no": parsed["sub_no"],
                 "title": parsed["title"],
