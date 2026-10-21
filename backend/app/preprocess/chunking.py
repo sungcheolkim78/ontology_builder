@@ -174,6 +174,29 @@ def parse_rider_title(lines: list[str], index: int) -> str | None:
     return name
 
 
+def contract_title_above(lines: list[str], start: int, end: int) -> str | None:
+    """Name of a contract whose title line ("... 2 종(출생아 가입형) 약관", no
+    "특약" in it) sits just above the article heading at `end`, or None.
+
+    Only a few lines are read, and only plain text: part headings, page breaks
+    and blank lines are skipped over, a sentence stops the search."""
+    for index in range(end - 1, max(start, end - 12) - 1, -1):
+        stripped = lines[index].strip()
+        if not stripped or stripped == "---" or stripped.startswith("<!--") or parse_section_heading(stripped):
+            continue
+        match = _RIDER_TITLE_PATTERN.match(stripped)
+        if match is None or not match.group("name").strip():
+            return None
+        name = match.group("name").strip()
+        if name.startswith(_NOT_A_NAME_START) or name.endswith(("다.", "다")) or len(name) > 80:
+            return None
+        head = lines[index - 1].strip() if index > start else ""
+        if head and not head.startswith(("---", "<!--")) and not head.endswith(("다.", "다", ".")) and len(head) <= 40:
+            name = f"{head} {name}"
+        return name
+    return None
+
+
 def rider_starts(lines: list[str], headings: list[tuple[int, dict]]) -> dict[int, tuple[str, int]]:
     """Position in `headings` of each rider's first article -> (rider name, the
     line index of its title)."""
@@ -322,6 +345,10 @@ def chunk_markdown(text: str, source_name: str) -> dict:
                 if position in titled:
                     rider_name, title_index = titled[position]
                     rider_name_source, section_start = "title", title_index
+                elif contract := contract_title_above(lines, previous_index + 1, index):
+                    rider_name, rider_name_source, section_start = contract, "title", previous_index + 1
+                    if "특약" not in contract:
+                        rider_type = "main"
                 elif guessed := guess_section_label(lines, section_first_heading, index):
                     rider_name, rider_name_source, section_start = guessed, "guess", previous_index + 1
                 else:

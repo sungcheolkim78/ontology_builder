@@ -138,8 +138,11 @@ def score_rider_names(chunks: list[dict], toc: dict | None) -> dict:
     fallback = [name for _, name, _ in sections if _FALLBACK_LABEL.match(name)]
     suspicious = [
         name
-        for position, (_, name, _) in enumerate(sections)
-        if position > 0 and not _FALLBACK_LABEL.match(name) and looks_like_body_text(name)
+        for _, name, items in sections
+        # a second main contract is named by its title ("... 2 종 약관"), no 특약 in it
+        if items[0].get("rider_type", "rider") != "main"
+        and not _FALLBACK_LABEL.match(name)
+        and looks_like_body_text(name)
     ]
     result = {
         "sections": len(sections),

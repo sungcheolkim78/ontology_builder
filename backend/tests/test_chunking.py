@@ -466,3 +466,24 @@ def test_a_table_of_contents_part_line_is_not_the_part_of_the_first_article():
     chunks = chunk_markdown(text, "doc")["chunks"]
 
     assert [c["ancestors"] for c in chunks] == [[], []]
+
+
+def test_a_second_contract_in_the_same_policy_is_a_main_contract_named_by_its_title():
+    text = (
+        "### 제1조 [목적]\n본문\n"
+        "### 제2조 [정의]\n본문\n"
+        "① 태아가 유산 또는 사산에 의해 출생하지 못한 경우에는 계약(특약 포함)을 무효로 합니다.\n"
+        "---\n\n<!-- page: 52 -->\n\n"
+        "삼성생명 우리아이행복보험 (무배당)\n"
+        "2 종(출생아 가입형) 약관\n"
+        "제 1 관 목적 및 용어의 정의\n"
+        "### 제1조 [목적]\n본문\n"
+    )
+    chunks = chunk_markdown(text, "doc")["chunks"]
+
+    assert (chunks[2]["rider_type"], chunks[2]["rider_name"]) == (
+        "main",
+        "삼성생명 우리아이행복보험 (무배당) 2 종(출생아 가입형)",
+    )
+    assert chunks[2]["rider_name_source"] == "title"
+    assert "특약 포함" not in chunks[2]["rider_name"]
