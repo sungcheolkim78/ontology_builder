@@ -107,6 +107,16 @@ def guess_section_label(lines: list[str], start: int, end: int) -> str | None:
         if not candidate or candidate.startswith(("<!--", "※")) or "|" in candidate:
             continue
         if "특약" in candidate and len(candidate) < 60:
+            # A parenthetical continuation such as "(갱신형,무배당)" can wrap
+            # onto the next line in the PDF; join it when it is a short,
+            # balanced parenthetical (with or without a trailing "약관").
+            next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+            if (
+                next_line.startswith("(")
+                and next_line.count("(") == next_line.count(")")
+                and len(next_line) < 40
+            ):
+                candidate = f"{candidate}{next_line}"
             return candidate
     return None
 
@@ -255,11 +265,30 @@ def variant_line(lines: list[str], start: int, end: int) -> int | None:
     return None
 
 
+def _law_name_at(lines: list[str], index: int) -> str | None:
+    """The law name at `index`, joining a wrapped second line when the
+    title broke across two PDF lines (``- 호스피스…에`` / ``관한 법률``)."""
+    stripped = lines[index].strip()
+    match = _LAW_TITLE.match(stripped)
+    if match:
+        return match.group("name")
+    if stripped.startswith("- ") and index + 1 < len(lines):
+        joined = f"{stripped} {lines[index + 1].strip()}"
+        match = _LAW_TITLE.match(joined)
+        if match:
+            return match.group("name")
+    return None
+
+
 def law_title_line(lines: list[str], start: int, end: int) -> int | None:
     """Index of the cited law's title line between `start` and the article
-    heading at `end`, the last one if there are several."""
+    heading at `end`, the last one if there are several. A title wrapped
+    over two lines is found at its first line."""
     for index in range(end - 1, start - 1, -1):
         if _LAW_TITLE.match(lines[index].strip()):
+            return index
+    for index in range(end - 1, start, -1):
+        if _law_name_at(lines, index) is not None:
             return index
     return None
 
@@ -281,6 +310,35 @@ def chunk_markdown(text: str, source_name: str) -> dict:
         for index, line in enumerate(lines)
         if (parsed := parse_article_heading(line)) is not None
     ]
+
+    # Drop headings that fall inside a "상황별 목차" or "조항별 목차" block —
+    # these are a second table of contents some policies print between their
+    # contracts, and its cross-reference lines (### 제N조 [title]) look exactly
+    # like real article headings to parse_article_heading. Each block runs from
+    # its marker line to the next point a real section starts (a rider title
+    # line or a first article); headings inside any block are dropped, and
+    # the contracts' own articles (before or after every block) are kept.
+    _TOC_SECTION_MARKER = re.compile(r"(?:상황별|조항별)\s*목차")
+    toc_ranges: list[tuple[int, int]] = []
+    for i, line in enumerate(lines):
+        if not _TOC_SECTION_MARKER.search(line.strip()):
+            continue
+        block_end = len(lines)
+        for j in range(i + 1, len(lines)):
+            if parse_rider_title(lines, j) is not None:
+                block_end = j
+                break
+            parsed = parse_article_heading(lines[j])
+            if parsed and _is_first_article(parsed):
+                block_end = j
+                break
+        toc_ranges.append((i, block_end))
+    if toc_ranges:
+        headings = [
+            (index, parsed)
+            for index, parsed in headings
+            if not any(start <= index < end for start, end in toc_ranges)
+        ]
 
     # The main contract starts at its 제1조. A heading before that is front matter
     # (a stray line of the table of contents), and it would otherwise become a
@@ -333,7 +391,7 @@ def chunk_markdown(text: str, source_name: str) -> dict:
             section_index += 1
             if in_appendix:
                 rider_type, rider_name_source = "appendix", "appendix"
-                rider_name = _LAW_TITLE.match(lines[law_line].strip()).group("name") if law_line is not None else "인용된 법령"
+                rider_name = _law_name_at(lines, law_line) if law_line is not None else "인용된 법령"
                 section_label = f"부록 > {rider_name}"
                 section_start = law_line if law_line is not None else appendix_start
             elif section_index == 0:
