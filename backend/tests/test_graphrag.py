@@ -117,6 +117,39 @@ def test_search_graph_finds_context_when_types_and_keywords_match(monkeypatch):
     assert {e["type"] for e in result["related_edges"]} == {"WORKED_ON"}
 
 
+def test_search_graph_hop_expansion_respects_determined_edge_types(monkeypatch):
+    # n1 has edges of two types; only WORKED_ON was determined relevant, so
+    # 1-hop expansion must not cross the MEMBER_OF edge to Royal Society --
+    # a good answer to "what did Ada work on?" has no business citing her
+    # society membership.
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+        {"id": "n4", "label": "Royal Society", "type": "Organization"},
+    ]
+    edges = [
+        {"source": "n1", "target": "n2", "type": "WORKED_ON"},
+        {"source": "n1", "target": "n4", "type": "MEMBER_OF"},
+    ]
+    graphdb.write_graph(STEM, nodes, edges)
+    model = LoggingSequencedChatModel(
+        [
+            json.dumps(
+                {
+                    "node_types": ["Person"],
+                    "edge_types": ["WORKED_ON"],
+                    "keywords": {"Person": ["Ada Lovelace"]},
+                }
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+
+    result = search_graph("What did Ada Lovelace work on?", SCHEMA, STEM, hops=1)
+
+    assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace", "Analytical Engine"}
+
+
 def test_search_graph_skips_keyword_extraction_when_no_types_relevant(monkeypatch):
     graphdb.write_graph(STEM, NODES, EDGES)
     model = LoggingSequencedChatModel(
@@ -191,6 +224,29 @@ def test_search_graph_prefers_embedding_match_over_all_instances_when_available(
     # ranking -- e.g. if this silently fell through to the "all instances"
     # tier -- Charles would show up too.
     monkeypatch.setattr("app.graph.graphrag.EMBEDDING_FALLBACK_TOP_K", 1)
+    query_vector = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
+    orthogonal_vector = [0.0, 1.0] + [0.0] * (EMBEDDING_DIM - 2)
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person", "embedding": query_vector},
+        {"id": "n3", "label": "Charles Babbage", "type": "Person", "embedding": orthogonal_vector},
+    ]
+    graphdb.write_graph(STEM, nodes, [])
+    model = LoggingSequencedChatModel(
+        [json.dumps({"node_types": ["Person"], "edge_types": [], "keywords": {}})]
+    )
+    monkeypatch.setattr("app.llm.calls.get_chat_model", lambda operation=None: model)
+    monkeypatch.setattr("app.llm.calls.get_embedding_model", lambda: FakeEmbeddingModel(query_vector))
+
+    result = search_graph("who is Ada?", SCHEMA, STEM, hops=0)
+
+    assert {n["label"] for n in result["related_nodes"]} == {"Ada Lovelace"}
+
+
+def test_search_graph_embedding_fallback_excludes_low_similarity_matches(monkeypatch):
+    # Same setup as the test above, but top_k is left at its default (large
+    # enough to fit both nodes) -- only a min-score floor on the embedding
+    # fallback can be excluding Charles's orthogonal (0.0 cosine similarity)
+    # embedding here.
     query_vector = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
     orthogonal_vector = [0.0, 1.0] + [0.0] * (EMBEDDING_DIM - 2)
     nodes = [

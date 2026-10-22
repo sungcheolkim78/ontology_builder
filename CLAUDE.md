@@ -574,7 +574,10 @@ read and written:
   typed-property comparison for the type ("50% 이상인 보장"), which neither a
   label match nor similarity can answer; (c) `_by_embedding`
   (`find_similar_nodes()`) — rank that type's own nodes by embedding
-  similarity to the question, keeping the top `EMBEDDING_FALLBACK_TOP_K` (5);
+  similarity to the question, keeping the top `EMBEDDING_FALLBACK_TOP_K` (5)
+  results that also clear `EMBEDDING_FALLBACK_MIN_SCORE` (0.3 cosine
+  similarity) — the score floor exists because top_k alone still admits a
+  weakly-related node whenever nothing better filled the quota;
   the question's embedding (`embed_query()`) is computed lazily by the
   context, at most once per `search_graph()` call however many types reach
   this tier, and not at all when an earlier tier matched (both pinned by
@@ -593,8 +596,19 @@ read and written:
   node, falling back to `all_edges_of_types()` only if node matching
   found nothing at all. The matched node set expands via
   `graphdb.expand_hops()` — an undirected, variable-length Cypher
-  pattern match (`MATCH (n)-[*0..hops]-(m) ...`) run against LadybugDB —
-  into an `Entities:`/`Relations:` context block (each line including the
+  pattern match (`MATCH (n)-[*0..hops]-(m) ...`, or
+  `MATCH (n)-[:Type1|Type2*0..hops]-(m) ...` when `edge_types` narrows it)
+  run against LadybugDB. `search_graph()` passes its own determined
+  `edge_types` through to this call, so expansion only walks relationships
+  of a type already judged relevant to the question — an empty
+  `edge_types` list (no edge type judged relevant at all) makes
+  `expand_hops` stop at the matched nodes themselves rather than
+  wandering across arbitrary, possibly-irrelevant graph topology; only a
+  caller passing `edge_types=None` gets the old untyped/any-relationship
+  traversal. This and the embedding score floor above both exist to keep
+  chat answers from citing graph nodes that are structurally nearby but
+  substantively unrelated to the question. The result feeds an
+  `Entities:`/`Relations:` context block (each line including the
   node's/edge's `detail` field when present — see above) injected into chat as a
   system message. `search_graph()` returns the determined
   `node_types`/`edge_types` and the matched/expanded `related_nodes`/

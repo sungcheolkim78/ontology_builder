@@ -835,11 +835,24 @@ def all_edges_of_types(stem: str, allowed_types: list, version: int = 1) -> list
 
 
 @_synchronized
-def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
+def expand_hops(
+    stem: str, seed_ids: set, hops: int, version: int = 1,
+    edge_types: list | None = None,
+) -> tuple:
+    """edge_types restricts which relationship types the hop expansion may
+    traverse. None (the default) keeps the old untyped/any-relationship
+    traversal. An explicit empty list means the caller determined *no* edge
+    type is relevant to the query, so expansion stops at the seeds themselves
+    rather than wandering across arbitrary graph topology; a non-empty list
+    restricts traversal (and the edges reported among the resulting node set)
+    to just those types."""
     if not seed_ids:
         return [], []
     conn = _get_connection()
     hops = max(min(hops, MAX_EXPAND_HOPS), 0)
+    type_filter = None
+    if edge_types is not None:
+        type_filter = "|".join(_validate_identifier(t) for t in edge_types)
 
     def _expand():
         # No REL table exists anywhere in the database yet (e.g. this
@@ -865,23 +878,18 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
         #      worse than an exception, since nothing would signal the miss.
         # Guard both the same way: fetch seed nodes directly (no
         # relationship pattern at all) and skip the edge query below.
+        # An edge_types=[] caller hits this same "seeds only" path even
+        # when a REL table exists, since there's nothing it's allowed to
+        # traverse either way.
         has_rel_table = _has_table_of_kind(conn, "REL")
+        no_traversal = not has_rel_table or edge_types == []
 
         # seed_ids/expanded_ids are bare original_id values, not globally
         # unique on their own (unlike the old prefixed-id scheme) -- every
         # match below also filters by source_document/version so a seed
         # can't accidentally resolve to a different document's or version's
         # node sharing the same bare id in the same shared type table.
-        if has_rel_table:
-            node_rows = conn.execute(
-                f"MATCH (n)-[*0..{hops}]-(m) WHERE n.original_id IN $seeds "
-                f"AND n.source_document = $stem AND n.version = $version "
-                f"AND m.source_document = $stem AND m.version = $version "
-                f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
-                f"m.label AS label, m.detail AS detail, {_envelope_return_fields('m')}",
-                {"seeds": list(seed_ids), "stem": stem, "version": version},
-            )
-        else:
+        if no_traversal:
             node_rows = conn.execute(
                 "MATCH (n) WHERE n.original_id IN $seeds AND n.source_document = $stem "
                 "AND n.version = $version "
@@ -889,9 +897,23 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
                 f"n.detail AS detail, {_envelope_return_fields('n')}",
                 {"seeds": list(seed_ids), "stem": stem, "version": version},
             )
+        else:
+            rel_pattern = f":{type_filter}" if type_filter else ""
+            node_rows = conn.execute(
+                f"MATCH (n)-[{rel_pattern}*0..{hops}]-(m) WHERE n.original_id IN $seeds "
+                f"AND n.source_document = $stem AND n.version = $version "
+                f"AND m.source_document = $stem AND m.version = $version "
+                f"RETURN DISTINCT label(m) AS type, m.original_id AS original_id, "
+                f"m.label AS label, m.detail AS detail, {_envelope_return_fields('m')}",
+                {"seeds": list(seed_ids), "stem": stem, "version": version},
+            )
         nodes = [_node_from_row(row) for row in node_rows.rows_as_dict()]
-        expanded_ids = [n["id"] for n in nodes]
 
+        if no_traversal:
+            return nodes, []
+
+        expanded_ids = [n["id"] for n in nodes]
+        edge_type_clause = "r.type IN $edge_types AND " if type_filter else ""
         edges = _safe_query(
             conn,
             "REL",
@@ -899,10 +921,11 @@ def expand_hops(stem: str, seed_ids: set, hops: int, version: int = 1) -> tuple:
                 _edge_from_row(row)
                 for row in conn.execute(
                     "MATCH (a)-[r]->(b) WHERE a.original_id IN $ids AND b.original_id IN $ids "
-                    "AND r.source_document = $stem AND r.version = $version "
+                    f"AND {edge_type_clause}"
+                    "r.source_document = $stem AND r.version = $version "
                     "RETURN r.type AS type, r.detail AS detail, a.original_id AS source, "
                     f"b.original_id AS target, {_envelope_return_fields('r')}",
-                    {"ids": expanded_ids, "stem": stem, "version": version},
+                    {"ids": expanded_ids, "stem": stem, "version": version, "edge_types": edge_types or []},
                 ).rows_as_dict()
             ],
             default=[],

@@ -11,6 +11,13 @@ from app.ontology.schema_validation import normalize_schema
 # of dumping every instance of the type into the context.
 EMBEDDING_FALLBACK_TOP_K = 5
 
+# Cosine-similarity floor for the embedding fallback -- top_k alone still
+# admits a weakly-related node just because nothing else filled the
+# quota. text-embedding-3-small scores for genuinely related label/detail
+# text against a question typically clear this; unrelated pairs score
+# near 0 or negative.
+EMBEDDING_FALLBACK_MIN_SCORE = 0.3
+
 # Comparison operators a property_filter's "operator" field may use --
 # see graphdb.find_nodes_by_property, which this maps 1:1 onto.
 PROPERTY_FILTER_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte"}
@@ -256,7 +263,9 @@ def _by_embedding(ctx: _SearchContext, node_type: str) -> list:
     embedding similarity to the question instead of dumping every instance of it
     into the context."""
     return graphdb.find_similar_nodes(
-        ctx.stem, node_type, ctx.query_embedding, top_k=EMBEDDING_FALLBACK_TOP_K, version=ctx.version
+        ctx.stem, node_type, ctx.query_embedding,
+        top_k=EMBEDDING_FALLBACK_TOP_K, min_score=EMBEDDING_FALLBACK_MIN_SCORE,
+        version=ctx.version,
     )
 
 
@@ -326,7 +335,9 @@ def search_graph(question: str, schema: dict, stem: str, version: int = 1, hops:
     if edge_types:
         _match_edges(ctx, edge_types, matched)
 
-    related_nodes, related_edges = graphdb.expand_hops(stem, matched.members, hops, version=version)
+    related_nodes, related_edges = graphdb.expand_hops(
+        stem, matched.members, hops, version=version, edge_types=edge_types
+    )
     # Put directly-matched nodes first, in the relevance order they were
     # matched in above; nodes only pulled in by hop expansion (never
     # directly matched) sort after, in whatever order the DB returned them.

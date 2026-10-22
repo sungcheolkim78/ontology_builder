@@ -702,6 +702,45 @@ def test_expand_hops_empty_seeds_returns_nothing():
     assert edges == []
 
 
+def test_expand_hops_edge_types_restricts_traversal():
+    # n1 has two outgoing edges of different types; asking expand_hops to
+    # only follow WORKED_ON must not pull in n3 via the MEMBER_OF edge.
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+        {"id": "n3", "label": "Royal Society", "type": "Organization"},
+    ]
+    edges = [
+        {"source": "n1", "target": "n2", "type": "WORKED_ON"},
+        {"source": "n1", "target": "n3", "type": "MEMBER_OF"},
+    ]
+    graphdb.write_graph("doc_a", nodes, edges)
+
+    result_nodes, result_edges = graphdb.expand_hops(
+        "doc_a", {"n1"}, hops=1, edge_types=["WORKED_ON"]
+    )
+
+    assert {n["id"] for n in result_nodes} == {"n1", "n2"}
+    assert {e["type"] for e in result_edges} == {"WORKED_ON"}
+
+
+def test_expand_hops_empty_edge_types_list_returns_only_seeds():
+    # An explicit empty list (as opposed to the default None) means no edge
+    # type was determined relevant at all -- expansion should stop at the
+    # seeds rather than falling back to untyped traversal.
+    nodes = [
+        {"id": "n1", "label": "Ada Lovelace", "type": "Person"},
+        {"id": "n2", "label": "Analytical Engine", "type": "Concept"},
+    ]
+    edges = [{"source": "n1", "target": "n2", "type": "WORKED_ON"}]
+    graphdb.write_graph("doc_a", nodes, edges)
+
+    result_nodes, result_edges = graphdb.expand_hops("doc_a", {"n1"}, hops=1, edge_types=[])
+
+    assert {n["id"] for n in result_nodes} == {"n1"}
+    assert result_edges == []
+
+
 def test_expand_hops_zero_hops_on_zero_rel_table_database_returns_seed():
     # Regression test for a silent-failure variant of the zero-REL-table bug
     # seen in load_graph/find_matching_edges/all_edges_of_types. There, an
